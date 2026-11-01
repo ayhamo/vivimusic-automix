@@ -1291,6 +1291,118 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   return true;
 });
 
+// ── Paxsenix (Apple Music Synced TTML) ──
+async function getPaxsenixLyrics(track) {
+  const song = (track.song || '').trim();
+  const artist = (track.artist || '').trim();
+  const query = `${song} ${artist}`.trim();
+  if (!query) return null;
+
+  try {
+    const searchRes = await ampGet('/v1/catalog/us/search', {
+      term: query,
+      types: 'songs',
+      limit: 5,
+    });
+    const songs = searchRes?.results?.songs?.data;
+    if (!Array.isArray(songs) || !songs.length) return null;
+
+    let matchedSong = songs[0];
+    if (artist) {
+      const norm = (s) => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+      const targetArtist = norm(artist);
+      const hit = songs.find((s) => {
+        const a = norm(s?.attributes?.artistName);
+        return a && (a.includes(targetArtist) || targetArtist.includes(a));
+      });
+      if (hit) matchedSong = hit;
+    }
+
+    const songId = matchedSong?.id;
+    if (!songId) return null;
+
+    const paxRes = await fetch(`https://lyrics.paxsenix.org/apple-music/lyrics?id=${encodeURIComponent(songId)}&ttml=true`, {
+      headers: { 'Accept': 'application/json, text/xml, */*' },
+    });
+    if (!paxRes.ok) return null;
+    const json = await paxRes.json();
+    return json?.content || (typeof json === 'string' ? json : null);
+  } catch (e) {
+    console.warn('[Vivi] Paxsenix fetch failed:', e?.message || e);
+    return null;
+  }
+}
+
+// ── Genius (Plain Lyrics Fallback) ──
+async function getGeniusLyrics(track) {
+  const song = (track.song || '').trim();
+  const artist = (track.artist || '').trim();
+  const query = `${song} ${artist}`.trim();
+  if (!query) return null;
+
+  try {
+    const searchUrl = `https://genius.com/api/search/multi?q=${encodeURIComponent(query)}`;
+    const searchRes = await fetch(searchUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+      }
+    });
+    if (!searchRes.ok) return null;
+    const data = await searchRes.json();
+    const sections = data?.response?.sections || [];
+    const songSec = sections.find((s) => s.type === 'song');
+    const hits = songSec?.hits?.map((h) => h.result).filter(Boolean) || [];
+    if (!hits.length) return null;
+
+    let bestHit = hits[0];
+    if (artist) {
+      const norm = (s) => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+      const targetArtist = norm(artist);
+      const targetSong = norm(song);
+      const scored = hits.map((h) => {
+        const t = norm(h.title);
+        const a = norm(h.artist_names);
+        let score = 0;
+        if (t === targetSong) score += 50;
+        else if (t.includes(targetSong)) score += 25;
+        if (a === targetArtist) score += 40;
+        else if (a.includes(targetArtist)) score += 20;
+        return { hit: h, score };
+      }).sort((a, b) => b.score - a.score);
+      if (scored.length && scored[0].score > 0) bestHit = scored[0].hit;
+    }
+
+    if (!bestHit?.url) return null;
+    const pageRes = await fetch(bestHit.url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+      }
+    });
+    if (!pageRes.ok) return null;
+    return await pageRes.text();
+  } catch (e) {
+    console.warn('[Vivi] Genius fetch failed:', e?.message || e);
+    return null;
+  }
+}
+
+chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg?.type === 'VIVI_PAXSENIX_LYRICS') {
+    getPaxsenixLyrics(msg.track || {})
+      .then((ttml) => sendResponse({ ok: !!ttml, ttml: ttml || null }))
+      .catch((e) => sendResponse({ ok: false, error: String(e?.message || e) }));
+    return true;
+  }
+  if (msg?.type === 'VIVI_GENIUS_LYRICS') {
+    getGeniusLyrics(msg.track || {})
+      .then((html) => sendResponse({ ok: !!html, html: html || null }))
+      .catch((e) => sendResponse({ ok: false, error: String(e?.message || e) }));
+    return true;
+  }
+  return undefined;
+});
+
+
 
 // ── Cross-origin fetch relay for content scripts (see net.js) ──
 // Only answers extension content scripts on YouTube Music, and only for

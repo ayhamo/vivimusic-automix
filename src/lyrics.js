@@ -42,6 +42,8 @@
     musixmatch: true,
     unison: true,
     binilyrics: true,
+    paxsenix: true,
+    genius: true,
     spotify: true,
   };
   let providerSettings = { ...DEFAULT_PROVIDERS };
@@ -57,7 +59,7 @@
   // in the top-3 priority list (line-only sources — Legato/Kugou, Legacy,
   // LRCLIB — are not offered there). A priority provider's
   // reply is shown whatever level it turns out to be, even line-synced.
-  const PRIORITY_ELIGIBLE_KEYS = ['lrcred', 'betterlyricsTTML', 'betterlyricsPortato', 'unison', 'binilyrics', 'musixmatch'];
+  const PRIORITY_ELIGIBLE_KEYS = ['lrcred', 'betterlyricsTTML', 'paxsenix', 'betterlyricsPortato', 'unison', 'binilyrics', 'musixmatch'];
   const sanitizeOrder = (arr) => (Array.isArray(arr) ? arr : [])
     .filter((k, i, a) => PRIORITY_ELIGIBLE_KEYS.includes(k) && a.indexOf(k) === i)
     .slice(0, 3);
@@ -792,6 +794,57 @@
     }
   }
 
+  // Paxsenix — Apple Music syllable/word-synced TTML
+  async function fromPaxsenix(track) {
+    try {
+      const response = await chrome.runtime.sendMessage({
+        type: 'VIVI_PAXSENIX_LYRICS',
+        track: { song: track.song, artist: track.artist, duration: track.duration || 0 },
+      });
+      if (!response?.ok || !response.ttml) return null;
+      const parsed = checkTiming(parseTTML(response.ttml), track, 'Paxsenix');
+      if (!parsed) return null;
+      parsed.provider = 'Paxsenix';
+      return parsed;
+    } catch (e) {
+      log('Paxsenix request failed', e?.message || e);
+      return null;
+    }
+  }
+
+  // Genius — plain-text lyrics fallback
+  async function fromGenius(track) {
+    try {
+      const response = await chrome.runtime.sendMessage({
+        type: 'VIVI_GENIUS_LYRICS',
+        track: { song: track.song, artist: track.artist },
+      });
+      if (!response?.ok || !response.html) return null;
+      const doc = new DOMParser().parseFromString(response.html, 'text/html');
+      let containers = [...doc.querySelectorAll('div[data-lyrics-container="true"]')];
+      if (!containers.length) containers = [...doc.querySelectorAll('div.lyrics')];
+      if (!containers.length) return null;
+
+      let fullText = '';
+      for (const el of containers) {
+        el.querySelectorAll('[data-exclude-from-selection="true"], [class*="LyricsHeader__Container"], [class*="SongBioPreview"], [class*="InreadAd"], button, script, style').forEach((n) => n.remove());
+        el.querySelectorAll('br').forEach((b) => b.replaceWith('\n'));
+        fullText += (el.textContent || '') + '\n';
+      }
+      const cleaned = fullText
+        .replace(/\d*You might also like/gi, '')
+        .replace(/\d*Embed\s*$/gim, '')
+        .trim();
+      const parsed = parsePlain(cleaned);
+      if (!parsed) return null;
+      parsed.provider = 'Genius';
+      return parsed;
+    } catch (e) {
+      log('Genius request failed', e?.message || e);
+      return null;
+    }
+  }
+
   
   // Priority-aware provider resolution. Only the up-to-3 prioritized
   // providers are considered here — everything else in jobDefs is left
@@ -973,6 +1026,8 @@
     musixmatch: 'Musixmatch',
     unison: 'Unison',
     binilyrics: 'BiniLyrics',
+    paxsenix: 'Paxsenix',
+    genius: 'Genius',
     spotify: 'Spotify',
   };
   const PROVIDER_KEY_BY_NAME = Object.fromEntries(
@@ -1049,6 +1104,8 @@
     add('musixmatch', fromMusixmatch);
     add('unison', fromUnison);
     add('binilyrics', fromBiniLyrics);
+    add('paxsenix', fromPaxsenix);
+    add('genius', fromGenius);
 
     const spotifyOn = !!providerSettings.spotify && !excludeKeys.has('spotify');
     let spotifyJob = null;

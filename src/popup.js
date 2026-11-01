@@ -130,6 +130,8 @@
     musixmatch: true,
     unison: true,
     binilyrics: true,
+    paxsenix: true,
+    genius: true,
     spotify: true,
   };
   const PROVIDER_KEYS = Object.keys(DEFAULT_PROVIDERS);
@@ -143,6 +145,7 @@
     betterlyricsTTML: 'Better Lyrics (Syllable)',
     unison: 'Better Lyrics Unison (Syllable / Word)',
     binilyrics: 'BiniLyrics (Syllable)',
+    paxsenix: 'Paxsenix (Apple Music)',
     betterlyricsPortato: 'Better Lyrics Portato (Word)',
     musixmatch: 'Musixmatch (Word)',
   };
