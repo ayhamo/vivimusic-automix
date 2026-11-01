@@ -4,7 +4,7 @@
 
 'use strict';
 
-importScripts('md5.js', 'lastfm.js', 'spotify.js', 'stargate.js', 'apple-canvas.js', 'lrcred.js');
+importScripts('md5.js', 'lastfm.js', 'spotify.js', 'apple-canvas.js', 'lrcred.js');
 
 /* -------------------------------------------------------------------------
  * Apple Music Canvas — header spoofing

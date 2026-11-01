@@ -71,12 +71,8 @@
       ],
       "js": [
         "src/announcements-toast.js",
-        "src/gate.js",
         "src/loader.js",
         "src/ytm-transfer.js"
-      ],
-      "css": [
-        "src/gate.css"
       ],
       "run_at": "document_start"
     },
@@ -134,5 +130,11 @@
         "https://music.youtube.com/*"
       ]
     }
-  ]
+  ],
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "vivimusic-web@custom",
+      "strict_min_version": "109.0"
+    }
+  }
 }
