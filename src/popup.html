@@ -908,6 +908,7 @@
     .home-card[data-feature="appearance"] { --card-accent: #bd82ff; }
     .home-card[data-feature="artwork-cache"] { --card-accent: #51b5ff; }
     .home-card[data-feature="lastfm"] { --card-accent: #ff405b; }
+      .home-card[data-feature="listenbrainz"] { --card-accent: #eb743b; }
     .home-card[data-feature="updates"] { --card-accent: #5ed6bd; }
     .home-card[data-feature="updates"] .home-card-icon img { filter: brightness(0) invert(1); }
     .home-card[data-feature="spotify-canvas"] .home-card-icon img { inset: auto; left: 50%; top: 50%; width: 54px; height: 54px; max-width: none; transform: translate(-50%, -50%); }
@@ -957,6 +958,7 @@
     .view-settings[data-feature="appearance"] { --panel-accent: #bd82ff; }
     .view-settings[data-feature="artwork-cache"] { --panel-accent: #51b5ff; }
     .view-settings[data-feature="lastfm"] { --panel-accent: #ff405b; }
+      .view-settings[data-feature="listenbrainz"] { --panel-accent: #eb743b; }
     .view-settings[data-feature="updates"] { --panel-accent: #5ed6bd; }
     .settings-content > .section { position: relative; margin: 0; padding: 17px; background: radial-gradient(ellipse at 100% 0%, color-mix(in srgb, var(--panel-accent, #9585ff), transparent 93%), transparent 58%), linear-gradient(155deg, rgba(24,24,33,.98), rgba(17,17,23,.98)); border-color: color-mix(in srgb, var(--panel-accent, #9585ff), transparent 80%); box-shadow: inset 0 1px rgba(255,255,255,.065), 0 18px 40px -30px color-mix(in srgb, var(--panel-accent, #9585ff), transparent 48%); }
     .settings-content > .section > .section-title { display: none; }
@@ -1273,6 +1275,22 @@
     <div class="kawarp-slider-row" id="crossfadeSliderRow">
       <div class="kw-label-row"><span>Crossfade length</span><span class="kw-val" id="crossfadeSecondsVal">6 s</span></div>
       <input type="range" id="crossfadeSeconds" min="1" max="12" step="1" value="6"/>
+    </div>
+    <div style="margin-top:10px; display:flex; flex-direction:column; gap:8px;">
+      <div class="row">
+        <span class="row-label">Crossfade on manual skip</span>
+        <label class="switch">
+          <input type="checkbox" id="crossfadeManualSkipToggle" checked/>
+          <span class="slider"></span>
+        </label>
+      </div>
+      <div class="row">
+        <span class="row-label">Crossfade on auto-advance</span>
+        <label class="switch">
+          <input type="checkbox" id="crossfadeAutoAdvanceToggle" checked/>
+          <span class="slider"></span>
+        </label>
+      </div>
     </div>
   </div>
 
@@ -1650,6 +1668,42 @@
       <div class="row">
         <span class="row-label">Scrobble delay (min)</span>
         <input id="lastfmDelayMinutes" type="number" min="0" value="3" style="width:64px;"/>
+      </div>
+    </div>
+  </div>
+
+  <!-- ListenBrainz -->
+  <div class="section">
+    <div class="section-title"><span class="dot-ico"></span>ListenBrainz</div>
+    <div class="row">
+      <span class="row-label">ListenBrainz scrobbling</span>
+      <label class="switch">
+        <input type="checkbox" id="listenbrainzEnabledToggle"/>
+        <span class="slider"></span>
+      </label>
+    </div>
+
+    <div id="listenbrainzLoginBlock" style="margin-top:11px; display:flex; flex-direction:column; gap:7px;">
+      <p class="theme-sub" style="margin:0;">Enter your User Token from <a href="https://listenbrainz.org/profile/" target="_blank" rel="noopener noreferrer" style="color:#bdabff;">listenbrainz.org/profile</a>.</p>
+      <form id="listenbrainzLoginForm" autocomplete="off" style="margin-top:4px; display:flex; flex-direction:column; gap:7px;">
+        <input id="listenbrainzToken" type="password" placeholder="ListenBrainz User Token" style="width:100%;"/>
+        <button id="listenbrainzLoginBtn" type="submit" class="update-btn primary" style="width:100%;">Connect ListenBrainz</button>
+      </form>
+      <div id="listenbrainzLoginError" style="display:none; font-size:11px; color:#f87171;"></div>
+    </div>
+
+    <div id="listenbrainzConnectedBlock" style="display:none; margin-top:11px;">
+      <div class="status-row" style="margin-top:0;">
+        <div class="dot active"></div>
+        <span id="listenbrainzConnectedAs">Connected</span>
+      </div>
+      <button id="listenbrainzLogoutBtn" class="clear-btn" style="margin-top:7px;">Disconnect</button>
+    </div>
+
+    <div style="margin-top:14px; display:flex; flex-direction:column; gap:10px;">
+      <div class="row">
+        <span class="row-label">Send Now Playing</span>
+        <label class="switch"><input type="checkbox" id="listenbrainzNowPlayingToggle" checked/><span class="slider"></span></label>
       </div>
     </div>
   </div>

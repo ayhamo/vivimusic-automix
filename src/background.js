@@ -4,7 +4,7 @@
 
 'use strict';
 
-importScripts('md5.js', 'lastfm.js', 'spotify.js', 'apple-canvas.js', 'lrcred.js');
+importScripts('md5.js', 'lastfm.js', 'listenbrainz.js', 'spotify.js', 'apple-canvas.js', 'lrcred.js');
 
 /* -------------------------------------------------------------------------
  * Apple Music Canvas — header spoofing
@@ -426,6 +426,53 @@ async function handleLastfmLove(track, loved) {
   }
 }
 
+/* -------------------------------------------------------------------------
+ * ListenBrainz Integration
+ * ------------------------------------------------------------------------- */
+async function listenbrainzGetSession() {
+  const { listenbrainzSession } = await chrome.storage.local.get('listenbrainzSession');
+  return listenbrainzSession || null;
+}
+
+async function handleListenbrainzLogin(token) {
+  try {
+    const { valid, username } = await listenbrainzValidateToken(token);
+    await chrome.storage.local.set({
+      listenbrainzSession: { token, username },
+    });
+    return { ok: true, username };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
+
+async function handleListenbrainzLogout() {
+  await chrome.storage.local.remove('listenbrainzSession');
+  return { ok: true };
+}
+
+async function handleListenbrainzNowPlaying(track) {
+  const session = await listenbrainzGetSession();
+  if (!session) return { ok: false, error: 'Not logged in' };
+  try {
+    await listenbrainzUpdateNowPlaying(session.token, track);
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
+
+async function handleListenbrainzScrobble(track, timestamp) {
+  const session = await listenbrainzGetSession();
+  if (!session) return { ok: false, error: 'Not logged in' };
+  try {
+    await listenbrainzScrobble(session.token, track, timestamp);
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
+
 
 // Romanization of Japanese lines that contain kanji (kana / Korean / Chinese /
 // Hindi / Punjabi are romanized offline inside the page). Returns null on any
@@ -551,6 +598,22 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       return true;
     case 'VIVI_LASTFM_LOVE':
       handleLastfmLove(msg.track, msg.loved).then(sendResponse);
+      return true;
+
+    case 'VIVI_LISTENBRAINZ_LOGIN':
+      handleListenbrainzLogin(msg.token).then(sendResponse);
+      return true;
+    case 'VIVI_LISTENBRAINZ_LOGOUT':
+      handleListenbrainzLogout().then(sendResponse);
+      return true;
+    case 'VIVI_LISTENBRAINZ_STATUS':
+      listenbrainzGetSession().then((s) => sendResponse({ loggedIn: !!s, username: s?.username || null }));
+      return true;
+    case 'VIVI_LISTENBRAINZ_NOWPLAYING':
+      handleListenbrainzNowPlaying(msg.track).then(sendResponse);
+      return true;
+    case 'VIVI_LISTENBRAINZ_SCROBBLE':
+      handleListenbrainzScrobble(msg.track, msg.timestamp).then(sendResponse);
       return true;
 
     default:

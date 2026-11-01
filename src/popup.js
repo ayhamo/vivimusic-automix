@@ -394,6 +394,21 @@
     crossfadeSliderRow.style.opacity = on ? '1' : '0.45';
     crossfadeSeconds.disabled = !on;
   }
+  const crossfadeManualSkipToggle = document.getElementById('crossfadeManualSkipToggle');
+  const crossfadeAutoAdvanceToggle = document.getElementById('crossfadeAutoAdvanceToggle');
+
+  chrome.storage.local.get({ crossfadeManualSkip: true, crossfadeAutoAdvance: true }, (r) => {
+    if (crossfadeManualSkipToggle) crossfadeManualSkipToggle.checked = r.crossfadeManualSkip !== false;
+    if (crossfadeAutoAdvanceToggle) crossfadeAutoAdvanceToggle.checked = r.crossfadeAutoAdvance !== false;
+  });
+
+  crossfadeManualSkipToggle?.addEventListener('change', () => {
+    chrome.storage.local.set({ crossfadeManualSkip: crossfadeManualSkipToggle.checked });
+  });
+  crossfadeAutoAdvanceToggle?.addEventListener('change', () => {
+    chrome.storage.local.set({ crossfadeAutoAdvance: crossfadeAutoAdvanceToggle.checked });
+  });
+
   crossfadeToggle.addEventListener('change', () => {
     paintCrossfade(crossfadeToggle.checked, crossfadeSeconds.value);
     chrome.storage.local.set({ crossfadeEnabled: crossfadeToggle.checked });
@@ -1264,3 +1279,78 @@
     });
   });
 })();
+
+  /* -------------------------------------------------------------------------
+   * ListenBrainz Scrobbling
+   * ------------------------------------------------------------------------- */
+  const lbEnabledToggle    = document.getElementById('listenbrainzEnabledToggle');
+  const lbLoginBlock       = document.getElementById('listenbrainzLoginBlock');
+  const lbConnectedBlock   = document.getElementById('listenbrainzConnectedBlock');
+  const lbConnectedAs      = document.getElementById('listenbrainzConnectedAs');
+  const lbToken            = document.getElementById('listenbrainzToken');
+  const lbLoginBtn         = document.getElementById('listenbrainzLoginBtn');
+  const lbLoginForm        = document.getElementById('listenbrainzLoginForm');
+  const lbLoginError       = document.getElementById('listenbrainzLoginError');
+  const lbLogoutBtn        = document.getElementById('listenbrainzLogoutBtn');
+  const lbNowPlayingToggle = document.getElementById('listenbrainzNowPlayingToggle');
+
+  function refreshListenbrainzStatus() {
+    chrome.runtime.sendMessage({ type: 'VIVI_LISTENBRAINZ_STATUS' }, (resp) => {
+      if (chrome.runtime.lastError || !resp) return;
+      if (resp.loggedIn) {
+        if (lbLoginBlock) lbLoginBlock.style.display = 'none';
+        if (lbConnectedBlock) lbConnectedBlock.style.display = 'block';
+        if (lbConnectedAs) lbConnectedAs.textContent = `Connected as ${resp.username || 'user'}`;
+      } else {
+        if (lbLoginBlock) lbLoginBlock.style.display = 'flex';
+        if (lbConnectedBlock) lbConnectedBlock.style.display = 'none';
+      }
+    });
+  }
+
+  chrome.storage.local.get({
+    listenbrainzEnabled: false,
+    listenbrainzSendNowPlaying: true,
+  }, (s) => {
+    if (lbEnabledToggle) lbEnabledToggle.checked = s.listenbrainzEnabled === true;
+    if (lbNowPlayingToggle) lbNowPlayingToggle.checked = s.listenbrainzSendNowPlaying !== false;
+    refreshListenbrainzStatus();
+  });
+
+  lbEnabledToggle?.addEventListener('change', () => {
+    const listenbrainzEnabled = lbEnabledToggle.checked;
+    chrome.storage.local.set({ listenbrainzEnabled });
+    relay({ listenbrainzEnabled });
+  });
+
+  lbNowPlayingToggle?.addEventListener('change', () => {
+    const listenbrainzSendNowPlaying = lbNowPlayingToggle.checked;
+    chrome.storage.local.set({ listenbrainzSendNowPlaying });
+    relay({ listenbrainzSendNowPlaying });
+  });
+
+  lbLoginForm?.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const token = lbToken.value.trim();
+    if (!token) return;
+    if (lbLoginBtn) lbLoginBtn.disabled = true;
+    if (lbLoginError) lbLoginError.style.display = 'none';
+    chrome.runtime.sendMessage({ type: 'VIVI_LISTENBRAINZ_LOGIN', token }, (resp) => {
+      if (lbLoginBtn) lbLoginBtn.disabled = false;
+      if (chrome.runtime.lastError || !resp?.ok) {
+        if (lbLoginError) {
+          lbLoginError.textContent = resp?.error || chrome.runtime.lastError?.message || 'Login failed';
+          lbLoginError.style.display = 'block';
+        }
+      } else {
+        if (lbToken) lbToken.value = '';
+        refreshListenbrainzStatus();
+      }
+    });
+  });
+
+  lbLogoutBtn?.addEventListener('click', () => {
+    chrome.runtime.sendMessage({ type: 'VIVI_LISTENBRAINZ_LOGOUT' }, () => {
+      refreshListenbrainzStatus();
+    });
+  });

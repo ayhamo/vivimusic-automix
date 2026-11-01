@@ -43,7 +43,7 @@
   };
 
   // ───────── settings (read straight from storage, no relay needed) ─────────
-  let userOn = false, userSecs = 6, saver = false;
+  let userOn = false, userSecs = 6, userManualSkip = true, userAutoAdvance = true, saver = false;
   const seconds = () => (userOn && !saver ? clamp(Math.round(userSecs) || 0, 1, MAX_SECONDS) : 0);
 
   function post(msg) {
@@ -51,16 +51,24 @@
   }
 
   function applyConfig() {
-    log('config: seconds =', seconds(), '| enabled:', userOn, '| resource saver:', saver);
+    log('config: seconds =', seconds(), '| enabled:', userOn, '| manualSkip:', userManualSkip, '| autoAdvance:', userAutoAdvance, '| resource saver:', saver);
     post({ type: 'config', enabled: seconds() > 0 });
     if (seconds() === 0) { if (live) abortLive(); dropPlan(); }
     else if (navigator.userActivation?.hasBeenActive) wake();
   }
 
   try {
-    chrome.storage.local.get({ crossfadeEnabled: false, crossfadeSeconds: 6, resourceSaverEnabled: false }, (r) => {
+    chrome.storage.local.get({
+      crossfadeEnabled: false,
+      crossfadeSeconds: 6,
+      crossfadeManualSkip: true,
+      crossfadeAutoAdvance: true,
+      resourceSaverEnabled: false
+    }, (r) => {
       userOn = r.crossfadeEnabled === true;
       userSecs = Number(r.crossfadeSeconds) || 6;
+      userManualSkip = r.crossfadeManualSkip !== false;
+      userAutoAdvance = r.crossfadeAutoAdvance !== false;
       saver = r.resourceSaverEnabled === true;
       applyConfig();
     });
@@ -68,6 +76,8 @@
       if (area !== 'local') return;
       if ('crossfadeEnabled' in ch) userOn = ch.crossfadeEnabled.newValue === true;
       if ('crossfadeSeconds' in ch) userSecs = Number(ch.crossfadeSeconds.newValue) || 6;
+      if ('crossfadeManualSkip' in ch) userManualSkip = ch.crossfadeManualSkip.newValue !== false;
+      if ('crossfadeAutoAdvance' in ch) userAutoAdvance = ch.crossfadeAutoAdvance.newValue !== false;
       if ('resourceSaverEnabled' in ch) saver = ch.resourceSaverEnabled.newValue === true;
       applyConfig();
     });
@@ -136,10 +146,18 @@
     tap = null;
   }
 
+  let manualSkipPending = false;
+
   function acceptTail(d) {
     log('tail reply:', d.ok ? 'ok, ' + (d.channels[0].length / d.sampleRate).toFixed(1) + 's of audio' : 'failed (' + d.why + ')');
     if (!st || d.id !== st.id) return;
     if (!d.ok) {
+      if (d.manualSkip) {
+        log('manual skip tail extraction failed (' + d.why + '), falling back to immediate next');
+        manualSkipPending = false;
+        post({ type: 'next' });
+        return;
+      }
       if (d.why === 'not-buffered' || d.why === 'no-data' || d.why === 'no-group' || d.why === 'short') {
         reqId = ''; retryAt = performance.now() + 1500;   // may become available shortly
       } else {
@@ -156,7 +174,71 @@
     const mono = new Float32Array(len);
     for (let i = 0; i < len; i++) mono[i] = (L[i] + R[i]) * 0.5;
     plan = { id: d.id, buf, mono, rate: d.sampleRate, start: d.start };
+
+    if (d.manualSkip) {
+      manualSkipPending = false;
+      const v = g.video;
+      if (v && seconds() > 0 && !live) {
+        log('triggering immediate handover for manual skip');
+        handOver(g, v, seconds());
+      }
+    }
   }
+
+  function onManualSkipRequested(e) {
+    if (!userManualSkip || seconds() === 0) return;
+    const g = graph();
+    const v = g?.video;
+    if (!g || !v || !st || st.ad || v.paused || live) return;
+    if (manualSkipPending) return;
+
+    if (e && e.cancelable) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+
+    manualSkipPending = true;
+    if (!tap) {
+      tap = g.ctx.createAnalyser();
+      tap.fftSize = 16384;
+      tap.smoothingTimeConstant = 0;
+      try { g.source.connect(tap); } catch { /* ignore */ }
+    }
+
+    const curId = st.id;
+    log('manual skip requested, asking for tail starting at', (v.currentTime + st.off).toFixed(1));
+    post({
+      type: 'prepare',
+      id: curId,
+      sampleRate: g.ctx.sampleRate,
+      needFrom: st.off + v.currentTime,
+      cover: seconds() + 2,
+      manualSkip: true,
+    });
+
+    setTimeout(() => {
+      if (manualSkipPending && !live && st?.id === curId) {
+        log('manual skip preparation timed out, falling back to direct next');
+        manualSkipPending = false;
+        post({ type: 'next' });
+      } else {
+        manualSkipPending = false;
+      }
+    }, 400);
+  }
+
+  document.addEventListener('click', (e) => {
+    const btn = e.target.closest?.('.next-button, #right-controls .next-button, ytmusic-player-bar .next-button');
+    if (btn) onManualSkipRequested(e);
+  }, true);
+
+  document.addEventListener('keydown', (e) => {
+    if (e.shiftKey && (e.key === 'N' || e.key === 'n') && !e.ctrlKey && !e.altKey && !e.metaKey) {
+      const active = document.activeElement;
+      if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable)) return;
+      onManualSkipRequested(e);
+    }
+  }, true);
 
   // ───────── alignment: where in the decoded tail are we right now? ─────────
   const rms = (a) => { let s = 0; for (let i = 0; i < a.length; i++) s += a[i] * a[i]; return Math.sqrt(s / Math.max(1, a.length)); };
@@ -371,6 +453,7 @@
       && st.dur >= Math.max(30, N * 2 + 8) && st.id && st.id !== failedId;
     if (!eligible) { if (remaining0(v) < N + PREP_LEAD && !tick[st.id]) { tick[st.id] = 1; log('not eligible:', { paused: v.paused, rate: v.playbackRate, ad: st.ad, repeatOne: st.rep, dur: st.dur, id: st.id, failed: st.id === failedId }); } return; }
 
+    if (!userAutoAdvance) return;
     const remaining = st.dur - (v.currentTime - st.off);
     if (remaining > N + PREP_LEAD + 1 || remaining < 0.8) return;
 

@@ -23,6 +23,7 @@
     'equalizer': 'The equalizer and crossfade are paused while Optimized & resource saving mode is on.',
     'lyrics': 'SponsorBlock and the "no lyrics" dancer are paused while Optimized & resource saving mode is on.',
     'lastfm': 'Last.fm scrobbling is paused while Optimized & resource saving mode is on.',
+    'listenbrainz': 'ListenBrainz scrobbling is paused while Optimized & resource saving mode is on.',
     'artwork-cache': 'Apple Music artwork fetching and caching are paused while Optimized & resource saving mode is on.'
   };
   const rsNotice = settings.querySelector('.rs-notice');
@@ -34,10 +35,11 @@
     'Artwork Cache': ['Artwork Cache', 'Browse, import, and export saved artwork', 'artwork-cache'],
     'Spotify Canvas': ['Spotify Canvas', 'Connect Spotify and manage Canvas', 'spotify-canvas'],
     'Last.fm': ['Last.fm', 'Scrobbling and account settings', 'lastfm', 'static'],
+    ListenBrainz: ['ListenBrainz', 'Open-source scrobbling to ListenBrainz', 'listenbrainz', 'static'],
     Updates: ['Updates', 'Check your installed version', 'updates']
   };
   const sectionKey = section => section.querySelector('.section-title, .cache-title')?.textContent.trim() || '';
-  const desiredOrder = ['Artwork', 'Spotify Canvas', 'Audio playback', 'Lyrics', 'Appearance', 'Artwork Cache', 'Last.fm', 'Updates'];
+  const desiredOrder = ['Artwork', 'Spotify Canvas', 'Audio playback', 'Lyrics', 'Appearance', 'Artwork Cache', 'Last.fm', 'ListenBrainz', 'Updates'];
   sections.sort((a, b) => desiredOrder.indexOf(sectionKey(a)) - desiredOrder.indexOf(sectionKey(b)));
   sections.forEach(section => {
     const heading = section.querySelector('.section-title, .cache-title');
@@ -45,7 +47,7 @@
     const [title, description, feature, motion = 'animated'] = meta[key] || [key, 'Feature settings', 'updates'];
     const card = document.createElement('button');
     card.type = 'button'; card.className = 'home-card'; card.dataset.feature = feature;
-    const staticIcon = `../icons/popup/${feature}-static.png`;
+    const staticIcon = feature === 'listenbrainz' ? '../icons/popup/lastfm-static.png' : `../icons/popup/${feature}-static.png`;
     const animatedIcon = motion === 'static' ? '' : `../icons/popup/${feature}-animated.png`;
     card.innerHTML = `<span class="home-card-top"><span class="home-card-title">${title}</span><span class="home-card-icon"><img class="card-icon-static" src="${staticIcon}" alt=""><img class="card-icon-animated" alt=""></span></span><span class="home-card-description">${description}</span>`;
     const animatedImage = card.querySelector('.card-icon-animated');

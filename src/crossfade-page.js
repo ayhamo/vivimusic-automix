@@ -167,43 +167,60 @@
   // ───────────────────────── tail decoding ─────────────────────────
   async function buildTail(req) {
     const snap = snapshot();
-    if (!snap || snap.id !== req.id) return { ok: false, why: 'track-changed' };
+    if (!snap || snap.id !== req.id) return { ok: false, why: 'track-changed', manualSkip: !!req.manualSkip };
     const sink = liveSink();
-    if (!sink || !sink.parts.length) return { ok: false, why: 'no-data' };
+    if (!sink || !sink.parts.length) return { ok: false, why: 'no-data', manualSkip: !!req.manualSkip };
 
     // Segments belonging to this song share one timestampOffset.
     const mine = sink.parts.filter((p) => Math.abs(p.shift - snap.off) < 0.05);
-    if (!mine.length) return { ok: false, why: 'no-group' };
+    if (!mine.length) return { ok: false, why: 'no-group', manualSkip: !!req.manualSkip };
 
     // Order by time, de-duplicate re-appended segments.
     mine.sort((a, b) => a.t - b.t);
     const uniq = mine.filter((p, i) => i === mine.length - 1 || mine[i + 1].t - p.t > 0.01);
 
-    // After a seek, YouTube Music never loads the skipped part, so the captured
-    // segments can have holes. Keep only the unbroken run that reaches the end.
     const gaps = [];
     for (let i = 1; i < uniq.length; i++) gaps.push(uniq[i].t - uniq[i - 1].t);
     gaps.sort((x, y) => x - y);
     const typical = gaps.length ? gaps[Math.floor(gaps.length / 2)] : 8;
     const limit = typical * 1.6 + 0.5;
-    let begin = uniq.length - 1;
-    while (begin > 0 && uniq[begin].t - uniq[begin - 1].t <= limit) begin--;
-    const solid = uniq.slice(begin);
 
-    // The song must be buffered right to the end...
-    const trackEnd = snap.off + snap.dur;
-    const lastStart = solid[solid.length - 1].t + solid[solid.length - 1].shift;
-    if (lastStart < trackEnd - (typical * 1.5 + 1)) return { ok: false, why: 'not-buffered' };
-    // ...and the unbroken part must reach back far enough to cover the fade.
-    if (solid[0].t + solid[0].shift > trackEnd - (req.cover || 6)) return { ok: false, why: 'short' };
+    let run;
+    if (req.manualSkip) {
+      let first = -1;
+      for (let i = 0; i < uniq.length; i++) {
+        const segStart = uniq[i].t + uniq[i].shift;
+        if (segStart <= req.needFrom) first = i; else break;
+      }
+      if (first === -1) first = 0;
+      const candidates = uniq.slice(first);
+      if (!candidates.length) return { ok: false, why: 'no-candidates', manualSkip: true };
+      const lastAvailable = candidates[candidates.length - 1].t + candidates[candidates.length - 1].shift;
+      if (lastAvailable < req.needFrom + 0.8) return { ok: false, why: 'not-enough-buffered', manualSkip: true };
 
-    // Start at the last segment that begins at or before the requested time.
-    let first = 0;
-    for (let i = 0; i < solid.length; i++) {
-      if (solid[i].t + solid[i].shift <= req.needFrom) first = i; else break;
+      const maxSegs = Math.max(1, Math.min(candidates.length, Math.ceil(((req.cover || 6) + 4) / typical) + 2));
+      run = candidates.slice(0, maxSegs);
+    } else {
+      let begin = uniq.length - 1;
+      while (begin > 0 && uniq[begin].t - uniq[begin - 1].t <= limit) begin--;
+      const solid = uniq.slice(begin);
+
+      // The song must be buffered right to the end...
+      const trackEnd = snap.off + snap.dur;
+      const lastStart = solid[solid.length - 1].t + solid[solid.length - 1].shift;
+      if (lastStart < trackEnd - (typical * 1.5 + 1)) return { ok: false, why: 'not-buffered' };
+      // ...and the unbroken part must reach back far enough to cover the fade.
+      if (solid[0].t + solid[0].shift > trackEnd - (req.cover || 6)) return { ok: false, why: 'short' };
+
+      // Start at the last segment that begins at or before the requested time.
+      let first = 0;
+      for (let i = 0; i < solid.length; i++) {
+        if (solid[i].t + solid[i].shift <= req.needFrom) first = i; else break;
+      }
+      run = solid.slice(first);
     }
-    const run = solid.slice(first);
 
+    if (!run.length || !run[0].init) return { ok: false, why: 'empty-run', manualSkip: !!req.manualSkip };
     const init = run[0].init;
     const total = run.reduce((n, p) => n + p.bytes.byteLength, init.byteLength);
     const blob = new Uint8Array(total);
@@ -216,18 +233,18 @@
       const offline = new OfflineAudioContext(2, 1, req.sampleRate);
       decoded = await offline.decodeAudioData(blob.buffer);
     } catch {
-      return { ok: false, why: 'decode' };
+      return { ok: false, why: 'decode', manualSkip: !!req.manualSkip };
     }
 
     // Song might have changed while decoding.
     const again = snapshot();
-    if (!again || again.id !== req.id) return { ok: false, why: 'track-changed' };
+    if (!again || again.id !== req.id) return { ok: false, why: 'track-changed', manualSkip: !!req.manualSkip };
 
     const channels = [];
     for (let c = 0; c < Math.min(2, decoded.numberOfChannels); c++) {
       channels.push(decoded.getChannelData(c).slice());
     }
-    return { ok: true, sampleRate: decoded.sampleRate, start: run[0].t + run[0].shift, channels };
+    return { ok: true, sampleRate: decoded.sampleRate, start: run[0].t + run[0].shift, channels, manualSkip: !!req.manualSkip };
   }
 
   function pressNext() {

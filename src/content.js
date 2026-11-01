@@ -289,10 +289,21 @@
   let appleUserEnabled = true;
   let sponsorUserEnabled = true;
   let lastfmUserEnabled = false;
+
+  const LISTENBRAINZ_DEFAULTS = {
+    listenbrainzEnabled: false,
+    listenbrainzSendNowPlaying: true,
+  };
+  let listenbrainzSettings = { ...LISTENBRAINZ_DEFAULTS };
+  let listenbrainzUserEnabled = false;
+  let listenbrainzScrobbled = false;
+  let listenbrainzSentNowPlaying = false;
+
   function applyResourceSaverState() {
     appleCanvasEnabled = appleUserEnabled && !resourceSaver;
     sponsorBlockEnabled = sponsorUserEnabled && !resourceSaver;
     lastfmSettings.lastfmEnabled = lastfmUserEnabled && !resourceSaver;
+    listenbrainzSettings.listenbrainzEnabled = listenbrainzUserEnabled && !resourceSaver;
     updateKawarpVisibility(); // Kawarp + equalizer
   }
   let lastfmCurrentKey = null;
@@ -1990,6 +2001,46 @@
     lastfmSentNowPlaying = false;
   }
 
+  
+  function resetListenbrainzForNewTrack() {
+    listenbrainzScrobbled = false;
+    listenbrainzSentNowPlaying = false;
+  }
+
+  function sendListenbrainzNowPlaying(track) {
+    if (!listenbrainzSettings.listenbrainzEnabled || !listenbrainzSettings.listenbrainzSendNowPlaying) return;
+    if (listenbrainzSentNowPlaying) return;
+    listenbrainzSentNowPlaying = true;
+    const video = getVideoEl();
+    chrome.runtime.sendMessage({
+      type: 'VIVI_LISTENBRAINZ_NOWPLAYING',
+      track: { artist: track.artist, song: track.song, duration: video?.duration || undefined },
+    }).catch(() => {});
+  }
+
+  function maybeScrobbleListenbrainz(track) {
+    if (!listenbrainzSettings.listenbrainzEnabled || listenbrainzScrobbled) return;
+    const video = getVideoEl();
+    if (!video || !video.duration || Number.isNaN(video.duration)) return;
+
+    const duration = video.duration;
+    const elapsed = video.currentTime || 0;
+    if (duration < (lastfmSettings.lastfmMinDurationSec || 30)) return;
+
+    const percentThreshold = duration * ((lastfmSettings.lastfmDelayPercent || 50) / 100);
+    const minutesThreshold = (lastfmSettings.lastfmDelayMinutes || 3) * 60;
+    const threshold = Math.min(percentThreshold, minutesThreshold);
+
+    if (elapsed >= threshold) {
+      listenbrainzScrobbled = true;
+      chrome.runtime.sendMessage({
+        type: 'VIVI_LISTENBRAINZ_SCROBBLE',
+        track: { artist: track.artist, song: track.song },
+        timestamp: lastfmStartedAt,
+      }).catch(() => {});
+    }
+  }
+
   function sendLastfmNowPlaying(track) {
     if (!lastfmSettings.lastfmEnabled || !lastfmSettings.lastfmSendNowPlaying) return;
     if (lastfmSentNowPlaying) return;
@@ -2746,6 +2797,7 @@
     if (key !== lastfmCurrentKey) {
       lastfmCurrentKey = key;
       resetLastfmForNewTrack();
+      resetListenbrainzForNewTrack();
       watchLikeButton(track);
     }
 
@@ -3163,7 +3215,9 @@
   window.addEventListener('scroll', syncDiscTonearm, { passive: true, capture: true });
   updateBackgroundTabMode();
 
-  chrome.storage.local.get(LASTFM_DEFAULTS, (stored) => {
+  chrome.storage.local.get({ ...LASTFM_DEFAULTS, ...LISTENBRAINZ_DEFAULTS }, (stored) => {
+    listenbrainzSettings = { ...LISTENBRAINZ_DEFAULTS, ...stored };
+    listenbrainzUserEnabled = listenbrainzSettings.listenbrainzEnabled === true;
     lastfmSettings = { ...LASTFM_DEFAULTS, ...stored };
     lastfmUserEnabled = lastfmSettings.lastfmEnabled === true;
     applyResourceSaverState();
@@ -3574,12 +3628,20 @@
         });
         if (hasLiveOpts) window.__viviKawarp?.setOptions(liveOpts);
       }
+            Object.keys(LISTENBRAINZ_DEFAULTS).forEach((k) => {
+        if (k in msg) listenbrainzSettings[k] = msg[k];
+      });
+      if ('listenbrainzEnabled' in msg) {
+        listenbrainzUserEnabled = msg.listenbrainzEnabled === true;
+        listenbrainzSettings.listenbrainzEnabled = listenbrainzUserEnabled && !resourceSaver;
+      }
       Object.keys(LASTFM_DEFAULTS).forEach((k) => {
         if (k in msg) lastfmSettings[k] = msg[k];
       });
       if ('lastfmEnabled' in msg) {
         lastfmUserEnabled = msg.lastfmEnabled === true;
         lastfmSettings.lastfmEnabled = lastfmUserEnabled && !resourceSaver;
+    listenbrainzSettings.listenbrainzEnabled = listenbrainzUserEnabled && !resourceSaver;
       }
       if (Object.keys(LASTFM_DEFAULTS).some((k) => k in msg)) {
         const track = getCurrentTrack();
