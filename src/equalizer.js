@@ -65,6 +65,7 @@
   let sourceNode = null;
   let lowShelf = null;
   let xfGate = null;
+  let xfBassFilter = null;
   let midPeak = null;
   let highShelf = null;
   let dryGain = null;
@@ -161,8 +162,13 @@
       // Crossfade gate: a plain gain stage between the element and the EQ.
       // It sits at 1.0 (transparent) unless crossfade.js is mid-transition.
       xfGate = audioCtx.createGain();
+      xfBassFilter = audioCtx.createBiquadFilter();
+      xfBassFilter.type = 'lowshelf';
+      xfBassFilter.frequency.value = 250;
+      xfBassFilter.gain.value = 0;
       sourceNode.connect(xfGate);
-      xfGate.connect(lowShelf);
+      xfGate.connect(xfBassFilter);
+      xfBassFilter.connect(lowShelf);
       lowShelf.connect(midPeak);
       midPeak.connect(highShelf);
 
@@ -184,7 +190,7 @@
 
       boundVideo = video;
       // Shared handle so crossfade.js can feed the same processing chain.
-      window.__viviAudioGraph = { ctx: audioCtx, video, source: sourceNode, gate: xfGate, entry: lowShelf };
+      window.__viviAudioGraph = { ctx: audioCtx, video, source: sourceNode, gate: xfGate, bassFilter: xfBassFilter, entry: lowShelf };
       applySettingsToGraph();
       return true;
     } catch (e) {

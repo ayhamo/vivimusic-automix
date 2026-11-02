@@ -2769,6 +2769,177 @@
     }, true);
   }
 
+
+  // ───────────────────────── Mouse Wheel Volume (from BitChord) ─────────────────────────
+  let wheelVolumeEnabled = true;
+  const WHEEL_VOLUME_STEP = 0.05;
+
+  function initWheelVolume() {
+    window.addEventListener('wheel', (e) => {
+      if (!wheelVolumeEnabled) return;
+      const target = e.target;
+      const playerBar = target?.closest?.('ytmusic-player-bar');
+      const playerArt = target?.closest?.('#player, #song-image, ytmusic-player, .song-media-window');
+      const volSlider = target?.closest?.('.volume-slider, #sliderBar');
+
+      if (!playerBar && !playerArt && !volSlider) return;
+
+      if (!playerBar && !volSlider && target?.closest?.('#queue, #contents, #lyrics, .ytmusic-player-page-lyrics')) {
+        if (!e.altKey && !e.ctrlKey) return;
+      }
+
+      const video = document.querySelector('video');
+      if (!video) return;
+
+      e.preventDefault();
+      const delta = e.deltaY;
+      if (delta === 0) return;
+
+      const curVol = video.volume;
+      const next = curVol + (delta < 0 ? WHEEL_VOLUME_STEP : -WHEEL_VOLUME_STEP);
+      const clamped = Math.round(Math.min(1, Math.max(0, next)) * 100) / 100;
+      video.volume = clamped;
+
+      window.postMessage({
+        ch: 'vivi-xfade',
+        dir: 'in',
+        type: 'set-volume',
+        volume: clamped,
+      }, window.location.origin);
+    }, { passive: false });
+  }
+
+  // ───────────────────────── Apple Artist Hero Art & Palette (from BitChord) ─────────────────────────
+  let appleArtistArtEnabled = true;
+  let currentAppleArtistArt = null;
+
+  async function applyAppleArtistArtForTrack(track) {
+    if (!appleArtistArtEnabled || !track?.artist) return;
+    const cleanArtist = window.__viviLyrics?.cleanArtistForLyrics?.(track.artist) || track.artist;
+    try {
+      const res = await chrome.runtime.sendMessage({
+        type: 'VIVI_APPLE_ARTIST_ART',
+        artist: cleanArtist,
+      });
+      if (!res?.ok || !res.art) return;
+      currentAppleArtistArt = res.art;
+
+      const root = document.documentElement;
+      if (res.art.background) root.style.setProperty('--vivi-apple-bg', res.art.background);
+      if (res.art.accent) root.style.setProperty('--vivi-apple-accent', res.art.accent);
+      if (res.art.keyColor) root.style.setProperty('--vivi-apple-key', res.art.keyColor);
+
+      const playerBg = document.querySelector('ytmusic-player#player, #main-panel');
+      if (playerBg && res.art.background) {
+        playerBg.style.setProperty('--ytmusic-player-background-color', res.art.background);
+      }
+    } catch { /* context gone */ }
+  }
+
+  // ───────────────────────── Automix "Stats for Nerds" Overlay (from BitChord) ─────────────────────────
+  let nerdStatsEnabled = false;
+  let nerdStatsEl = null;
+
+  function createNerdStatsOverlay() {
+    if (nerdStatsEl) return nerdStatsEl;
+    const el = document.createElement('div');
+    el.id = 'vivi-nerd-stats';
+    el.style.cssText = `
+      position: fixed;
+      bottom: 84px;
+      left: 16px;
+      z-index: 999999;
+      background: rgba(18, 18, 18, 0.88);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      border-radius: 8px;
+      padding: 8px 12px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace;
+      font-size: 11px;
+      line-height: 15px;
+      color: rgba(255, 255, 255, 0.85);
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.6);
+      pointer-events: none;
+      display: none;
+      max-width: 440px;
+      font-variant-numeric: tabular-nums;
+      text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+    `;
+
+    el.innerHTML = `
+      <div id="vivi-nerd-stream" style="font-weight: 600; color: #fff; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">Stream: Measuring...</div>
+      <div id="vivi-nerd-automix" style="margin-top: 2px; color: #ff6599; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">Automix: Initializing...</div>
+    `;
+
+    document.body.appendChild(el);
+    nerdStatsEl = el;
+    return el;
+  }
+
+  function updateNerdStatsHUD() {
+    if (!nerdStatsEnabled) {
+      if (nerdStatsEl) nerdStatsEl.style.display = 'none';
+      return;
+    }
+
+    const hud = createNerdStatsOverlay();
+    hud.style.display = 'block';
+
+    const streamEl = hud.querySelector('#vivi-nerd-stream');
+    const automixEl = hud.querySelector('#vivi-nerd-automix');
+
+    const video = document.querySelector('video');
+    const track = getCurrentTrack();
+
+    let codec = 'Opus';
+    let sampleRate = '48 kHz';
+    let channels = 'Stereo';
+    let bitrate = '160 kbps';
+    const trackTitle = track ? `${track.song || 'Unknown'} · ${track.artist || ''}` : 'No track';
+    if (streamEl) {
+      streamEl.textContent = `${codec} · ${sampleRate} · ${bitrate} · ${channels} | ${trackTitle}`;
+    }
+
+    const automix = window.__viviAutomix;
+    if (automixEl) {
+      if (!automix || !automix.isEnabled()) {
+        automixEl.textContent = 'Automix · Off (5s Equal-Power crossfade)';
+        automixEl.style.color = '#888';
+      } else {
+        const live = automix.getLiveState?.() || {};
+        const p = live.lastPlan;
+        if (live.statusText && live.statusText.includes('mixing now')) {
+          automixEl.textContent = `Automix · ${live.statusText}`;
+          automixEl.style.color = '#00e676';
+        } else if (p && p.canMix) {
+          automixEl.textContent = `Automix · ${p.bars} bars (${p.transitionDurationSec.toFixed(1)}s) · ${p.bpmA.toFixed(0)} -> ${p.bpmB.toFixed(0)} BPM (${p.rateB.toFixed(3)}x) · conf ${p.minConf?.toFixed(2) || '0.8+'}`;
+          automixEl.style.color = '#ff6599';
+        } else if (live.currentBpm) {
+          automixEl.textContent = `Automix · this: ${live.currentBpm.toFixed(0)} BPM (${(live.currentConfidence || 0).toFixed(2)}) · next: ${live.nextBpm ? live.nextBpm.toFixed(0) + ' BPM' : 'waiting'}`;
+          automixEl.style.color = '#ffb300';
+        } else {
+          automixEl.textContent = `Automix · Ready (60s trigger, 4/8/16 bars) · ${live.statusText || 'idle'}`;
+          automixEl.style.color = '#90caf9';
+        }
+      }
+    }
+  }
+
+  document.addEventListener('keydown', (e) => {
+    if (e.shiftKey && (e.key === 'D' || e.key === 'd') && !e.ctrlKey && !e.altKey && !e.metaKey) {
+      const active = document.activeElement;
+      if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable)) return;
+      nerdStatsEnabled = !nerdStatsEnabled;
+      chrome.storage.local.set({ nerdStatsEnabled });
+      updateNerdStatsHUD();
+    }
+  }, true);
+
+  setInterval(() => {
+    if (nerdStatsEnabled) updateNerdStatsHUD();
+  }, 1000);
+
   async function handleTrackChange(track, { recover = false } = {}) {
     const key = `${track.artist}—${track.song}`;
     // recover = re-render the Canvas for the song that is already current,
@@ -2777,6 +2948,7 @@
       window.__viviLyricsUI?.handleTrack(track);
       loadSponsorSegmentsForTrack(track).catch((e) => warn('SponsorBlock: track load failed', e?.message));
       applyViviTitle(track);
+      applyAppleArtistArtForTrack(track);
     }
     if (key === currentTrackKey && !recover) return;
     currentTrackKey = key;
@@ -3224,20 +3396,21 @@
   });
 
   chrome.storage.local.get({
-    enabled: true, themeEnabled: true, imageOnlyMode: false, spotifyCanvasEnabled: true, canvasPriority: 'apple', sponsorBlockEnabled: true,
+    wheelVolumeEnabled: true, appleArtistArtEnabled: true, nerdStatsEnabled: false, enabled: true, themeEnabled: true, imageOnlyMode: false, spotifyCanvasEnabled: true, canvasPriority: 'apple', sponsorBlockEnabled: true,
     discStyleEnabled: false,
     playerTabIcons: true,
     kawarpEnabled: false, kawarpPauseWhenInactive: true, eqEnabled: false, resourceSaverEnabled: false,
     kawarpWarpIntensity: 1.0, kawarpBlurPasses: 6, kawarpAnimationSpeed: 4.15,
     kawarpTransitionDuration: 0, kawarpSaturation: 2.6, kawarpDithering: 0.034, kawarpOpacity: 1.0, kawarpBrightness: 0.5,
   }, ({
-    enabled, themeEnabled, imageOnlyMode: imgOnly, spotifyCanvasEnabled: spCanvas, canvasPriority: canvasPrio, sponsorBlockEnabled: sbEnabled,
+    wheelVolumeEnabled: wvEnabled, appleArtistArtEnabled: aaaEnabled, nerdStatsEnabled: nsEnabled, enabled, themeEnabled, imageOnlyMode: imgOnly, spotifyCanvasEnabled: spCanvas, canvasPriority: canvasPrio, sponsorBlockEnabled: sbEnabled,
     discStyleEnabled: discStyle,
     playerTabIcons: tabIcons,
     kawarpEnabled: kwEnabled, kawarpPauseWhenInactive: kwPause, eqEnabled: eqEnabled_, resourceSaverEnabled: rsEnabled,
     kawarpWarpIntensity, kawarpBlurPasses, kawarpAnimationSpeed, kawarpTransitionDuration, kawarpSaturation, kawarpDithering, kawarpOpacity, kawarpBrightness,
   }) => {
     bindCanvasTrackTransitionGuard();
+    initWheelVolume();
     resourceSaver = rsEnabled === true;
     appleUserEnabled = enabled !== false && discStyle !== true;
     spotifyCanvasEnabled = spCanvas !== false && discStyle !== true;
@@ -3248,6 +3421,10 @@
     themeUserEnabled = themeEnabled;
     imageOnlyMode = imgOnly;
     applyTheme(themeEnabled);
+    wheelVolumeEnabled = wvEnabled !== false;
+    appleArtistArtEnabled = aaaEnabled !== false;
+    nerdStatsEnabled = nsEnabled === true;
+    updateNerdStatsHUD();
     window.__viviKawarp?.setOptions({
       warpIntensity: kawarpWarpIntensity,
       blurPasses: kawarpBlurPasses,
@@ -3582,6 +3759,18 @@
         if (track) handleTrackChange(track);
         if (!pollTimer) startPolling();
       }
+      
+      if ('wheelVolumeEnabled' in msg) wheelVolumeEnabled = msg.wheelVolumeEnabled !== false;
+      if ('appleArtistArtEnabled' in msg) {
+        appleArtistArtEnabled = msg.appleArtistArtEnabled !== false;
+        const track = getCurrentTrack();
+        if (track && appleArtistArtEnabled) applyAppleArtistArtForTrack(track);
+      }
+      if ('nerdStatsEnabled' in msg) {
+        nerdStatsEnabled = msg.nerdStatsEnabled === true;
+        updateNerdStatsHUD();
+      }
+
       if ('sponsorBlockEnabled' in msg) {
         sponsorUserEnabled = msg.sponsorBlockEnabled !== false;
         sponsorBlockEnabled = sponsorUserEnabled && !resourceSaver;

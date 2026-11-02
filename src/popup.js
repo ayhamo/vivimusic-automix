@@ -434,6 +434,33 @@
     if (automixBarsVal) automixBarsVal.textContent = v + ' bars';
   });
 
+  const nerdStatsToggle = document.getElementById('nerdStatsToggle');
+  const wheelVolumeToggle = document.getElementById('wheelVolumeToggle');
+  const appleArtistArtToggle = document.getElementById('appleArtistArtToggle');
+
+  chrome.storage.local.get({
+    nerdStatsEnabled: false,
+    wheelVolumeEnabled: true,
+    appleArtistArtEnabled: true,
+  }, (r) => {
+    if (nerdStatsToggle) nerdStatsToggle.checked = r.nerdStatsEnabled === true;
+    if (wheelVolumeToggle) wheelVolumeToggle.checked = r.wheelVolumeEnabled !== false;
+    if (appleArtistArtToggle) appleArtistArtToggle.checked = r.appleArtistArtEnabled !== false;
+  });
+
+  nerdStatsToggle?.addEventListener('change', () => {
+    chrome.storage.local.set({ nerdStatsEnabled: nerdStatsToggle.checked });
+  });
+
+  wheelVolumeToggle?.addEventListener('change', () => {
+    chrome.storage.local.set({ wheelVolumeEnabled: wheelVolumeToggle.checked });
+  });
+
+  appleArtistArtToggle?.addEventListener('change', () => {
+    chrome.storage.local.set({ appleArtistArtEnabled: appleArtistArtToggle.checked });
+  });
+
+
   crossfadeToggle.addEventListener('change', () => {
     paintCrossfade(crossfadeToggle.checked, crossfadeSeconds.value);
     chrome.storage.local.set({ crossfadeEnabled: crossfadeToggle.checked });

@@ -247,6 +247,18 @@
     return { ok: true, sampleRate: decoded.sampleRate, start: run[0].t + run[0].shift, channels, isAutomix: !!req.isAutomix, manualSkip: !!req.manualSkip };
   }
 
+  function setPlayerVolume(vol) {
+    try {
+      const mp = moviePlayer();
+      if (mp) {
+        if (typeof mp.setVolume === 'function') mp.setVolume(Math.round(vol * 100));
+        if (vol > 0 && typeof mp.unMute === 'function') mp.unMute();
+      }
+      const video = document.querySelector('video');
+      if (video) video.volume = vol;
+    } catch { /* ignore */ }
+  }
+
   function pressNext() {
     const btn = document.querySelector('ytmusic-player-bar .next-button');
     if (btn) btn.click();
@@ -267,6 +279,8 @@
       say({ type: 'tail', id: d.id, ...out });
     } else if (d.type === 'next') {
       pressNext();
+    } else if (d.type === 'set-volume') {
+      setPlayerVolume(d.volume);
     }
   });
 })();

@@ -152,6 +152,29 @@
     });
   }
 
+  // ───────────────────────── Live State & Scaling ─────────────────────────
+  const automixLiveState = {
+    currentBpm: null,
+    currentConfidence: null,
+    nextBpm: null,
+    nextConfidence: null,
+    lastPlan: null,
+    statusText: 'idle',
+    updatedAt: Date.now(),
+  };
+
+  /**
+   * BitChord confidence-scaled blend length (effectiveBlendBars):
+   * Long overlaps require high confidence; weaker grids get clamped
+   * to 8 or 4 bars, or cleanly fall back below 0.20.
+   */
+  function effectiveBlendBars(requestedBars, confA, confB) {
+    const minConf = Math.min(confA, confB);
+    if (minConf >= 0.60) return requestedBars;
+    if (minConf >= 0.45) return Math.min(requestedBars, 8);
+    return Math.min(requestedBars, 4);
+  }
+
   // ───────────────────────── Transition Planner ─────────────────────────
   function planTransition(fromAnalysis, toAnalysis, requestedBars = automixBars) {
     if (!fromAnalysis || !toAnalysis) {
@@ -306,6 +329,9 @@
     planTransition,
     getNextTrackInfo,
     fetchTrackBIntroAudio,
+    getLiveState: () => ({ ...automixLiveState, updatedAt: Date.now() }),
+    setLiveStatus: (txt) => { automixLiveState.statusText = txt; automixLiveState.updatedAt = Date.now(); },
+    effectiveBlendBars,
   };
 
   log('Automix module loaded.');

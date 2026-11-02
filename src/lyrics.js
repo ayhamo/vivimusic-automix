@@ -32,7 +32,29 @@
   const log = (...a) => DEBUG && console.log('[Vivi:Lyrics]', ...a);
 
   
+  // ---- Title & Artist Cleaner for Lyrics (from BitChord / LyricsQuery) ----
+  const CREDITS = [
+    /\s*[([]\s*(feat|ft|featuring|with)\b[^)\]]*[)\]]/gi,
+    /\s+(feat|ft|featuring)\.?\s+.*$/gi,
+    /\s*[([]\s*(official\s*)?(music\s*)?(video|audio|visuali[sz]er|lyrics?\s*video|lyrics?|m\/?v|hd|hq|4k|full\s*song)\s*[)\]]/gi,
+    /\s*[([]\s*official\s*[)\]]/gi,
+  ];
+
+  function cleanTitleForLyrics(title) {
+    if (!title) return '';
+    let name = String(title);
+    for (const pattern of CREDITS) name = name.replace(pattern, ' ');
+    const cleaned = name.replace(/\s+/g, ' ').trim().replace(/[,\-–—]+$/, '').trim();
+    return cleaned || String(title).trim();
+  }
+
+  function cleanArtistForLyrics(artist) {
+    if (!artist) return '';
+    return String(artist).replace(/ - Topic$/i, '').trim() || String(artist).trim();
+  }
+
   const DEFAULT_PROVIDERS = {
+    lyricsplus: true,
     lrcred: true,
     betterlyricsTTML: true,
     betterlyricsKugou: true,
@@ -59,7 +81,7 @@
   // in the top-3 priority list (line-only sources — Legato/Kugou, Legacy,
   // LRCLIB — are not offered there). A priority provider's
   // reply is shown whatever level it turns out to be, even line-synced.
-  const PRIORITY_ELIGIBLE_KEYS = ['lrcred', 'betterlyricsTTML', 'paxsenix', 'betterlyricsPortato', 'unison', 'binilyrics', 'musixmatch'];
+  const PRIORITY_ELIGIBLE_KEYS = ['lyricsplus', 'lrcred', 'betterlyricsTTML', 'paxsenix', 'betterlyricsPortato', 'unison', 'binilyrics', 'musixmatch'];
   const sanitizeOrder = (arr) => (Array.isArray(arr) ? arr : [])
     .filter((k, i, a) => PRIORITY_ELIGIBLE_KEYS.includes(k) && a.indexOf(k) === i)
     .slice(0, 3);
@@ -846,6 +868,77 @@
   }
 
   
+  // LyricsPlus — community mirrors with syllable/word sync
+  const LYRICS_PLUS_MIRRORS = ['https://lyricsplus.prjktla.my.id', 'https://lyricsplus.binimum.org'];
+  let lyricsPlusGoodMirror = null;
+
+  async function fromLyricsPlus(track) {
+    const mirrors = lyricsPlusGoodMirror
+      ? [lyricsPlusGoodMirror, ...LYRICS_PLUS_MIRRORS.filter((m) => m !== lyricsPlusGoodMirror)]
+      : LYRICS_PLUS_MIRRORS;
+
+    for (const host of mirrors) {
+      try {
+        const durSec = Math.round(track.duration || 0);
+        const qs = new URLSearchParams({
+          title: track.song,
+          artist: track.artist,
+          duration: durSec ? String(durSec) : '',
+        }).toString();
+        const res = await withTimeout(fetch(`${host}/v2/lyrics/get?${qs}`), FETCH_TIMEOUT);
+        if (!res || !res.ok) continue;
+        const data = await res.json();
+        if (!data || !Array.isArray(data.lyrics) || !data.lyrics.length) continue;
+        lyricsPlusGoodMirror = host;
+
+        const lines = [];
+        let hasSyllables = false;
+        for (const item of data.lyrics) {
+          if (typeof item.time !== 'number') continue;
+          const startMs = item.time;
+          const endMs = startMs + (item.duration || 5000);
+          const rawText = String(item.text || '').trim();
+
+          let words = null;
+          if (Array.isArray(item.syllabus) && item.syllabus.length) {
+            const parts = item.syllabus
+              .filter((s) => typeof s.text === 'string' && typeof s.time === 'number')
+              .map((s) => ({
+                text: s.text,
+                start: s.time,
+                end: s.time + (s.duration || 0),
+              }));
+            if (parts.length) {
+              words = buildWordsFromParts(parts);
+              repairTimings(words, endMs);
+              hasSyllables = true;
+            }
+          }
+
+          lines.push({
+            start: startMs,
+            end: endMs,
+            text: rawText || (words ? words.map((w) => w.text).join(' ') : ''),
+            words: words && words.length ? words : undefined,
+          });
+        }
+
+        if (!lines.length) continue;
+        const parsed = {
+          mode: hasSyllables ? 'syllable' : 'line',
+          provider: 'LyricsPlus',
+          lines,
+        };
+        const checked = checkTiming(parsed, track, 'LyricsPlus');
+        if (checked) checked.provider = 'LyricsPlus';
+        return checked;
+      } catch (e) {
+        log('LyricsPlus mirror error:', host, e?.message || e);
+      }
+    }
+    return null;
+  }
+
   // Priority-aware provider resolution. Only the up-to-3 prioritized
   // providers are considered here — everything else in jobDefs is left
   // alone and only gets tried afterward, as a fallback, if none of these
@@ -1027,6 +1120,7 @@
     unison: 'Unison',
     binilyrics: 'BiniLyrics',
     paxsenix: 'Paxsenix',
+    lyricsplus: 'LyricsPlus',
     genius: 'Genius',
     spotify: 'Spotify',
   };
@@ -1090,7 +1184,11 @@
   //     level wins (priority order breaks ties). Plain is only a last resort.
   //  4. Spotify joins the scan when the best is plain, and is used on its own
   //     when nothing at all was found.
-  async function resolveLyrics(track, excludeKeys, onUpdate) {
+  async function resolveLyrics(rawTrack, excludeKeys, onUpdate) {
+    const cleanSong = cleanTitleForLyrics(rawTrack?.song || '');
+    const cleanArtist = cleanArtistForLyrics(rawTrack?.artist || '');
+    const track = { ...rawTrack, song: cleanSong, artist: cleanArtist, rawSong: rawTrack?.song, rawArtist: rawTrack?.artist };
+
     const jobDefs = [];
     const add = (key, fn) => {
       if (providerSettings[key] && !excludeKeys.has(key)) jobDefs.push({ key, promise: fn(track) });
@@ -1105,6 +1203,7 @@
     add('unison', fromUnison);
     add('binilyrics', fromBiniLyrics);
     add('paxsenix', fromPaxsenix);
+    add('lyricsplus', fromLyricsPlus);
     add('genius', fromGenius);
 
     const spotifyOn = !!providerSettings.spotify && !excludeKeys.has('spotify');
@@ -1168,5 +1267,5 @@
     return best;
   }
 
-  window.__viviLyrics = { fetchBestLyrics, parseTTML, parseLRC, parseEnhancedLRC, parseQRC, parsePlain, providerKeyForName };
+  window.__viviLyrics = { cleanTitleForLyrics, cleanArtistForLyrics, fetchBestLyrics, parseTTML, parseLRC, parseEnhancedLRC, parseQRC, parsePlain, providerKeyForName };
 })();

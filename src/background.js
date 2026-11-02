@@ -1291,10 +1291,142 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   return true;
 });
 
+
+// ── Title & Artist Cleaners for Lyrics & Artwork Search (from BitChord) ──
+const CREDITS_PATTERNS = [
+  /\s*[([]\s*(feat|ft|featuring|with)\b[^)\]]*[)\]]/gi,
+  /\s+(feat|ft|featuring)\.?\s+.*$/gi,
+  /\s*[([]\s*(official\s*)?(music\s*)?(video|audio|visuali[sz]er|lyrics?\s*video|lyrics?|m\/?v|hd|hq|4k|full\s*song)\s*[)\]]/gi,
+  /\s*[([]\s*official\s*[)\]]/gi,
+];
+
+function cleanTitleForLyrics(title) {
+  if (!title) return '';
+  let name = String(title);
+  for (const pattern of CREDITS_PATTERNS) name = name.replace(pattern, ' ');
+  const cleaned = name.replace(/\s+/g, ' ').trim().replace(/[,\-–—]+$/, '').trim();
+  return cleaned || String(title).trim();
+}
+
+function cleanArtistForLyrics(artist) {
+  if (!artist) return '';
+  return String(artist).replace(/ - Topic$/i, '').trim() || String(artist).trim();
+}
+
+// ── Apple Music Artist Hero Art & Palette Extraction (from BitChord) ──
+async function getAppleArtistArt(artistName) {
+  const cleanArtist = cleanArtistForLyrics(artistName);
+  if (!cleanArtist) return null;
+
+  try {
+    const searchUrl = `https://itunes.apple.com/search?term=${encodeURIComponent(cleanArtist)}&entity=musicArtist&limit=5`;
+    const searchRes = await fetch(searchUrl);
+    if (!searchRes.ok) return null;
+    const searchData = await searchRes.json();
+    const results = searchData?.results || [];
+
+    const norm = (s) => (s || '').toLowerCase().normalize('NFD').replace(/[^\p{L}\p{N}]/gu, '');
+    const targetNorm = norm(cleanArtist);
+    const hit = results.find((r) => norm(r.artistName) === targetNorm) || results[0];
+    if (!hit || !hit.artistLinkUrl) return null;
+
+    const pageUrl = hit.artistLinkUrl.split('?')[0];
+    const pageRes = await fetch(pageUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+      }
+    });
+    if (!pageRes.ok) return null;
+    const html = await pageRes.text();
+
+    const marker = html.indexOf('id="serialized-server-data"');
+    if (marker < 0) return null;
+    const start = html.indexOf('>', marker) + 1;
+    const end = html.indexOf('</script>', start);
+    if (start <= 0 || end < 0) return null;
+
+    let jsonData = null;
+    try {
+      jsonData = JSON.parse(html.slice(start, end));
+    } catch {
+      return null;
+    }
+
+    function findHeader(node) {
+      if (Array.isArray(node)) {
+        for (const child of node) {
+          const f = findHeader(child);
+          if (f) return f;
+        }
+        return null;
+      }
+      if (node && typeof node === 'object') {
+        if ('artistLogo' in node || 'colorBackdropArtwork' in node) return node;
+        for (const child of Object.values(node)) {
+          const f = findHeader(child);
+          if (f) return f;
+        }
+      }
+      return null;
+    }
+
+    const header = findHeader(jsonData);
+    if (!header) return null;
+
+    const hero = header.artwork?.dictionary || header.colorBackdropArtwork?.dictionary;
+    const logo = header.artistLogo?.dictionary;
+
+    const fillUrl = (template, w, h, fmt) => {
+      if (!template || typeof template !== 'string' || !template.includes('{w}')) return null;
+      return template.replace('{w}', String(w)).replace('{h}', String(h)).replace('{c}', 'bb').replace('{f}', fmt);
+    };
+
+    let heroUrl = null;
+    let heroAspect = 1.77;
+    if (hero && hero.url && hero.width && hero.height) {
+      const w = 1200;
+      const h = Math.round((1200 * hero.height) / hero.width);
+      heroUrl = fillUrl(hero.url, w, h, 'jpg');
+      heroAspect = hero.width / hero.height;
+    }
+
+    let logoUrl = null;
+    let logoAspect = 1;
+    if (logo && logo.url && logo.width && logo.height) {
+      const lw = 1000;
+      const lh = Math.round((1000 * logo.height) / logo.width);
+      logoUrl = fillUrl(logo.url, lw, lh, 'png');
+      logoAspect = logo.width / logo.height;
+    }
+
+    const hexColor = (val) => {
+      const s = String(val || '');
+      return /^[0-9a-f]{6}$/i.test(s) ? `#${s.toLowerCase()}` : null;
+    };
+
+    const background = hexColor(hero?.bgColor) || '#111111';
+    const accent = hexColor(hero?.textColor1) || '#fa2d48';
+    const keyColor = hexColor(header?.keyColor) || null;
+
+    return {
+      heroUrl,
+      heroAspect,
+      logoUrl,
+      logoAspect,
+      background,
+      accent,
+      keyColor,
+    };
+  } catch (err) {
+    console.warn('[Vivi] getAppleArtistArt failed:', err?.message || err);
+    return null;
+  }
+}
+
 // ── Paxsenix (Apple Music Synced TTML) ──
 async function getPaxsenixLyrics(track) {
-  const song = (track.song || '').trim();
-  const artist = (track.artist || '').trim();
+  const song = cleanTitleForLyrics(track.song || '');
+  const artist = cleanArtistForLyrics(track.artist || '');
   const query = `${song} ${artist}`.trim();
   if (!query) return null;
 
@@ -1335,8 +1467,8 @@ async function getPaxsenixLyrics(track) {
 
 // ── Genius (Plain Lyrics Fallback) ──
 async function getGeniusLyrics(track) {
-  const song = (track.song || '').trim();
-  const artist = (track.artist || '').trim();
+  const song = cleanTitleForLyrics(track.song || '');
+  const artist = cleanArtistForLyrics(track.artist || '');
   const query = `${song} ${artist}`.trim();
   if (!query) return null;
 
@@ -1390,6 +1522,12 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg?.type === 'VIVI_PAXSENIX_LYRICS') {
     getPaxsenixLyrics(msg.track || {})
       .then((ttml) => sendResponse({ ok: !!ttml, ttml: ttml || null }))
+      .catch((e) => sendResponse({ ok: false, error: String(e?.message || e) }));
+    return true;
+  }
+  if (msg?.type === 'VIVI_APPLE_ARTIST_ART') {
+    getAppleArtistArt(msg.artist || '')
+      .then((art) => sendResponse({ ok: !!art, art: art || null }))
       .catch((e) => sendResponse({ ok: false, error: String(e?.message || e) }));
     return true;
   }

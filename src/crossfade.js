@@ -155,6 +155,7 @@
     fallback: false,
     deckB: null,
     deckBVol: null,
+    deckBEq: null,
     tailBuffer: null,
     resolveTail: null,
   };
