@@ -243,22 +243,41 @@
   function getNextTrackInfo() {
     try {
       const p = document.getElementById('movie_player');
-      if (p && typeof p.getPlaylist === 'function' && typeof p.getPlaylistIndex === 'function') {
-        const list = p.getPlaylist();
-        const idx = p.getPlaylistIndex();
+      const mp = (p && p.wrappedJSObject) || p;
+      if (mp && typeof mp.getPlaylist === 'function' && typeof mp.getPlaylistIndex === 'function') {
+        const list = mp.getPlaylist();
+        const idx = mp.getPlaylistIndex();
         if (Array.isArray(list) && idx >= 0 && idx + 1 < list.length) {
+          log('Next track found via movie_player playlist: index ' + (idx + 1) + ' of ' + list.length + ' (' + list[idx + 1] + ')');
           return { videoId: list[idx + 1] };
         }
       }
 
       // DOM fallback: ytmusic-player-queue items
       const items = [...document.querySelectorAll('ytmusic-player-queue-item')];
-      const selectedIdx = items.findIndex((it) => it.hasAttribute('selected') || it.classList.contains('selected'));
+      let selectedIdx = items.findIndex((it) =>
+        it.hasAttribute('selected') ||
+        it.classList.contains('selected') ||
+        Boolean(it.querySelector?.('ytmusic-play-button-renderer[state="playing"]')) ||
+        Boolean(it.querySelector?.('.play-button[aria-label*="Pause"]'))
+      );
+      if (selectedIdx < 0) {
+        const currentUrl = location.href;
+        selectedIdx = items.findIndex((it) => {
+          const a = it.querySelector('a');
+          return a && a.href && currentUrl.includes(a.href);
+        });
+      }
       if (selectedIdx >= 0 && selectedIdx + 1 < items.length) {
         const nextItem = items[selectedIdx + 1];
-        const videoId = nextItem.data?.videoId ||
-          nextItem.querySelector('a')?.href?.match(/[?&]v=([^&]+)/)?.[1] || null;
-        if (videoId) return { videoId };
+        const link = nextItem.querySelector('a');
+        const match = link?.href?.match(/[?&]v=([^&]+)/);
+        const videoId = (nextItem.data && nextItem.data.videoId) ||
+          (match && match[1]) || null;
+        if (videoId) {
+          log('Next track found via DOM queue item: ' + videoId);
+          return { videoId };
+        }
       }
     } catch (e) {
       warn('Failed to inspect queue:', e?.message || e);

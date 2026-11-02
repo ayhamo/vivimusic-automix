@@ -572,7 +572,7 @@
 
     // ───────── Automix (Auto-DJ) Check at T - 60s ─────────
     const automix = window.__viviAutomix;
-    if (automix && automix.isEnabled() && remaining <= 60 && remaining > 5 && !automixState.fallback && !automixState.preparing && automixState.id !== st.id && !live) {
+    if (automix && automix.isEnabled() && remaining <= 60 && remaining > 5 && (v.currentTime - st.off >= 3 || st.dur < 30) && !automixState.fallback && !automixState.preparing && automixState.id !== st.id && !live) {
       automixState.id = st.id;
       automixState.preparing = true;
       log('60s mark reached on Track A. Preparing Automix beatmatching...');
@@ -598,7 +598,7 @@
               cover: 59,
               isAutomix: true,
             });
-            setTimeout(() => { if (automixState.resolveTail === res) { automixState.resolveTail = null; res(null); } }, 6000);
+            setTimeout(() => { if (automixState.resolveTail === res) { automixState.resolveTail = null; res(null); } }, 15000);
           });
 
           const [tailData, trackBBuffer] = await Promise.all([

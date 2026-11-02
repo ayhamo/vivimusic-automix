@@ -27,26 +27,66 @@ function spotifyJsonError(msg) { return { ok: false, error: msg }; }
 async function getSpDc() {
   const { spotifySpDc } = await chrome.storage.local.get('spotifySpDc');
   if (spotifySpDc) return spotifySpDc;
+
   try {
-    // 1. Try exact open.spotify.com URL
-    let c = await chrome.cookies.get({ url: SPOTIFY_HOME, name: 'sp_dc' });
-    if (c?.value) {
-      await chrome.storage.local.set({ spotifySpDc: c.value });
-      return c.value;
+    const stores = await chrome.cookies.getAllCookieStores().catch(() => [{ id: null }]);
+    const storeIds = [null, ...stores.map(s => s.id).filter(Boolean)];
+
+    for (const storeId of storeIds) {
+      const storeOpt = storeId ? { storeId } : {};
+      const queries = [
+        { name: 'sp_dc', ...storeOpt, partitionKey: {}, firstPartyDomain: null },
+        { name: 'sp_dc', ...storeOpt, firstPartyDomain: null },
+        { name: 'sp_dc', ...storeOpt, partitionKey: {} },
+        { name: 'sp_dc', ...storeOpt },
+        { domain: 'spotify.com', name: 'sp_dc', ...storeOpt },
+        { domain: '.spotify.com', name: 'sp_dc', ...storeOpt },
+        { url: 'https://open.spotify.com/', name: 'sp_dc', ...storeOpt },
+        { url: 'https://spotify.com/', name: 'sp_dc', ...storeOpt },
+        { url: 'https://accounts.spotify.com/', name: 'sp_dc', ...storeOpt }
+      ];
+
+      for (const q of queries) {
+        try {
+          let results;
+          if (q.url) {
+            const single = await chrome.cookies.get(q).catch(() => null);
+            results = single ? [single] : [];
+          } else {
+            results = await chrome.cookies.getAll(q).catch(() => []);
+          }
+          for (const c of results) {
+            if (c && c.name === 'sp_dc' && c.value) {
+              const val = String(c.value).trim();
+              if (val) {
+                await chrome.storage.local.set({ spotifySpDc: val });
+                return val;
+              }
+            }
+          }
+        } catch {}
+      }
     }
-    // 2. Try root spotify.com URL
-    c = await chrome.cookies.get({ url: 'https://spotify.com/', name: 'sp_dc' });
-    if (c?.value) {
-      await chrome.storage.local.set({ spotifySpDc: c.value });
-      return c.value;
-    }
-    // 3. Search across all stores and partitions for .spotify.com
-    const all = await chrome.cookies.getAll({ name: 'sp_dc' });
-    const match = all.find(ck => ck.domain && (ck.domain.includes('spotify.com') || ck.domain.endsWith('.spotify.com')));
-    if (match?.value) {
-      await chrome.storage.local.set({ spotifySpDc: match.value });
-      return match.value;
-    }
+
+    // Direct check of open Spotify tabs
+    try {
+      const tabs = await chrome.tabs.query({ url: '*://*.spotify.com/*' });
+      for (const tab of tabs) {
+        if (tab.cookieStoreId) {
+          const cks = await chrome.cookies.getAll({ name: 'sp_dc', storeId: tab.cookieStoreId }).catch(() => []);
+          for (const c of cks) {
+            if (c && c.name === 'sp_dc' && c.value) {
+              const val = String(c.value).trim();
+              if (val) {
+                await chrome.storage.local.set({ spotifySpDc: val });
+                return val;
+              }
+            }
+          }
+        }
+      }
+    } catch {}
+
     return null;
   } catch (e) {
     console.warn('[Vivi Spotify] Error getting sp_dc:', e);

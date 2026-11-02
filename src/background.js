@@ -1573,7 +1573,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (!msg || msg.type !== 'VIVI_NET_FETCH') return false;
     (async () => {
       try {
-        if (sender.id !== chrome.runtime.id || !String(sender.url || sender.tab?.url || '').startsWith('https://music.youtube.com/')) {
+        if (sender.id && sender.id !== chrome.runtime.id) {
           throw new Error('sender not allowed');
         }
         const u = new URL(msg.url);
