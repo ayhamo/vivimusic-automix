@@ -28,9 +28,30 @@ async function getSpDc() {
   const { spotifySpDc } = await chrome.storage.local.get('spotifySpDc');
   if (spotifySpDc) return spotifySpDc;
   try {
-    const c = await chrome.cookies.get({ url: SPOTIFY_HOME, name: 'sp_dc' });
-    return c?.value || null;
-  } catch { return null; }
+    // 1. Try exact open.spotify.com URL
+    let c = await chrome.cookies.get({ url: SPOTIFY_HOME, name: 'sp_dc' });
+    if (c?.value) {
+      await chrome.storage.local.set({ spotifySpDc: c.value });
+      return c.value;
+    }
+    // 2. Try root spotify.com URL
+    c = await chrome.cookies.get({ url: 'https://spotify.com/', name: 'sp_dc' });
+    if (c?.value) {
+      await chrome.storage.local.set({ spotifySpDc: c.value });
+      return c.value;
+    }
+    // 3. Search across all stores and partitions for .spotify.com
+    const all = await chrome.cookies.getAll({ name: 'sp_dc' });
+    const match = all.find(ck => ck.domain && (ck.domain.includes('spotify.com') || ck.domain.endsWith('.spotify.com')));
+    if (match?.value) {
+      await chrome.storage.local.set({ spotifySpDc: match.value });
+      return match.value;
+    }
+    return null;
+  } catch (e) {
+    console.warn('[Vivi Spotify] Error getting sp_dc:', e);
+    return null;
+  }
 }
 
 async function setSpDc(value) {
@@ -497,19 +518,38 @@ async function spotifyStatus() {
 }
 
 async function spotifyConnectFromBrowser() {
-  // Open Spotify so the user can authenticate normally. We never collect a password.
-  const tab = await chrome.tabs.create({ url: SPOTIFY_HOME, active: true });
-  // Poll the cookie store until the user has logged in.
+  // 1. First, check if sp_dc is ALREADY available right now in browser cookies!
+  const existingSpDc = await getSpDc();
+  if (existingSpDc) {
+    await setSpDc(existingSpDc);
+    return { ok: true };
+  }
+
+  // 2. If not found, focus existing Spotify tab or open open.spotify.com
+  let tab;
+  try {
+    const tabs = await chrome.tabs.query({ url: '*://*.spotify.com/*' });
+    if (tabs.length > 0) {
+      tab = tabs[0];
+      await chrome.tabs.update(tab.id, { active: true });
+    } else {
+      tab = await chrome.tabs.create({ url: SPOTIFY_HOME, active: true });
+    }
+  } catch {
+    tab = await chrome.tabs.create({ url: SPOTIFY_HOME, active: true });
+  }
+
+  // 3. Poll for cookie for up to 120 seconds
   const deadline = Date.now() + 120000;
   while (Date.now() < deadline) {
-    await new Promise(r => setTimeout(r, 1500));
-    const c = await chrome.cookies.get({ url: SPOTIFY_HOME, name: 'sp_dc' });
-    if (c?.value) {
-      await setSpDc(c.value);
+    await new Promise(r => setTimeout(r, 1200));
+    const val = await getSpDc();
+    if (val) {
+      await setSpDc(val);
       return { ok: true };
     }
   }
-  return spotifyJsonError('No sp_dc cookie detected. Finish logging in to Spotify and try again.');
+  return spotifyJsonError('No sp_dc cookie detected. Log in to Spotify in the opened tab and try again.');
 }
 
 async function clearSpotify() {

@@ -475,6 +475,51 @@
 
   const remaining0 = (v) => st.dur - (v.currentTime - st.off);
   const tick = {};
+  // ───────── Visual Automix HUD Notification ─────────
+  function showAutomixNotification(bars, durSec, bpmA, bpmB) {
+    try {
+      let toast = document.getElementById('vivi-automix-toast');
+      if (!toast) {
+        toast = document.createElement('div');
+        toast.id = 'vivi-automix-toast';
+        document.body.appendChild(toast);
+      }
+      const bpmText = (bpmA && bpmB) ? ` • ${bpmA.toFixed(0)} ➔ ${bpmB.toFixed(0)} BPM` : '';
+      toast.innerHTML = `
+        <span class="vivi-automix-icon">🎧</span>
+        <span class="vivi-automix-wave">
+          <span></span><span></span><span></span><span></span>
+        </span>
+        <span class="vivi-automix-content">
+          <span class="vivi-automix-title">AI Automix Active</span>
+          <span class="vivi-automix-subtitle">${bars} bars (${durSec.toFixed(1)}s)${bpmText}</span>
+        </span>
+      `;
+      toast.classList.remove('vivi-automix-done');
+      toast.classList.add('vivi-automix-visible');
+    } catch (e) {
+      console.warn('[Vivi Crossfade] Toast error:', e);
+    }
+  }
+
+  function finishAutomixNotification() {
+    try {
+      const toast = document.getElementById('vivi-automix-toast');
+      if (!toast) return;
+      toast.innerHTML = `
+        <span class="vivi-automix-icon">✨</span>
+        <span class="vivi-automix-content">
+          <span class="vivi-automix-title">Automix Complete</span>
+          <span class="vivi-automix-subtitle">Seamlessly blended</span>
+        </span>
+      `;
+      toast.classList.add('vivi-automix-done');
+      setTimeout(() => {
+        toast.classList.remove('vivi-automix-visible');
+      }, 2500);
+    } catch {}
+  }
+
   // ───────── main tick ─────────
   setInterval(() => {
     const g = graph();
@@ -579,6 +624,7 @@
       if (remaining <= p.transitionDurationSec + 0.3 && remaining >= 1) {
         p.started = true;
         log(`Executing Automix beatmatched transition: ${p.bars} bars (${p.transitionDurationSec.toFixed(1)}s)!`);
+        showAutomixNotification(p.bars, p.transitionDurationSec, p.bpmA, p.bpmB);
 
         const now = g.ctx.currentTime;
         const dur = p.transitionDurationSec;
@@ -607,6 +653,7 @@
         // On transition completion: trigger next and clean up
         setTimeout(() => {
           log('Automix transition finished, advancing to Track B');
+          finishAutomixNotification();
           post({ type: 'next' });
           setTimeout(() => {
             hold(g.gate.gain, g.ctx.currentTime);
