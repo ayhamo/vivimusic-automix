@@ -254,71 +254,59 @@
     return null;
   }
 
-  // ───────────────────────── Preload & Range Fetch ─────────────────────────
+  // ───────────────────────── Preload & Range Fetch Bridge ─────────────────────────
+  const introResolvers = new Map();
+
+  window.addEventListener('message', (e) => {
+    const d = e.data;
+    if (e.source !== window || !d || d.ch !== 'vivi-xfade' || d.dir !== 'out') return;
+    if (d.type === 'intro') {
+      const res = introResolvers.get(d.id);
+      if (res) {
+        introResolvers.delete(d.id);
+        res(d);
+      }
+    }
+  });
+
   async function fetchTrackBIntroAudio(videoId) {
     if (!videoId) return null;
-    log('Preloading Track B intro audio for:', videoId);
+    log('Preloading Track B intro audio via main-world player bridge for:', videoId);
 
-    // Call YTM player endpoint to obtain streaming URLs
-    const cfg = (key) => window.ytcfg?.get?.(key) || null;
-    const apiKey = cfg('INNERTUBE_API_KEY');
-    const ctx = cfg('INNERTUBE_CONTEXT');
+    return new Promise((resolve) => {
+      introResolvers.set(videoId, (data) => {
+        if (!data || !data.ok || !data.channels || !data.channels.length) {
+          warn('Track B intro fetch failed in page world:', data?.why);
+          resolve(null);
+          return;
+        }
+        try {
+          const offlineCtx = new OfflineAudioContext(data.channels.length, data.channels[0].length, data.sampleRate);
+          const buf = offlineCtx.createBuffer(data.channels.length, data.channels[0].length, data.sampleRate);
+          data.channels.forEach((c, idx) => buf.copyToChannel(c, idx));
+          log('Successfully decoded Track B intro audio buffer (' + (buf.duration).toFixed(1) + 's).');
+          resolve(buf);
+        } catch (e) {
+          warn('Failed to rebuild AudioBuffer for intro:', e);
+          resolve(null);
+        }
+      });
 
-    if (!apiKey || !ctx) {
-      warn('YTM context/API key not ready');
-      return null;
-    }
-
-    const res = await fetch(`https://music.youtube.com/youtubei/v1/player?key=${encodeURIComponent(apiKey)}`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Origin': window.location.origin,
-      },
-      credentials: 'include',
-      body: JSON.stringify({
-        context: ctx,
+      window.postMessage({
+        ch: 'vivi-xfade',
+        dir: 'in',
+        type: 'fetch-intro',
         videoId,
-      }),
+      }, window.location.origin);
+
+      setTimeout(() => {
+        if (introResolvers.has(videoId)) {
+          introResolvers.delete(videoId);
+          warn('Track B intro fetch timed out (10s)');
+          resolve(null);
+        }
+      }, 10000);
     });
-
-    if (!res.ok) {
-      warn('YTM player endpoint returned status:', res.status);
-      return null;
-    }
-
-    const data = await res.json();
-    const formats = data?.streamingData?.adaptiveFormats || [];
-    const audioFormats = formats.filter((f) => String(f.mimeType || '').startsWith('audio/'));
-
-    // Prefer webm/opus or mp4
-    const selectedFormat = audioFormats.find((f) => f.mimeType.includes('webm')) || audioFormats[0];
-    if (!selectedFormat) {
-      warn('No audio format found for Track B');
-      return null;
-    }
-
-    const streamUrl = selectedFormat.url;
-    if (!streamUrl) {
-      warn('Streaming URL requires SABR cipher deciphering; fallback to standard crossfade.');
-      return null;
-    }
-
-    // Range fetch: First 1.2 MB covers ~55-60s of 160kbps audio
-    const rangeRes = await fetch(streamUrl, {
-      headers: { Range: 'bytes=0-1200000' },
-      credentials: 'omit',
-    });
-
-    if (!rangeRes.ok && rangeRes.status !== 206) {
-      warn('Audio range fetch failed:', rangeRes.status);
-      return null;
-    }
-
-    const arrayBuf = await rangeRes.arrayBuffer();
-    const offlineCtx = new OfflineAudioContext(2, 1, 44100);
-    const decoded = await offlineCtx.decodeAudioData(arrayBuf);
-    return decoded;
   }
 
   window.__viviAutomix = {

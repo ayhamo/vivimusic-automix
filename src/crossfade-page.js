@@ -247,6 +247,52 @@
     return { ok: true, sampleRate: decoded.sampleRate, start: run[0].t + run[0].shift, channels, isAutomix: !!req.isAutomix, manualSkip: !!req.manualSkip };
   }
 
+  async function fetchTrackBIntro(req) {
+    const videoId = req.videoId;
+    if (!videoId) return { ok: false, why: 'no-videoid' };
+    try {
+      const key = window.ytcfg?.get?.('INNERTUBE_API_KEY');
+      const ctx = window.ytcfg?.get?.('INNERTUBE_CONTEXT') || {
+        client: { clientName: 'WEB_REMIX', clientVersion: '1.20260901.01.00', hl: 'en-US', gl: 'US' }
+      };
+      if (!key) return { ok: false, why: 'no-ytcfg' };
+
+      const res = await fetch(`/youtubei/v1/player?key=${encodeURIComponent(key)}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Origin': window.location.origin,
+        },
+        credentials: 'include',
+        body: JSON.stringify({ context: ctx, videoId }),
+      });
+      if (!res.ok) return { ok: false, why: 'player-endpoint-' + res.status };
+      const data = await res.json();
+      const formats = data?.streamingData?.adaptiveFormats || [];
+      const audioFormats = formats.filter((f) => String(f.mimeType || '').startsWith('audio/'));
+      const selectedFormat = audioFormats.find((f) => f.mimeType && f.mimeType.includes('webm')) || audioFormats[0];
+      if (!selectedFormat || !selectedFormat.url) return { ok: false, why: 'no-stream-url' };
+
+      const rangeRes = await fetch(selectedFormat.url, {
+        headers: { Range: 'bytes=0-1200000' },
+        credentials: 'omit',
+      });
+      if (!rangeRes.ok && rangeRes.status !== 206) return { ok: false, why: 'range-fetch-' + rangeRes.status };
+
+      const arrayBuf = await rangeRes.arrayBuffer();
+      const offlineCtx = new OfflineAudioContext(2, 1, 44100);
+      const decoded = await offlineCtx.decodeAudioData(arrayBuf);
+
+      const channels = [];
+      for (let c = 0; c < Math.min(2, decoded.numberOfChannels); c++) {
+        channels.push(decoded.getChannelData(c).slice());
+      }
+      return { ok: true, videoId, sampleRate: decoded.sampleRate, channels };
+    } catch (e) {
+      return { ok: false, why: e?.message || 'fetch-intro-failed' };
+    }
+  }
+
   function setPlayerVolume(vol) {
     try {
       const mp = moviePlayer();
@@ -281,6 +327,9 @@
       pressNext();
     } else if (d.type === 'set-volume') {
       setPlayerVolume(d.volume);
+    } else if (d.type === 'fetch-intro') {
+      const result = await fetchTrackBIntro(d);
+      say({ type: 'intro', id: d.videoId, ...result });
     }
   });
 })();
