@@ -143,7 +143,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
   if (msg.type === 'VIVI_ANNOUNCEMENTS_FOR_YTMUSIC') {
-    if (sender.url && !sender.url.startsWith('https://music.youtube.com/')) {
+    if (sender.url && !sender.url.startsWith('https://music.youtube.com/') && !sender.url.startsWith('moz-extension://')) {
       sendResponse({ ok: false, announcements: [] });
       return false;
     }
@@ -154,7 +154,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
   if (msg.type === 'VIVI_ANNOUNCEMENTS_TOASTED') {
-    if (sender.url && !sender.url.startsWith('https://music.youtube.com/')) {
+    if (sender.url && !sender.url.startsWith('https://music.youtube.com/') && !sender.url.startsWith('moz-extension://')) {
       sendResponse({ ok: false });
       return false;
     }

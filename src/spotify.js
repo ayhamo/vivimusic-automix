@@ -114,9 +114,16 @@ async function setSpDc(value) {
 
 async function getSecretDict() {
   if (spotifySecretCache) return spotifySecretCache;
-  const r = await fetch(SPOTIFY_SECRET_URL, { cache: 'no-store' });
-  if (!r.ok) throw new Error(`TOTP secret source returned ${r.status}`);
-  spotifySecretCache = await r.json();
+  try {
+    const r = await fetch(SPOTIFY_SECRET_URL, { cache: 'no-store' });
+    if (r.ok) {
+      spotifySecretCache = await r.json();
+      return spotifySecretCache;
+    }
+  } catch {}
+  spotifySecretCache = {
+    '12': [107, 81, 49, 57, 67, 93, 87, 81, 69, 67, 40, 93, 48, 50, 46, 91, 94, 113, 41, 47]
+  };
   return spotifySecretCache;
 }
 
@@ -159,7 +166,53 @@ async function makeTotp(secretBytes, unixSeconds) {
   return String(bin % 1000000).padStart(6, '0');
 }
 
+const SPOTIFY_DNR_RULE_ID = 303;
+async function withSpotifyCookie(spDc, fn) {
+  if (!spDc) return fn();
+  const dnr = chrome.declarativeNetRequest || (typeof browser !== 'undefined' && browser.declarativeNetRequest);
+  if (dnr && dnr.updateSessionRules) {
+    try {
+      await dnr.updateSessionRules({
+        removeRuleIds: [SPOTIFY_DNR_RULE_ID],
+        addRules: [{
+          id: SPOTIFY_DNR_RULE_ID,
+          priority: 2,
+          condition: {
+            urlFilter: '||open.spotify.com/api/',
+            tabIds: [-1],
+            resourceTypes: ['xmlhttprequest']
+          },
+          action: {
+            type: 'modifyHeaders',
+            requestHeaders: [{
+              header: 'Cookie',
+              operation: 'set',
+              value: `sp_dc=${spDc}`
+            }]
+          }
+        }]
+      });
+    } catch (e) {
+      console.warn('[Vivi Spotify] DNR rule add error:', e);
+    }
+  }
+
+  try {
+    return await fn();
+  } finally {
+    if (dnr && dnr.updateSessionRules) {
+      try {
+        await dnr.updateSessionRules({
+          removeRuleIds: [SPOTIFY_DNR_RULE_ID]
+        });
+      } catch (_) {}
+    }
+  }
+}
+
 async function getSpotifyToken(spDc) {
+  return await withSpotifyCookie(spDc, async () => {
+
   const now = Date.now();
   if (spotifyTokenCache && spotifyTokenCache.spDc === spDc &&
       spotifyTokenCache.expiresAt > now + 30000) return spotifyTokenCache;
@@ -234,6 +287,7 @@ async function getSpotifyToken(spDc) {
     expiresAt: Number(data.accessTokenExpirationTimestampMs || Date.now() + 3600000)
   };
   return spotifyTokenCache;
+  });
 }
 
 function encodeVarint(n) {
