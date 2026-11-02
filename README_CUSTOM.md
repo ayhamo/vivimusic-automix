@@ -244,14 +244,24 @@ node "C:\Users\ayham\.gemini\antigravity\brain\d7beeeb7-3c71-4c37-80a9-524d02f90
 *Current result: 32/32 JavaScript files validated with 0 syntax errors.*
 
 ### Rebuilding the Zip Package
-To rebuild `vivimusic-firefox-ready-to-sign.zip`:
+To rebuild `vivimusic-firefox-ready-to-sign.zip` with guaranteed POSIX forward slashes:
 ```powershell
-node "C:\Users\ayham\.gemini\antigravity\brain\d7beeeb7-3c71-4c37-80a9-524d02f90215\scratch\build_zip.js"
+python "C:\Users\ayham\.gemini\antigravity\brain\d7beeeb7-3c71-4c37-80a9-524d02f90215\scratch\build_zip.py"
 ```
+
+### Upstream Sync Status
+* **Synced to:** Upstream `Archimetrix/VIVIMUSIC_WEB` tag `v10.1.1` (commit `b68efbe`).
+* **Merged Upstream Features:**
+  - Realistic vinyl record finish with dynamic lighting shine effect (`discShineEnabled`).
+  - Realistic SVG tonearm with drift animation and center hub spindle.
+* **Preserved Custom Architecture:**
+  - Complete Star Gate telemetry stripping intact.
+  - Firefox MV3 compliance (`background.scripts`, `strict_min_version: "140.0"`, `data_collection_permissions: { required: ["none"] }`).
+  - All 8 BitChord audio & UI enhancements seamlessly integrated.
 
 ### Permanent Installation on Firefox
 1. Open Firefox and navigate to the **[Mozilla Add-on Developer Hub](https://addons.mozilla.org/developers/addon/submit/upload-unlisted)**.
 2. Select **"On your own" (Unlisted)**.
 3. Upload `C:\Users\ayham\Desktop\Projects\YT Music Extension\vivimusic-firefox-ready-to-sign.zip`.
-4. Mozilla will sign the package within seconds and provide a `.xpi` file.
-5. Click the signed `.xpi` file in Firefox to install permanently.
+4. Mozilla signs the package within seconds and provides a downloadable `.xpi` file.
+5. Click or open the signed `.xpi` in Firefox to install permanently.
