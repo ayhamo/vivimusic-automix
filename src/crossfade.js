@@ -127,6 +127,21 @@
       }
     } else if (d.type === 'tail') {
       acceptTail(d);
+    } else if (d.type === 'vivi-dev-test') {
+      chrome.runtime.sendMessage({ type: 'VIVI_NET_FETCH', url: d.testUrl }, (reply) => {
+        if (chrome.runtime.lastError || !reply?.ok) {
+          console.error('%c[ViVi Test FAILED]', 'color:#ff4b4b;font-weight:bold;', reply?.error || chrome.runtime.lastError);
+        } else {
+          console.log('%c[ViVi Test SUCCESS]', 'color:#10b981;font-weight:bold;', `HTTP ${reply.status} for ${d.testUrl}`);
+        }
+      });
+    } else if (d.type === 'vivi-automix-status') {
+      const a = window.__viviAutomix;
+      console.log('%c[ViVi Automix Status]', 'color:#ff4b8b;font-weight:bold;', {
+        enabled: a?.isEnabled(),
+        bars: a?.getBars(),
+        nextTrack: a?.getNextTrackInfo()
+      });
     }
   });
 

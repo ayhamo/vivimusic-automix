@@ -311,6 +311,23 @@
     else moviePlayer()?.nextVideo?.();
   }
 
+
+  // ───────────────────────── Dev Console Test Helpers ─────────────────────────
+  window.viviTest = (type = 'lyrics', customUrl) => {
+    const urls = {
+      lyrics: 'https://lrclib.net/api/get?artist_name=Lady+Gaga&track_name=Poker+Face',
+      sponsorblock: 'https://sponsor.ajay.app/api/skipSegments?videoID=oG-4Uvhm4lI',
+      artwork: 'https://yt3.googleusercontent.com/NyFdEd7W29cZ3skSIqph5L1FkDa1ISRY0Rjwm82LqlmUuxq6MuEDUs8vLwvTUWi4PwiaJyHhjqHZ2ReT=w60-h60-l90-rj'
+    };
+    const testUrl = customUrl || urls[type] || type;
+    say({ type: 'vivi-dev-test', testUrl });
+    console.log('%c[ViVi Test]', 'color:#3b82f6;font-weight:bold;', 'Testing relay fetch for:', testUrl);
+  };
+
+  window.viviAutomixStatus = () => {
+    say({ type: 'vivi-automix-status' });
+  };
+
   // ───────────────────────── messages in ─────────────────────────
   window.addEventListener('message', async (e) => {
     const d = e.data;
