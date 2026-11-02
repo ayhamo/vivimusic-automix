@@ -60,7 +60,9 @@
     "https://*.aaplimg.com/*"
   ],
   "background": {
-    "service_worker": "src/background.js"
+    "scripts": [
+      "src/background.js"
+    ]
   },
   "content_scripts": [
     {
@@ -145,7 +147,7 @@
   "browser_specific_settings": {
     "gecko": {
       "id": "vivimusic-web@custom",
-      "strict_min_version": "109.0"
+      "strict_min_version": "120.0"
     }
   }
 }
