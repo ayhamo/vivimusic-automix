@@ -484,17 +484,34 @@
         toast.id = 'vivi-automix-toast';
         document.body.appendChild(toast);
       }
+      toast.replaceChildren();
+
+      const icon = document.createElement('span');
+      icon.className = 'vivi-automix-icon';
+      icon.textContent = '🎧';
+
+      const wave = document.createElement('span');
+      wave.className = 'vivi-automix-wave';
+      for (let i = 0; i < 4; i++) wave.appendChild(document.createElement('span'));
+
+      const content = document.createElement('span');
+      content.className = 'vivi-automix-content';
+
+      const title = document.createElement('span');
+      title.className = 'vivi-automix-title';
+      title.textContent = 'AI Automix Active';
+
+      const subtitle = document.createElement('span');
+      subtitle.className = 'vivi-automix-subtitle';
       const bpmText = (bpmA && bpmB) ? ` • ${bpmA.toFixed(0)} ➔ ${bpmB.toFixed(0)} BPM` : '';
-      toast.innerHTML = `
-        <span class="vivi-automix-icon">🎧</span>
-        <span class="vivi-automix-wave">
-          <span></span><span></span><span></span><span></span>
-        </span>
-        <span class="vivi-automix-content">
-          <span class="vivi-automix-title">AI Automix Active</span>
-          <span class="vivi-automix-subtitle">${bars} bars (${durSec.toFixed(1)}s)${bpmText}</span>
-        </span>
-      `;
+      subtitle.textContent = `${bars} bars (${durSec.toFixed(1)}s)${bpmText}`;
+
+      content.appendChild(title);
+      content.appendChild(subtitle);
+      toast.appendChild(icon);
+      toast.appendChild(wave);
+      toast.appendChild(content);
+
       toast.classList.remove('vivi-automix-done');
       toast.classList.add('vivi-automix-visible');
     } catch (e) {
@@ -506,13 +523,28 @@
     try {
       const toast = document.getElementById('vivi-automix-toast');
       if (!toast) return;
-      toast.innerHTML = `
-        <span class="vivi-automix-icon">✨</span>
-        <span class="vivi-automix-content">
-          <span class="vivi-automix-title">Automix Complete</span>
-          <span class="vivi-automix-subtitle">Seamlessly blended</span>
-        </span>
-      `;
+      toast.replaceChildren();
+
+      const icon = document.createElement('span');
+      icon.className = 'vivi-automix-icon';
+      icon.textContent = '✨';
+
+      const content = document.createElement('span');
+      content.className = 'vivi-automix-content';
+
+      const title = document.createElement('span');
+      title.className = 'vivi-automix-title';
+      title.textContent = 'Automix Complete';
+
+      const subtitle = document.createElement('span');
+      subtitle.className = 'vivi-automix-subtitle';
+      subtitle.textContent = 'Seamlessly blended';
+
+      content.appendChild(title);
+      content.appendChild(subtitle);
+      toast.appendChild(icon);
+      toast.appendChild(content);
+
       toast.classList.add('vivi-automix-done');
       setTimeout(() => {
         toast.classList.remove('vivi-automix-visible');
