@@ -1294,17 +1294,23 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
 // ── Title & Artist Cleaners for Lyrics & Artwork Search (from BitChord) ──
 const CREDITS_PATTERNS = [
+  /#[\w\d_]+/g,
   /\s*[([]\s*(feat|ft|featuring|with)\b[^)\]]*[)\]]/gi,
   /\s+(feat|ft|featuring)\.?\s+.*$/gi,
-  /\s*[([]\s*(official\s*)?(music\s*)?(video|audio|visuali[sz]er|lyrics?\s*video|lyrics?|m\/?v|hd|hq|4k|full\s*song)\s*[)\]]/gi,
+  /\s*[([]\s*(official\s*)?(music\s*)?(video|audio|visuali[sz]er|lyrics?\s*video|lyrics?|m\/?v|hd|hq|4k|60fps|full\s*song)\s*[)\]]/gi,
   /\s*[([]\s*official\s*[)\]]/gi,
+  /\s*[([]\s*(slowed(\s*\+\s*reverb)?|sped\s*up|speed\s*up|nightcore|daycore|bass\s*boosted|reverb|tiktok|tik\s*tok(\s*version)?|jersey\s*club|jerseyclub)(\s*(remix|version|mix|edit))?\s*[)\]]/gi,
+  /\s*[([]\s*(prod|produced)\s*(by)?\s*[^)\]]+[)\]]/gi,
+  /\s*[([]\s*\d+\s*(hour|min|minute)s?\s*(loop)?\s*[)\]]/gi,
+  /\s*[([]\s*(remix|edit|vip|flip)\s*[)\]]/gi,
+  /\s*[([]\s*(audio\s*only|lyrics?)\s*[)\]]/gi,
 ];
 
 function cleanTitleForLyrics(title) {
   if (!title) return '';
   let name = String(title);
   for (const pattern of CREDITS_PATTERNS) name = name.replace(pattern, ' ');
-  const cleaned = name.replace(/\s+/g, ' ').trim().replace(/[,\-–—]+$/, '').trim();
+  const cleaned = name.replace(/\s+/g, ' ').trim().replace(/[,\-–—|~]+$/, '').trim();
   return cleaned || String(title).trim();
 }
 

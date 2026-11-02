@@ -420,11 +420,11 @@
   const automixBarsSelect = document.getElementById('automixBarsSelect');
   const automixBarsVal = document.getElementById('automixBarsVal');
 
-  chrome.storage.local.get({ automixEnabled: true, automixBars: 8 }, (r) => {
+  chrome.storage.local.get({ automixEnabled: true, automixBars: 'auto' }, (r) => {
     if (automixToggle) automixToggle.checked = r.automixEnabled !== false;
     if (automixBarsSelect) {
-      automixBarsSelect.value = String(r.automixBars || 8);
-      if (automixBarsVal) automixBarsVal.textContent = automixBarsSelect.value + ' bars';
+      automixBarsSelect.value = String(r.automixBars || 'auto');
+      if (automixBarsVal) automixBarsVal.textContent = automixBarsSelect.value === 'auto' ? 'Auto adaptive' : automixBarsSelect.value + ' bars';
     }
   });
 
@@ -433,9 +433,9 @@
   });
 
   automixBarsSelect?.addEventListener('change', () => {
-    const v = Number(automixBarsSelect.value) || 8;
-    chrome.storage.local.set({ automixBars: v });
-    if (automixBarsVal) automixBarsVal.textContent = v + ' bars';
+    const v = automixBarsSelect.value;
+    chrome.storage.local.set({ automixBars: v === 'auto' ? 'auto' : (Number(v) || 8) });
+    if (automixBarsVal) automixBarsVal.textContent = v === 'auto' ? 'Auto adaptive' : v + ' bars';
   });
 
   const nerdStatsToggle = document.getElementById('nerdStatsToggle');

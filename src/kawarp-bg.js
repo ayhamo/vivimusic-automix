@@ -162,14 +162,33 @@
   function artKey(url) { return String(url).replace(SIZE_SUFFIX_RE, ''); }
   function upsize(url) { return SIZE_SUFFIX_RE.test(url) ? url.replace(SIZE_SUFFIX_RE, '=w544-h544-l90-rj') : url; }
 
-  function loadImg(src) {
-    return new Promise((resolve, reject) => {
-      const img = new Image();
-      img.crossOrigin = 'anonymous';
-      img.onload = () => resolve(img);
-      img.onerror = () => reject(new Error('load failed: ' + src));
-      img.src = src;
-    });
+  async function loadImg(src) {
+    try {
+      const res = await fetch(src);
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      return await new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => {
+          URL.revokeObjectURL(blobUrl);
+          resolve(img);
+        };
+        img.onerror = () => {
+          URL.revokeObjectURL(blobUrl);
+          reject(new Error('blob load failed: ' + src));
+        };
+        img.src = blobUrl;
+      });
+    } catch {
+      return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        img.onload = () => resolve(img);
+        img.onerror = () => reject(new Error('load failed: ' + src));
+        img.src = src;
+      });
+    }
   }
 
   // Kawarp is driven ONLY by the player-bar thumbnail (see watchBarThumb).

@@ -34,17 +34,23 @@
   
   // ---- Title & Artist Cleaner for Lyrics (from BitChord / LyricsQuery) ----
   const CREDITS = [
+    /#[\w\d_]+/g,
     /\s*[([]\s*(feat|ft|featuring|with)\b[^)\]]*[)\]]/gi,
     /\s+(feat|ft|featuring)\.?\s+.*$/gi,
-    /\s*[([]\s*(official\s*)?(music\s*)?(video|audio|visuali[sz]er|lyrics?\s*video|lyrics?|m\/?v|hd|hq|4k|full\s*song)\s*[)\]]/gi,
+    /\s*[([]\s*(official\s*)?(music\s*)?(video|audio|visuali[sz]er|lyrics?\s*video|lyrics?|m\/?v|hd|hq|4k|60fps|full\s*song)\s*[)\]]/gi,
     /\s*[([]\s*official\s*[)\]]/gi,
+    /\s*[([]\s*(slowed(\s*\+\s*reverb)?|sped\s*up|speed\s*up|nightcore|daycore|bass\s*boosted|reverb|tiktok|tik\s*tok(\s*version)?|jersey\s*club|jerseyclub)(\s*(remix|version|mix|edit))?\s*[)\]]/gi,
+    /\s*[([]\s*(prod|produced)\s*(by)?\s*[^)\]]+[)\]]/gi,
+    /\s*[([]\s*\d+\s*(hour|min|minute)s?\s*(loop)?\s*[)\]]/gi,
+    /\s*[([]\s*(remix|edit|vip|flip)\s*[)\]]/gi,
+    /\s*[([]\s*(audio\s*only|lyrics?)\s*[)\]]/gi,
   ];
 
   function cleanTitleForLyrics(title) {
     if (!title) return '';
     let name = String(title);
     for (const pattern of CREDITS) name = name.replace(pattern, ' ');
-    const cleaned = name.replace(/\s+/g, ' ').trim().replace(/[,\-–—]+$/, '').trim();
+    const cleaned = name.replace(/\s+/g, ' ').trim().replace(/[,\-–—|~]+$/, '').trim();
     return cleaned || String(title).trim();
   }
 
@@ -1213,31 +1219,54 @@
     let best = null;
     let orderedKeys = [];
     if (jobDefs.length) {
-      orderedKeys = priorityEnabled
-        ? priorityOrder.filter((k) => PRIORITY_ELIGIBLE_KEYS.includes(k) && jobDefs.some((j) => j.key === k))
-        : [];
-      if (orderedKeys.length) {
-        const priorityJobs = orderedKeys.map((k) => jobDefs.find((j) => j.key === k));
-        best = await racePriorityProviders(priorityJobs, priorityWaitEnabled);
-        if (!best) {
-          const remainingJobs = jobDefs.filter((j) => !orderedKeys.includes(j.key));
-          if (remainingJobs.length) {
-            log('priority list empty-handed, falling back to other enabled providers');
-            best = await raceProviders(remainingJobs.map((j) => j.promise), onUpdate);
-          }
-        }
-      } else {
-        best = await raceProviders(jobDefs.map((j) => j.promise), onUpdate);
-      }
+      // Search ALL enabled providers concurrently (no provider is held back or skipped)
+      best = await raceProviders(jobDefs.map((j) => j.promise), onUpdate);
 
-      // Quality-first scan across every provider (and Spotify for plain).
+      // Quality-first scan across every provider (and Spotify for plain)
       if (best && MODE_RANK[best.mode] < MODE_RANK.word) {
         const isPlain = best.mode === 'plain';
-        // Priority OFF already compared line results during its own window.
-        if (isPlain || orderedKeys.length) {
-          const scanJobs = jobDefs.slice();
-          if (isPlain && spotifyOn) scanJobs.push(getSpotify());
-          best = await upgradeResult(best, scanJobs, orderedKeys, isPlain ? UNSYNCED_UPGRADE_MS : LINE_UPGRADE_MS);
+        const scanJobs = jobDefs.slice();
+        if (isPlain && spotifyOn) scanJobs.push(getSpotify());
+        best = await upgradeResult(best, scanJobs, priorityOrder, isPlain ? UNSYNCED_UPGRADE_MS : LINE_UPGRADE_MS);
+      }
+    }
+
+    // Smart Fallback Cascade: if no lyrics were found on the first pass
+    if (!best) {
+      const rawTitle = rawTrack?.song || '';
+      // 1. If title has a hyphen (e.g. 'Artist - Song Title'), split and retry with parsed track
+      if (rawTitle.includes(' - ')) {
+        const parts = rawTitle.split(' - ');
+        const candidateTitle = cleanTitleForLyrics(parts[parts.length - 1].trim());
+        const candidateArtist = cleanArtistForLyrics(parts[0].trim());
+        if (candidateTitle && candidateTitle.toLowerCase() !== (track.song || '').toLowerCase()) {
+          log('Retrying lyrics search with parsed hyphen title/artist:', candidateTitle, candidateArtist);
+          const fallbackTrack = { ...track, song: candidateTitle, artist: candidateArtist || track.artist };
+          const fbJobs = [];
+          const addFb = (key, fn) => { if (providerSettings[key] && !excludeKeys.has(key)) fbJobs.push(fn(fallbackTrack)); };
+          addFb('lrcred', fromLrcRed);
+          addFb('lyricsplus', fromLyricsPlus);
+          addFb('paxsenix', fromPaxsenix);
+          addFb('betterlyricsTTML', fromBetterLyricsTTML);
+          addFb('lrclib', fromLrclib);
+          addFb('musixmatch', fromMusixmatch);
+          addFb('binilyrics', fromBiniLyrics);
+          addFb('genius', fromGenius);
+          if (fbJobs.length) {
+            best = await raceProviders(fbJobs, onUpdate);
+          }
+        }
+      }
+      // 2. If still no lyrics, search title-only on LRCLIB, Paxsenix, and Genius (fixes remix/channel uploads)
+      if (!best && track.artist) {
+        log('Retrying lyrics search title-only for:', track.song);
+        const titleOnlyTrack = { ...track, artist: '' };
+        const titleJobs = [];
+        if (providerSettings.lrclib && !excludeKeys.has('lrclib')) titleJobs.push(fromLrclib(titleOnlyTrack));
+        if (providerSettings.paxsenix && !excludeKeys.has('paxsenix')) titleJobs.push(fromPaxsenix(titleOnlyTrack));
+        if (providerSettings.genius && !excludeKeys.has('genius')) titleJobs.push(fromGenius(titleOnlyTrack));
+        if (titleJobs.length) {
+          best = await raceProviders(titleJobs, onUpdate);
         }
       }
     }

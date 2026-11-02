@@ -23,25 +23,25 @@
   const warn = (...a) => console.warn('[ViVi Automix]', ...a);
 
   let automixEnabled = true;
-  let automixBars = 8;           // 8 or 16 bars
+  let automixBars = 'auto';       // 'auto', 4, 8, or 16 bars
   let automixMaxTempoDiff = 0.12; // 12% max tempo adjustment
 
   // Read initial settings
   try {
     chrome.storage.local.get({
       automixEnabled: true,
-      automixBars: 8,
+      automixBars: 'auto',
       automixMaxTempoDiff: 0.12,
     }, (s) => {
       automixEnabled = s.automixEnabled !== false;
-      automixBars = Number(s.automixBars) || 8;
+      automixBars = s.automixBars === 'auto' ? 'auto' : (Number(s.automixBars) || 8);
       automixMaxTempoDiff = Number(s.automixMaxTempoDiff) || 0.12;
     });
 
     chrome.storage.onChanged.addListener((ch, area) => {
       if (area !== 'local') return;
       if ('automixEnabled' in ch) automixEnabled = ch.automixEnabled.newValue !== false;
-      if ('automixBars' in ch) automixBars = Number(ch.automixBars.newValue) || 8;
+      if ('automixBars' in ch) automixBars = ch.automixBars.newValue === 'auto' ? 'auto' : (Number(ch.automixBars.newValue) || 8);
       if ('automixMaxTempoDiff' in ch) automixMaxTempoDiff = Number(ch.automixMaxTempoDiff.newValue) || 0.12;
     });
   } catch { /* context gone */ }
@@ -205,8 +205,20 @@
       return { canMix: false, reason: 'tempo_mismatch', tempoDiff, bpmA, bpmB };
     }
 
-    // Scale bars: 4, 8, or 16 bars
-    const bars = Math.max(4, Math.min(16, requestedBars || 8));
+    // Scale bars: 4, 8, or 16 bars with Smart Adaptive logic
+    let targetBars = requestedBars;
+    if (targetBars === 'auto' || !targetBars || targetBars === 0) {
+      const minConf = Math.min(confA, confB);
+      if (tempoDiff > 0.05 || minConf < 0.45) {
+        targetBars = 4; // Fast / punchy blend for tempo drift or looser beat grids
+      } else if (tempoDiff < 0.02 && minConf >= 0.70) {
+        targetBars = 16; // Silky extended club blend for closely matched tempos
+      } else {
+        targetBars = 8; // Standard 8-bar musical phrase
+      }
+      log(`Auto adaptive blend selected: ${targetBars} bars (tempoDiff: ${(tempoDiff * 100).toFixed(1)}%, conf: ${minConf.toFixed(2)})`);
+    }
+    const bars = Math.max(4, Math.min(16, effectiveBlendBars(Number(targetBars) || 8, confA, confB)));
     const beatSecA = 60 / bpmA;
     const barSecA = beatSecA * 4;
     const transitionDurationSec = bars * barSecA;
