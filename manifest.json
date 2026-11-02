@@ -35,6 +35,7 @@
     "https://avatars.githubusercontent.com/*",
     "https://ws.audioscrobbler.com/*",
     "https://api.listenbrainz.org/*",
+    "https://*.googlevideo.com/*",
     "https://lyrics.paxsenix.org/*",
     "https://api.paxsenix.org/*",
     "https://genius.com/*",
@@ -95,6 +96,7 @@
         "src/kawarp.js",
         "src/kawarp-bg.js",
         "src/equalizer.js",
+        "src/automix/automix.js",
         "src/crossfade.js",
         "src/vendor/hls.min.js",
         "src/content.js"
@@ -129,7 +131,9 @@
         "icons/lyrics-dancer.webm",
         "icons/custom-logo-full.png",
         "icons/custom-logo-icon.png",
-        "src/apple-canvas-player.html"
+        "src/apple-canvas-player.html",
+        "src/vendor/automix/*",
+        "src/automix/*"
       ],
       "matches": [
         "https://music.youtube.com/*"

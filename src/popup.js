@@ -412,6 +412,28 @@
     chrome.storage.local.set({ crossfadeAutoAdvance: crossfadeAutoAdvanceToggle.checked });
   });
 
+  const automixToggle = document.getElementById('automixToggle');
+  const automixBarsSelect = document.getElementById('automixBarsSelect');
+  const automixBarsVal = document.getElementById('automixBarsVal');
+
+  chrome.storage.local.get({ automixEnabled: true, automixBars: 8 }, (r) => {
+    if (automixToggle) automixToggle.checked = r.automixEnabled !== false;
+    if (automixBarsSelect) {
+      automixBarsSelect.value = String(r.automixBars || 8);
+      if (automixBarsVal) automixBarsVal.textContent = automixBarsSelect.value + ' bars';
+    }
+  });
+
+  automixToggle?.addEventListener('change', () => {
+    chrome.storage.local.set({ automixEnabled: automixToggle.checked });
+  });
+
+  automixBarsSelect?.addEventListener('change', () => {
+    const v = Number(automixBarsSelect.value) || 8;
+    chrome.storage.local.set({ automixBars: v });
+    if (automixBarsVal) automixBarsVal.textContent = v + ' bars';
+  });
+
   crossfadeToggle.addEventListener('change', () => {
     paintCrossfade(crossfadeToggle.checked, crossfadeSeconds.value);
     chrome.storage.local.set({ crossfadeEnabled: crossfadeToggle.checked });

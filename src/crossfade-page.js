@@ -186,7 +186,7 @@
     const limit = typical * 1.6 + 0.5;
 
     let run;
-    if (req.manualSkip) {
+    if (req.manualSkip || req.isAutomix) {
       let first = -1;
       for (let i = 0; i < uniq.length; i++) {
         const segStart = uniq[i].t + uniq[i].shift;
@@ -244,7 +244,7 @@
     for (let c = 0; c < Math.min(2, decoded.numberOfChannels); c++) {
       channels.push(decoded.getChannelData(c).slice());
     }
-    return { ok: true, sampleRate: decoded.sampleRate, start: run[0].t + run[0].shift, channels, manualSkip: !!req.manualSkip };
+    return { ok: true, sampleRate: decoded.sampleRate, start: run[0].t + run[0].shift, channels, isAutomix: !!req.isAutomix, manualSkip: !!req.manualSkip };
   }
 
   function pressNext() {

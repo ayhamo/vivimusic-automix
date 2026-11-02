@@ -147,10 +147,42 @@
   }
 
   let manualSkipPending = false;
+  // ───────── Automix (Auto-DJ) State ─────────
+  let automixState = {
+    id: '',
+    preparing: false,
+    planned: null,
+    fallback: false,
+    deckB: null,
+    deckBVol: null,
+    tailBuffer: null,
+    resolveTail: null,
+  };
+
+  function resetAutomix(cancelPlayback = true) {
+    if (cancelPlayback && automixState.deckB) {
+      try { automixState.deckB.stop(); } catch(_) {}
+      try { automixState.deckBVol.disconnect(); } catch(_) {}
+    }
+    automixState.preparing = false;
+    automixState.planned = null;
+    automixState.deckB = null;
+    automixState.deckBVol = null;
+    automixState.tailBuffer = null;
+    automixState.resolveTail = null;
+  }
+
 
   function acceptTail(d) {
     log('tail reply:', d.ok ? 'ok, ' + (d.channels[0].length / d.sampleRate).toFixed(1) + 's of audio' : 'failed (' + d.why + ')');
     if (!st || d.id !== st.id) return;
+    if (d.isAutomix) {
+      if (automixState.resolveTail) {
+        automixState.resolveTail(d.ok ? d : null);
+        automixState.resolveTail = null;
+      }
+      return;
+    }
     if (!d.ok) {
       if (d.manualSkip) {
         log('manual skip tail extraction failed (' + d.why + '), falling back to immediate next');
@@ -191,6 +223,10 @@
     const v = g?.video;
     if (!g || !v || !st || st.ad || v.paused || live) return;
     if (manualSkipPending) return;
+    if (automixState.planned || automixState.deckB) {
+      log('manual skip overrides active automix');
+      resetAutomix(true);
+    }
 
     if (e && e.cancelable) {
       e.preventDefault();
@@ -455,6 +491,132 @@
 
     if (!userAutoAdvance) return;
     const remaining = st.dur - (v.currentTime - st.off);
+
+    // ───────── Automix (Auto-DJ) Check at T - 60s ─────────
+    const automix = window.__viviAutomix;
+    if (automix && automix.isEnabled() && remaining <= 60 && remaining > 5 && !automixState.fallback && !automixState.preparing && automixState.id !== st.id && !live) {
+      automixState.id = st.id;
+      automixState.preparing = true;
+      log('60s mark reached on Track A. Preparing Automix beatmatching...');
+
+      (async () => {
+        try {
+          const nextTrack = automix.getNextTrackInfo();
+          if (!nextTrack || !nextTrack.videoId) {
+            log('No upcoming track found in queue. Automix falling back to standard crossfade.');
+            automixState.fallback = true;
+            automixState.preparing = false;
+            return;
+          }
+
+          // Fetch Track A outro tail (up to 59s) and Track B intro audio concurrently
+          const tailPromise = new Promise((res) => {
+            automixState.resolveTail = res;
+            post({
+              type: 'prepare',
+              id: st.id,
+              sampleRate: g.ctx.sampleRate,
+              needFrom: st.off + Math.max(0, st.dur - 59),
+              cover: 59,
+              isAutomix: true,
+            });
+            setTimeout(() => { if (automixState.resolveTail === res) { automixState.resolveTail = null; res(null); } }, 6000);
+          });
+
+          const [tailData, trackBBuffer] = await Promise.all([
+            tailPromise,
+            automix.fetchTrackBIntroAudio(nextTrack.videoId),
+          ]);
+
+          if (!tailData || !tailData.ok || !trackBBuffer) {
+            log('Failed to obtain outro/intro audio for automix. Falling back to standard crossfade.');
+            automixState.fallback = true;
+            automixState.preparing = false;
+            return;
+          }
+
+          // Build AudioBuffer for Track A
+          const lenA = tailData.channels[0].length;
+          const bufA = g.ctx.createBuffer(tailData.channels.length, lenA, tailData.sampleRate);
+          tailData.channels.forEach((c, idx) => bufA.copyToChannel(c, idx));
+
+          // Analyze both tracks with on-device Beat This neural network
+          log('Running ONNX Beat This analysis on Track A outro & Track B intro...');
+          const [analysisA, analysisB] = await Promise.all([
+            automix.analyzeAudio(st.id + '_outro', bufA, Math.max(0, st.dur - 59)),
+            automix.analyzeAudio(nextTrack.videoId + '_intro', trackBBuffer, 0),
+          ]);
+
+          // Plan transition
+          const plan = automix.planTransition(analysisA, analysisB, automix.getBars());
+          if (!plan || !plan.canMix) {
+            log('Tracks incompatible for beatmatch (' + (plan?.reason || 'unsupported') + '). Falling back to 5s crossfade.');
+            automixState.fallback = true;
+            automixState.preparing = false;
+            return;
+          }
+
+          automixState.planned = {
+            ...plan,
+            trackBBuffer,
+            nextVideoId: nextTrack.videoId,
+            started: false,
+          };
+          automixState.preparing = false;
+          log(`Automix transition locked: ${plan.bars} bars (${plan.transitionDurationSec.toFixed(1)}s) at ${plan.rateB.toFixed(3)}x tempo.`);
+        } catch (err) {
+          warn('Automix preparation failed:', err?.message || err);
+          automixState.fallback = true;
+          automixState.preparing = false;
+        }
+      })();
+    }
+
+    // ───────── Automix Transition Execution ─────────
+    if (automixState.planned && !automixState.planned.started && !live) {
+      const p = automixState.planned;
+      if (remaining <= p.transitionDurationSec + 0.3 && remaining >= 1) {
+        p.started = true;
+        log(`Executing Automix beatmatched transition: ${p.bars} bars (${p.transitionDurationSec.toFixed(1)}s)!`);
+
+        const now = g.ctx.currentTime;
+        const dur = p.transitionDurationSec;
+
+        // Deck B (Track B) playback setup
+        const srcB = g.ctx.createBufferSource();
+        const volB = g.ctx.createGain();
+        srcB.buffer = p.trackBBuffer;
+        srcB.playbackRate.value = p.rateB;
+
+        srcB.connect(volB);
+        volB.connect(g.entry);
+
+        // Deck B fades IN (0 -> 1)
+        volB.gain.setValueAtTime(0, now);
+        volB.gain.linearRampToValueAtTime(1, now + dur);
+
+        // Deck A (Track A) fades OUT (current -> 0)
+        hold(g.gate.gain, now);
+        g.gate.gain.linearRampToValueAtTime(0, now + dur);
+
+        srcB.start(now);
+        automixState.deckB = srcB;
+        automixState.deckBVol = volB;
+
+        // On transition completion: trigger next and clean up
+        setTimeout(() => {
+          log('Automix transition finished, advancing to Track B');
+          post({ type: 'next' });
+          setTimeout(() => {
+            hold(g.gate.gain, g.ctx.currentTime);
+            g.gate.gain.setValueAtTime(1, g.ctx.currentTime);
+            resetAutomix(true);
+          }, 800);
+        }, dur * 1000);
+        return;
+      }
+    }
+
     if (remaining > N + PREP_LEAD + 1 || remaining < 0.8) return;
 
     if (reqId !== st.id && performance.now() >= retryAt) {
