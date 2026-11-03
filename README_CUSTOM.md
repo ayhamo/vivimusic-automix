@@ -59,32 +59,91 @@ First analysis after page load takes ~15–20 s (model load); there is enough le
 
 ---
 
-## Syncing with upstream (read this first when continuing)
+## How to update (read this first when continuing)
 
-Upstream ships **two separate codebases for each version**, and both have to be pulled in:
+### Where everything lives
 
-| Source | What it is | Where |
-|---|---|---|
-| GitHub `Archimetrix/VIVIMUSIC_WEB` | Chrome source, tagged `vX.Y.Z` | `git fetch upstream --tags` |
-| AMO `vivimusicweb` | Firefox port of the same version; **never pushed to GitHub** | https://addons.mozilla.org/firefox/addon/vivimusicweb/ |
+| What | Where |
+|---|---|
+| This fork | private repo `ayhamo/vivimusic-firefox` (remote `origin`) |
+| Upstream Chrome source | GitHub `Archimetrix/VIVIMUSIC_WEB`, tagged `vX.Y.Z` (remote `upstream`) |
+| Upstream Firefox port | AMO `vivimusicweb` (https://addons.mozilla.org/firefox/addon/vivimusicweb/). A separate port of each version, **never pushed to GitHub** |
+| Copy of upstream's Firefox build | `upstream-amo/vivimusicweb-<version>.xpi` (the original AMO file, for reference; open it as a zip) |
+| AMO manifest we last handled | `upstream-amo/manifest-last-synced.json` |
 
-Steps for a new upstream version:
+Both upstream sources have to be pulled in for each new version: GitHub for the shared code, AMO for upstream's Firefox-only fixes.
 
-1. `git fetch upstream --tags`, then `git merge vX.Y.Z` (Chrome-side changes; star-gate files stay deleted).
-2. `python scripts/sync_upstream_firefox.py` (dry run), then `--apply`. It downloads the current AMO build and 3-way merges every file (base = upstream tag, theirs = AMO, ours = this tree). If AMO is ahead of or behind GitHub, pass `--tag`.
-3. Apply the printed `manifest.json` differences by hand. Keep: our gecko id `vivimusic-web@custom`, `data_collection_permissions: none`, `fx-storage.js` first in both isolated content-script groups, `net.js` before `fx-compat.js`, the automix entries and the `'wasm-unsafe-eval'` CSP.
-4. Expected, deliberate conflict: `src/background.js`. Upstream's Firefox build deletes the `VIVI_NET_FETCH` relay at the end; keep ours (`net.js` depends on it).
-5. Test in Firefox (crossfade, manual skip, automix, lyrics), bump `version`, `python scripts/build_zip.py`, lint.
+### A. Update the git repo from upstream (on your PC)
+
+```bash
+git pull
+```
+```bash
+git fetch upstream --tags
+```
+```bash
+python scripts/merge_upstream.py vX.Y.Z --commit
+```
+Merges upstream's GitHub tag. It keeps the star-gate and funding files deleted and keeps our `manifest.json` version; anything else that conflicts is left for you (exit code 2).
+
+```bash
+python scripts/sync_upstream_firefox.py --save-xpi
+```
+Dry run: downloads upstream's current AMO build, stores it in `upstream-amo/`, and reports what a 3-way merge (base = upstream tag, theirs = AMO, ours = this tree) would change. Then apply it:
+
+```bash
+python scripts/sync_upstream_firefox.py --apply --save-xpi
+```
+
+If it prints new `manifest.json` changes, copy them into our `manifest.json` by hand, then record them as handled:
+```bash
+python scripts/sync_upstream_firefox.py --accept-manifest
+```
+When editing the manifest, keep: gecko id `vivimusic-web@custom`, `data_collection_permissions: none`, `fx-storage.js` first in both isolated content-script groups, `net.js` before `fx-compat.js`, the automix entries and the `'wasm-unsafe-eval'` CSP. `src/background.js` always keeps our side where it conflicts with AMO (upstream's Firefox build deletes the `VIVI_NET_FETCH` relay that `net.js` needs); the script does that automatically.
+
+Then test in Firefox (crossfade, manual skip, automix, lyrics), bump `version` in `manifest.json` (keep three parts, e.g. `10.1.8`), commit and push:
+```bash
+git push
+```
 
 Last synced: GitHub v10.1.1 + AMO 10.1.1 (2026-11-03).
 
-### Repository and CI
+### B. The daily workflow (`.github/workflows/fork-sync-build.yml`)
 
-- Private repo `ayhamo/vivimusic-firefox`; remotes: `origin` = that repo, `upstream` = `Archimetrix/VIVIMUSIC_WEB`. Not a GitHub fork (forks of public repos cannot be private). `.github/README.md` is the repo landing page; upstream's `readme.md` is left untouched so merges stay clean.
-- `.github/workflows/fork-sync-release.yml` (daily 05:23 UTC + manual "Run workflow", with a `force` option) does steps 1–2 and 5 above in the runner and publishes a release tagged `fork-<upstream tag>-amo<AMO version>-<fork sha>`. Nothing is pushed back to `main`; when a release succeeds after an upstream update, run the same merge locally (`python scripts/merge_upstream.py <tag> --commit`, then `python scripts/sync_upstream_firefox.py --apply`) and push it.
-- `scripts/merge_upstream.py` auto-resolves only the routine conflicts: files deleted here on purpose (star gate, `.github/FUNDING.yml`) and `manifest.json` hunks that differ only in `version`. Anything else fails the run.
-- Release version is `<manifest version>.<run number>` (AMO needs a higher version on every upload), so keep `manifest.json` at three parts (`10.1.7`).
-- Signing: add repo secrets `AMO_JWT_ISSUER` / `AMO_JWT_SECRET` (AMO Developer Hub → Manage API Keys) and the release gets a signed `.xpi`; without them it ships the unsigned zip.
+- Runs every day at 05:23 UTC, or by hand: Actions → "Fork sync and build" → Run workflow (`force` rebuilds even if nothing changed).
+- It checks upstream's latest GitHub release, upstream's AMO version and this repo's `main`. When any of them is new, it does part A in the runner (nothing is pushed back), lints, and uploads the zip.
+- Get the zip: Actions → the newest green run → **Artifacts** → `vivimusic-web-<version>-…`. GitHub wraps artifacts in a zip, so unzip once to get `vivimusic-web-<version>.zip`. Artifacts are kept 90 days.
+- A red run means upstream changed something that needs a human (a conflict or new AMO manifest changes) or the linter found errors. Do part A locally to see and fix it.
+- A green run after an upstream update only built a zip: still do part A locally and push, so `main` has the merge.
+- Build version is `<manifest version>.<run number>` (e.g. `10.1.7.3`), always higher than the previous build, so installing it over the old one is an update.
+
+### C. Install and update the extension in Firefox Developer Edition
+
+One time:
+1. `about:config` → set `xpinstall.signatures.required` to `false` (Developer Edition and Nightly allow unsigned add-ons; release Firefox does not).
+2. `about:addons` → gear icon → **Install Add-on From File…** → pick `vivimusic-web-<version>.zip`.
+
+To update: download the newer zip from the workflow (or build one locally with `python scripts/build_zip.py`) and install it the same way. Same add-on id and a higher version, so Firefox updates it in place and keeps your settings.
+
+Firefox does not auto-update from here: automatic updates need an `update_url` that Firefox can fetch without logging in, and a private repo cannot serve one.
+
+### Build and lint locally
+
+```bash
+python scripts/build_zip.py
+```
+```bash
+npx addons-linter vivimusic-firefox-ready-to-sign.zip
+```
+Last result: 0 errors, 20 warnings (upstream `innerHTML` uses, one vendor dynamic import, and the Chrome-only `background.service_worker` key that Firefox ignores).
+
+For quick tests without installing: `about:debugging#/runtime/this-firefox` → Load Temporary Add-on → `manifest.json`.
+
+### Repository notes
+
+- Not a GitHub fork (forks of public repos cannot be private), just a repo with `upstream` as a second remote.
+- `.github/README.md` is the repo landing page; upstream's `readme.md` is left untouched so merges stay clean.
+- `scripts/merge_upstream.py` auto-resolves only routine conflicts: files deleted here on purpose (star gate, `.github/FUNDING.yml`) and `manifest.json` hunks that differ only in `version`. It never commits a file with conflict markers.
 
 ---
 
@@ -93,20 +152,6 @@ Last synced: GitHub v10.1.1 + AMO 10.1.1 (2026-11-03).
 - `viviTest('lyrics' | 'sponsorblock' | 'artwork' | url)` — relays a fetch through the background and logs the HTTP status.
 - `viviAutomixStatus()` — logs automix engine state and crossfade state as JSON.
 - `Shift + D` — Stats for Nerds HUD.
-
----
-
-## Build, lint, load
-
-```bash
-python scripts/build_zip.py
-npx addons-linter vivimusic-firefox-ready-to-sign.zip
-```
-
-Last result: 0 errors, 20 warnings (upstream `innerHTML` uses, one vendor dynamic import, and the Chrome-only `background.service_worker` key that Firefox ignores).
-
-Load for testing: `about:debugging#/runtime/this-firefox` → Load Temporary Add-on → `manifest.json`.
-Upload for signing: AMO Developer Hub → submit unlisted. Bump `version` in `manifest.json` for every upload (stay on the `10.1.x` line).
 
 ---
 

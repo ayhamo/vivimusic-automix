@@ -13,7 +13,7 @@ so upstream's Firefox-only changes land on top of our changes. Files that
 only exist in the AMO build are copied in when we don't have them yet.
 
 manifest.json is never merged automatically. The AMO manifest we last synced
-is kept in scripts/upstream-amo-manifest.json; when the new AMO manifest
+is kept in upstream-amo/manifest-last-synced.json; when the new AMO manifest
 differs from it, the difference is printed so it can be applied by hand, then
 recorded with --accept-manifest.
 
@@ -25,7 +25,8 @@ Usage (from the repo root, with the upstream remote fetched):
     python scripts/sync_upstream_firefox.py            # dry run: report only
     python scripts/sync_upstream_firefox.py --apply    # write merged files
 Options: --tag v10.1.2 (default: "v" + AMO version), --remote upstream,
-         --accept-manifest (record the current AMO manifest as handled)
+         --accept-manifest (record the current AMO manifest as handled),
+         --save-xpi (keep the downloaded AMO .xpi in upstream-amo/ for reference)
 """
 import argparse
 import difflib
@@ -46,7 +47,8 @@ SKIP = {'src/gate.js', 'src/gate.css', 'src/stargate.js', 'manifest.json'}
 # hunks keep our side (non-conflicting upstream changes still merge in).
 # background.js: AMO drops the VIVI_NET_FETCH relay that net.js needs.
 KEEP_OURS = {'src/background.js'}
-AMO_MANIFEST_BASELINE = os.path.join(ROOT, 'scripts', 'upstream-amo-manifest.json')
+AMO_DIR = os.path.join(ROOT, 'upstream-amo')
+AMO_MANIFEST_BASELINE = os.path.join(AMO_DIR, 'manifest-last-synced.json')
 TEXT_EXT = ('.js', '.css', '.html', '.json', '.md', '.txt')
 
 
@@ -67,6 +69,7 @@ def main():
     ap.add_argument('--tag', help='upstream git tag matching the AMO version')
     ap.add_argument('--remote', default='upstream')
     ap.add_argument('--accept-manifest', action='store_true', help='record the current AMO manifest as handled')
+    ap.add_argument('--save-xpi', action='store_true', help='keep the AMO .xpi in upstream-amo/ for reference')
     a = ap.parse_args()
     sys.stdout.reconfigure(encoding='utf-8')
 
@@ -78,7 +81,15 @@ def main():
     if git('rev-parse', '--verify', '--quiet', f'refs/tags/{tag}', check=False).returncode != 0:
         sys.exit(f'tag {tag} not found: run `git fetch {a.remote} --tags`, or pass --tag')
 
-    xpi = zipfile.ZipFile(io.BytesIO(urllib.request.urlopen(url).read()))
+    raw = urllib.request.urlopen(url).read()
+    if a.save_xpi:
+        os.makedirs(AMO_DIR, exist_ok=True)
+        for old in os.listdir(AMO_DIR):
+            if old.endswith('.xpi'):
+                os.remove(os.path.join(AMO_DIR, old))
+        open(os.path.join(AMO_DIR, f'vivimusicweb-{ver}.xpi'), 'wb').write(raw)
+        print(f'saved upstream-amo/vivimusicweb-{ver}.xpi')
+    xpi = zipfile.ZipFile(io.BytesIO(raw))
     conflicts, changed, added = [], [], []
     tmp = tempfile.mkdtemp(prefix='vivi-sync-')
     for name in sorted(xpi.namelist()):

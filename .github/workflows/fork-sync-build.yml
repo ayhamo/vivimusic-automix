@@ -1,0 +1,123 @@
+# Fork-only workflow. Once a day it checks upstream Vivimusic Web in its two
+# places: the latest GitHub release tag of Archimetrix/VIVIMUSIC_WEB (Chrome
+# source) and the current AMO version (Firefox port, never pushed to GitHub).
+# When either one, or this fork's own main branch, has something no build here
+# has yet, it merges upstream into this branch's patches (in the runner only,
+# nothing is pushed), lints, and uploads the extension zip as a workflow
+# artifact (Actions -> the run -> Artifacts). No GitHub release is made. If a
+# merge needs a human (conflicts, new upstream manifest changes) or the linter
+# finds errors, the run fails and nothing is uploaded.
+name: Fork sync and build
+
+on:
+  schedule:
+    - cron: "23 5 * * *"
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Build again even if a zip for these versions exists"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: fork-sync-build
+  cancel-in-progress: false
+
+env:
+  UPSTREAM_REPO: Archimetrix/VIVIMUSIC_WEB
+  AMO_SLUG: vivimusicweb
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    outputs:
+      gh_tag: ${{ steps.ver.outputs.gh_tag }}
+      amo_version: ${{ steps.ver.outputs.amo_version }}
+      key: ${{ steps.ver.outputs.key }}
+      build: ${{ steps.ver.outputs.build }}
+    steps:
+      - name: compare upstream versions with existing builds
+        id: ver
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FORCE: ${{ inputs.force }}
+        run: |
+          set -euo pipefail
+          gh_tag=$(gh release view -R "$UPSTREAM_REPO" --json tagName --jq .tagName)
+          amo_version=$(curl -fsSL "https://addons.mozilla.org/api/v5/addons/addon/$AMO_SLUG/" | jq -r .current_version.version)
+          ours=$(gh api "repos/$GITHUB_REPOSITORY/commits/${GITHUB_REF_NAME}" --jq .sha)
+          key="upstream-${gh_tag}-amo${amo_version}-fork-${ours:0:7}"
+          echo "upstream GitHub: $gh_tag | upstream AMO: $amo_version | fork: ${ours:0:7}"
+          echo "gh_tag=$gh_tag" >> "$GITHUB_OUTPUT"
+          echo "amo_version=$amo_version" >> "$GITHUB_OUTPUT"
+          echo "key=$key" >> "$GITHUB_OUTPUT"
+          have=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?per_page=100" \
+            --jq "[.artifacts[] | select(.expired == false and (.name | endswith(\"$key\")))] | length")
+          if [ "$have" != "0" ] && [ "$FORCE" != "true" ]; then
+            echo "a zip for $key already exists, nothing to do"
+            echo "build=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    needs: check
+    if: needs.check.outputs.build == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      - name: merge upstream GitHub release (Chrome source)
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git remote add upstream "https://github.com/$UPSTREAM_REPO.git"
+          git fetch --tags upstream
+          python scripts/merge_upstream.py "${{ needs.check.outputs.gh_tag }}" --commit
+
+      - name: merge upstream AMO build (Firefox port)
+        run: python scripts/sync_upstream_firefox.py --apply --remote upstream --tag "v${{ needs.check.outputs.amo_version }}"
+
+      - name: set a higher version and build the zip
+        id: build
+        run: |
+          set -euo pipefail
+          # Each build gets a higher version (<manifest version>.<run number>),
+          # so installing the new zip over the old one counts as an update.
+          version=$(jq -r .version manifest.json).${GITHUB_RUN_NUMBER}
+          jq --arg v "$version" '.version = $v' manifest.json > manifest.tmp && mv manifest.tmp manifest.json
+          python scripts/build_zip.py
+          mkdir -p out
+          mv vivimusic-firefox-ready-to-sign.zip "out/vivimusic-web-${version}.zip"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: lint with addons-linter (fails on errors)
+        run: |
+          set -euo pipefail
+          npx --yes addons-linter "out/vivimusic-web-${{ steps.build.outputs.version }}.zip" --output json > lint.json || true
+          jq '.summary' lint.json
+          test "$(jq '.summary.errors' lint.json)" = "0"
+
+      - name: upload the zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: vivimusic-web-${{ steps.build.outputs.version }}-${{ needs.check.outputs.key }}
+          path: out/vivimusic-web-${{ steps.build.outputs.version }}.zip
+          retention-days: 90
+          if-no-files-found: error

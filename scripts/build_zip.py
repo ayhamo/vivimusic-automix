@@ -8,7 +8,7 @@ import zipfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUT = os.path.join(ROOT, 'vivimusic-firefox-ready-to-sign.zip')
-SKIP_DIRS = {'.git', '.github', '.claude', 'scripts', 'bitchrod extesnion'}
+SKIP_DIRS = {'.git', '.github', '.claude', 'scripts', 'upstream-amo', 'bitchrod extesnion'}
 SKIP_FILES = {'vivimusic-firefox-ready-to-sign.zip', 'README_CUSTOM.md', '.gitignore'}
 
 tmp = OUT + '.tmp'

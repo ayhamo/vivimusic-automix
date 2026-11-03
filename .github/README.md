@@ -11,14 +11,14 @@ This fork packages it for Firefox and adds:
 - Mouse-wheel volume, Apple Music artist colours, Stats for Nerds HUD (Shift+D)
 - No donation links in the popup
 
-## Install
+## Install (Firefox Developer Edition)
 
-Grab the newest release from this repo's **Releases**:
-- signed `.xpi` (when AMO signing secrets are set): open it in Firefox
-- unsigned zip: `about:debugging#/runtime/this-firefox` → Load Temporary Add-on, or upload to AMO as unlisted to sign it
+1. Get the zip: Actions → newest green "Fork sync and build" run → Artifacts (unzip GitHub's wrapper once), or build it locally with `python scripts/build_zip.py`.
+2. One time: `about:config` → `xpinstall.signatures.required` = `false`.
+3. `about:addons` → gear → Install Add-on From File… → the zip. A newer zip installs over the old one and keeps your settings.
 
 ## Staying in sync with upstream
 
-`.github/workflows/fork-sync-release.yml` runs daily (and on demand). It merges upstream's newest GitHub release and AMO Firefox build into this fork inside the runner, lints, builds, optionally signs on AMO, and publishes a release. If a merge needs a human, the run fails and nothing is published.
+`.github/workflows/fork-sync-build.yml` runs daily (and on demand). It merges upstream's newest GitHub release and AMO Firefox build into this fork inside the runner, lints, and uploads the zip as an artifact. If a merge needs a human, the run fails and nothing is uploaded. Upstream's original Firefox build is kept in `upstream-amo/` for reference.
 
-Everything else — what changed and why, how automix works, the manual sync steps, build and debug notes — is in **[README_CUSTOM.md](../README_CUSTOM.md)**.
+Everything else — what changed and why, how automix works, the step-by-step update guide, build and debug notes — is in **[README_CUSTOM.md](../README_CUSTOM.md)**.
