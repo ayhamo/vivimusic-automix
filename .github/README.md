@@ -11,14 +11,14 @@ This fork packages it for Firefox and adds:
 - Mouse-wheel volume, Apple Music artist colours, Stats for Nerds HUD (Shift+D)
 - No donation links in the popup
 
-## Install (Firefox Developer Edition)
+## Install
 
-1. Get the zip: Actions → newest green "Fork sync and build" run → Artifacts (unzip GitHub's wrapper once), or build it locally with `python scripts/build_zip.py`.
-2. One time: `about:config` → `xpinstall.signatures.required` = `false`.
-3. `about:addons` → gear → Install Add-on From File… → the zip. A newer zip installs over the old one and keeps your settings.
+1. Download `vivimusic-web-<version>.zip` from this repo's newest **Release**.
+2. Sign it on AMO: [Developer Hub](https://addons.mozilla.org/en-US/developers/addons) → Vivimusic Web → Upload New Version → the zip (unlisted, signed automatically).
+3. Open the signed `.xpi` in Firefox. A newer version installs over the old one and keeps your settings.
 
 ## Staying in sync with upstream
 
-`.github/workflows/fork-sync-build.yml` runs daily (and on demand). It merges upstream's newest GitHub release and AMO Firefox build into this fork inside the runner, lints, and uploads the zip as an artifact. If a merge needs a human, the run fails and nothing is uploaded. Upstream's original Firefox build is kept in `upstream-amo/` for reference.
+`.github/workflows/fork-sync-release.yml` runs daily (and on demand). It merges upstream's newest GitHub release and AMO Firefox build into this fork inside the runner, lints, and publishes the zip as a release. If a merge needs a human, the run fails and nothing is published. Upstream's original Firefox build is kept in `upstream-amo/` for reference.
 
 Everything else — what changed and why, how automix works, the step-by-step update guide, build and debug notes — is in **[README_CUSTOM.md](../README_CUSTOM.md)**.

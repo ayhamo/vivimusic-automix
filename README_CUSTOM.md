@@ -108,24 +108,25 @@ git push
 
 Last synced: GitHub v10.1.1 + AMO 10.1.1 (2026-11-03).
 
-### B. The daily workflow (`.github/workflows/fork-sync-build.yml`)
+### B. The daily workflow (`.github/workflows/fork-sync-release.yml`)
 
-- Runs every day at 05:23 UTC, or by hand: Actions → "Fork sync and build" → Run workflow (`force` rebuilds even if nothing changed).
-- It checks upstream's latest GitHub release, upstream's AMO version and this repo's `main`. When any of them is new, it does part A in the runner (nothing is pushed back), lints, and uploads the zip.
-- Get the zip: Actions → the newest green run → **Artifacts** → `vivimusic-web-<version>-…`. GitHub wraps artifacts in a zip, so unzip once to get `vivimusic-web-<version>.zip`. Artifacts are kept 90 days.
-- A red run means upstream changed something that needs a human (a conflict or new AMO manifest changes) or the linter found errors. Do part A locally to see and fix it.
-- A green run after an upstream update only built a zip: still do part A locally and push, so `main` has the merge.
-- Build version is `<manifest version>.<run number>` (e.g. `10.1.7.3`), always higher than the previous build, so installing it over the old one is an update.
+- Runs every day at 05:23 UTC, or by hand: Actions → "Fork sync and release" → Run workflow (`force` rebuilds and replaces the release even if nothing changed).
+- It checks upstream's latest GitHub release, upstream's AMO version and this repo's `main`. When any of them is new, it does part A in the runner (nothing is pushed back), lints, and publishes a **GitHub release** (repo page → Releases) with `vivimusic-web-<version>.zip` attached. Release tag: `fork-<upstream tag>-amo<AMO version>-<fork commit>`.
+- A red run means upstream changed something that needs a human (a conflict or new AMO manifest changes) or the linter found errors. Nothing is published; do part A locally to see and fix it.
+- A green run after an upstream update only built a release: still do part A locally and push, so `main` has the merge.
+- Release version is `<manifest version>.<run number>` (e.g. `10.1.7.3`). AMO refuses a version it has seen before, and the run number makes every build higher. Keep `manifest.json` at three parts.
 
-### C. Install and update the extension in Firefox Developer Edition
+### C. Sign on AMO and install
 
-One time:
-1. `about:config` → set `xpinstall.signatures.required` to `false` (Developer Edition and Nightly allow unsigned add-ons; release Firefox does not).
-2. `about:addons` → gear icon → **Install Add-on From File…** → pick `vivimusic-web-<version>.zip`.
+The add-on is already on your AMO account (https://addons.mozilla.org/en-US/developers/addons, uploaded as unlisted).
 
-To update: download the newer zip from the workflow (or build one locally with `python scripts/build_zip.py`) and install it the same way. Same add-on id and a higher version, so Firefox updates it in place and keeps your settings.
+1. Download `vivimusic-web-<version>.zip` from the newest release.
+2. AMO Developer Hub → Vivimusic Web → **Upload New Version** → the zip → follow the steps. Unlisted versions are signed automatically, usually within minutes.
+3. Download the signed `.xpi` AMO gives back and open it in Firefox (any edition). Same add-on id and a higher version, so it updates in place and keeps your settings.
 
-Firefox does not auto-update from here: automatic updates need an `update_url` that Firefox can fetch without logging in, and a private repo cannot serve one.
+Unlisted add-ons do not auto-update in Firefox (that needs an `update_url` Firefox can fetch without logging in), so repeat steps 1–3 for each new release.
+
+Without signing (Developer Edition / Nightly only): `about:config` → `xpinstall.signatures.required` = `false`, then `about:addons` → gear → Install Add-on From File… → the zip.
 
 ### Build and lint locally
 

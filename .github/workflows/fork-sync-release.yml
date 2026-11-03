@@ -1,13 +1,14 @@
 # Fork-only workflow. Once a day it checks upstream Vivimusic Web in its two
 # places: the latest GitHub release tag of Archimetrix/VIVIMUSIC_WEB (Chrome
 # source) and the current AMO version (Firefox port, never pushed to GitHub).
-# When either one, or this fork's own main branch, has something no build here
-# has yet, it merges upstream into this branch's patches (in the runner only,
-# nothing is pushed), lints, and uploads the extension zip as a workflow
-# artifact (Actions -> the run -> Artifacts). No GitHub release is made. If a
-# merge needs a human (conflicts, new upstream manifest changes) or the linter
-# finds errors, the run fails and nothing is uploaded.
-name: Fork sync and build
+# When either one, or this fork's own main branch, has something this fork has
+# not released yet, it merges upstream into this branch's patches (in the
+# runner only, nothing is pushed), lints, and publishes the extension zip as a
+# GitHub release here, ready to upload to AMO (Developer Hub -> the add-on ->
+# Upload New Version). If a merge needs a human (conflicts, new upstream
+# manifest changes) or the linter finds errors, the run fails and nothing is
+# published.
+name: Fork sync and release
 
 on:
   schedule:
@@ -15,17 +16,16 @@ on:
   workflow_dispatch:
     inputs:
       force:
-        description: "Build again even if a zip for these versions exists"
+        description: "Rebuild and replace the release even if it exists"
         required: false
         default: false
         type: boolean
 
 permissions:
-  contents: read
-  actions: read
+  contents: write
 
 concurrency:
-  group: fork-sync-build
+  group: fork-sync-release
   cancel-in-progress: false
 
 env:
@@ -38,10 +38,10 @@ jobs:
     outputs:
       gh_tag: ${{ steps.ver.outputs.gh_tag }}
       amo_version: ${{ steps.ver.outputs.amo_version }}
-      key: ${{ steps.ver.outputs.key }}
+      tag: ${{ steps.ver.outputs.tag }}
       build: ${{ steps.ver.outputs.build }}
     steps:
-      - name: compare upstream versions with existing builds
+      - name: compare upstream versions with fork releases
         id: ver
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -51,15 +51,13 @@ jobs:
           gh_tag=$(gh release view -R "$UPSTREAM_REPO" --json tagName --jq .tagName)
           amo_version=$(curl -fsSL "https://addons.mozilla.org/api/v5/addons/addon/$AMO_SLUG/" | jq -r .current_version.version)
           ours=$(gh api "repos/$GITHUB_REPOSITORY/commits/${GITHUB_REF_NAME}" --jq .sha)
-          key="upstream-${gh_tag}-amo${amo_version}-fork-${ours:0:7}"
+          tag="fork-${gh_tag}-amo${amo_version}-${ours:0:7}"
           echo "upstream GitHub: $gh_tag | upstream AMO: $amo_version | fork: ${ours:0:7}"
           echo "gh_tag=$gh_tag" >> "$GITHUB_OUTPUT"
           echo "amo_version=$amo_version" >> "$GITHUB_OUTPUT"
-          echo "key=$key" >> "$GITHUB_OUTPUT"
-          have=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?per_page=100" \
-            --jq "[.artifacts[] | select(.expired == false and (.name | endswith(\"$key\")))] | length")
-          if [ "$have" != "0" ] && [ "$FORCE" != "true" ]; then
-            echo "a zip for $key already exists, nothing to do"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          if gh release view "$tag" -R "$GITHUB_REPOSITORY" > /dev/null 2>&1 && [ "$FORCE" != "true" ]; then
+            echo "$tag already released, nothing to do"
             echo "build=false" >> "$GITHUB_OUTPUT"
           else
             echo "build=true" >> "$GITHUB_OUTPUT"
@@ -98,8 +96,7 @@ jobs:
         id: build
         run: |
           set -euo pipefail
-          # Each build gets a higher version (<manifest version>.<run number>),
-          # so installing the new zip over the old one counts as an update.
+          # AMO needs a new, higher version for every upload: <manifest version>.<run number>
           version=$(jq -r .version manifest.json).${GITHUB_RUN_NUMBER}
           jq --arg v "$version" '.version = $v' manifest.json > manifest.tmp && mv manifest.tmp manifest.json
           python scripts/build_zip.py
@@ -114,10 +111,27 @@ jobs:
           jq '.summary' lint.json
           test "$(jq '.summary.errors' lint.json)" = "0"
 
-      - name: upload the zip
-        uses: actions/upload-artifact@v4
-        with:
-          name: vivimusic-web-${{ steps.build.outputs.version }}-${{ needs.check.outputs.key }}
-          path: out/vivimusic-web-${{ steps.build.outputs.version }}.zip
-          retention-days: 90
-          if-no-files-found: error
+      - name: publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.check.outputs.tag }}
+          VERSION: ${{ steps.build.outputs.version }}
+          GH_TAG: ${{ needs.check.outputs.gh_tag }}
+          AMO_VERSION: ${{ needs.check.outputs.amo_version }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" -R "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            gh release delete "$TAG" -R "$GITHUB_REPOSITORY" --yes --cleanup-tag
+          fi
+          {
+            echo "Vivimusic Web ${VERSION} for Firefox: this fork's patches on top of upstream."
+            echo
+            echo "- Upstream GitHub: ${GH_TAG} (https://github.com/${UPSTREAM_REPO}/releases/tag/${GH_TAG})"
+            echo "- Upstream Firefox (AMO): ${AMO_VERSION}"
+            echo "- Fork commit: ${GITHUB_SHA}"
+            echo
+            echo "To sign it: https://addons.mozilla.org/en-US/developers/addons -> Vivimusic Web -> Upload New Version -> vivimusic-web-${VERSION}.zip"
+          } > notes.md
+          gh release create "$TAG" "out/vivimusic-web-${VERSION}.zip" -R "$GITHUB_REPOSITORY" \
+            --title "Vivimusic Web ${VERSION} (upstream ${GH_TAG}, AMO ${AMO_VERSION})" \
+            --notes-file notes.md --latest
