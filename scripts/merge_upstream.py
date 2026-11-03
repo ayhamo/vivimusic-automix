@@ -25,24 +25,24 @@ def git(*args, check=True):
     return r
 
 
+MARKER = re.compile(r'^(<<<<<<<|=======|>>>>>>>|\|{7})( |\r?$)', re.M)
+# ours, optional diff3/zdiff3 base section, theirs; LF or CRLF line endings
+CONFLICT = re.compile(r'<<<<<<< [^\n]*\n(.*?)(?:\|{7}[^\n]*\n.*?)?=======\r?\n(.*?)>>>>>>> [^\n]*\n', re.S)
+
+
 def resolve_manifest(path):
     """Keep ours in hunks that differ only by the version line. True if fully resolved."""
     text = open(path, encoding='utf-8', newline='').read()
-    out, i, unresolved = [], 0, False
-    pattern = re.compile(r'<<<<<<< [^\n]*\n(.*?)=======\n(.*?)>>>>>>> [^\n]*\n', re.S)
-    for m in pattern.finditer(text):
-        ours, theirs = m.group(1), m.group(2)
-        strip = lambda block: [l for l in block.splitlines() if not VERSION_LINE.match(l)]
+    strip = lambda block: [l.rstrip('\r') for l in block.splitlines() if not VERSION_LINE.match(l)]
+    out, i = [], 0
+    for m in CONFLICT.finditer(text):
         out.append(text[i:m.start()])
-        if strip(ours) == strip(theirs):
-            out.append(ours)
-        else:
-            out.append(m.group(0))
-            unresolved = True
+        out.append(m.group(1) if strip(m.group(1)) == strip(m.group(2)) else m.group(0))
         i = m.end()
     out.append(text[i:])
-    open(path, 'w', encoding='utf-8', newline='').write(''.join(out))
-    return not unresolved
+    result = ''.join(out)
+    open(path, 'w', encoding='utf-8', newline='').write(result)
+    return not MARKER.search(result)
 
 
 def main():
@@ -70,6 +70,12 @@ def main():
     if left:
         print('needs a human, unresolved conflicts in:', ', '.join(left))
         return 2
+    # Never commit a file that still carries conflict markers.
+    for p in git('diff', '--cached', '--name-only').stdout.splitlines():
+        f = os.path.join(ROOT, p)
+        if os.path.isfile(f) and MARKER.search(open(f, encoding='utf-8', errors='replace', newline='').read()):
+            print('conflict markers left in', p)
+            return 2
     if commit and git('rev-parse', '-q', '--verify', 'MERGE_HEAD', check=False).returncode == 0:
         git('commit', '--no-edit', '-q')
         print(f'merged {tag}')
