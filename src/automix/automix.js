@@ -122,29 +122,50 @@
    */
   function planMix(analysis, songEnd, earliest) {
     const { bpm, conf, downbeats } = analysis || {};
-    if (!bpm || bpm < 60 || bpm > 200 || conf < 0.2 || !downbeats.length) {
+    if (!bpm || bpm < 40 || bpm > 240 || conf < 0.2 || !downbeats.length) {
       setStatus('fallback', { mix: null, reason: 'weak beat grid' });
       return null;
     }
-    const barSec = 240 / bpm;
+    // Beat trackers often lock onto half (or double) time on dance music:
+    // a 128 BPM track reads as 64. Fold the tempo into 90–180 BPM. At half
+    // time each detected "bar" spans two real bars, so the missing downbeats
+    // are filled in between the detected ones.
+    let tempo = bpm, split = 1;
+    while (tempo < 90) { tempo *= 2; split *= 2; }
+    while (tempo > 180) tempo /= 2;
+    const barSec = 240 / tempo;
+    let detected = [...downbeats].sort((x, y) => x - y);
+    if (tempo < bpm) detected = detected.filter((_, i) => i % 2 === 0);   // double time: every other one
+    const grid = [];
+    detected.forEach((t, i) => {
+      grid.push(t);
+      const next = detected[i + 1];
+      if (next != null && split > 1) for (let k = 1; k < split; k++) grid.push(t + (next - t) * k / split);
+    });
+    // ...and continued on the bar grid to the end of the song.
+    for (let t = grid[grid.length - 1] + barSec; t < songEnd; t += barSec) grid.push(t);
+
     let bars = barsSetting === 'auto' ? (conf >= 0.7 ? 16 : conf >= 0.45 ? 8 : 4) : barsSetting;
     if (conf < 0.45) bars = Math.min(bars, 4);
     else if (conf < 0.6) bars = Math.min(bars, 8);
     while (bars > 4 && bars * barSec > MAX_MIX_SEC) bars /= 2;
-    const mixSec = bars * barSec;
 
-    // Detected downbeats, continued on the bar grid to the end of the song.
-    const grid = [...downbeats];
-    for (let t = grid[grid.length - 1] + barSec; t < songEnd; t += barSec) grid.push(t);
-    const latest = songEnd - mixSec - 0.3;
-    const startAt = grid.filter((t) => t >= earliest && t <= latest).pop();
+    // Latest downbeat that still lets the whole blend finish before the end;
+    // if the chosen length does not fit any more, try shorter ones.
+    let startAt = null, mixSec = 0;
+    for (; bars >= 4; bars /= 2) {
+      mixSec = bars * barSec;
+      const latest = songEnd - mixSec - 0.3;
+      startAt = grid.filter((t) => t >= earliest && t <= latest).pop() ?? null;
+      if (startAt != null) break;
+    }
     if (startAt == null) {
-      setStatus('fallback', { mix: null, reason: 'no downbeat fits' });
+      setStatus('fallback', { mix: null, reason: 'no downbeat left before the end' });
       return null;
     }
-    const mix = { bars, mixSec, startAt, bpm, conf };
+    const mix = { bars, mixSec, startAt, bpm: tempo, conf };
     setStatus('ready', { mix });
-    log(`planned ${bars} bars (${mixSec.toFixed(1)} s) at ${bpm.toFixed(1)} BPM, starting on the downbeat at ${startAt.toFixed(2)} s (grid confidence ${conf.toFixed(2)})`);
+    log(`planned ${bars} bars (${mixSec.toFixed(1)} s) at ${tempo.toFixed(1)} BPM${tempo !== bpm ? ` (detected ${bpm.toFixed(1)})` : ''}, starting on the downbeat at ${startAt.toFixed(2)} s (grid confidence ${conf.toFixed(2)})`);
     return mix;
   }
 

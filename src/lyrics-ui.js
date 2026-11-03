@@ -1078,7 +1078,9 @@
     // Shift the raw video position back by whatever SponsorBlock already
     // skipped past (so lyrics stay aligned to the real song, not the video
     // file's timeline), then apply the user's manual fine-tune correction.
-    const nowMs = (video.currentTime * 1000) - sponsorOffsetMs + manualOffsetMs;
+    const hold = crossfadeHold();
+    const songSec = hold ? hold.timeSec : video.currentTime;
+    const nowMs = (songSec * 1000) - sponsorOffsetMs + manualOffsetMs;
 
     const panel = document.getElementById(PANEL_ID);
     if (!panel) return;
@@ -1223,11 +1225,35 @@
     return null;
   }
 
+  // During a crossfade the next song's title arrives while the old song is
+  // still the louder one: keep the old lyrics until crossfade.js says the
+  // blend is past its middle, then switch.
+  let heldTrack = null;
+  let holdTimer = null;
+  const crossfadeHold = () => {
+    const h = window.__viviCrossfade?.lyricsHold?.();
+    return h && currentTrack && h.id === currentTrack.videoId ? h : null;
+  };
+
   async function handleTrack(track) {
     if (!settings.lyricsEnabled) return;
     if (!track) return;
     const key = `${track.artist}—${track.song}`;
-    if (key === currentTrackKey) return;
+    if (key === currentTrackKey) { heldTrack = null; return; }
+    if (crossfadeHold()) {
+      heldTrack = track;
+      if (!holdTimer) {
+        holdTimer = setInterval(() => {
+          if (crossfadeHold()) return;
+          clearInterval(holdTimer);
+          holdTimer = null;
+          const next = heldTrack;
+          heldTrack = null;
+          if (next) handleTrack(next);
+        }, 150);
+      }
+      return;
+    }
     currentTrackKey = key;
     currentResult = null;
     isLoadingLyrics = true;

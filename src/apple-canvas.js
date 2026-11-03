@@ -334,8 +334,10 @@ async function resolveAppleCanvasDirect(track, storefront = 'us') {
   try {
     const motion = await searchAndFetchMotion(song, artist, album || null, storefront, 'songs');
     if (motion) result = { videoUrl: motion.animated || motion.animatedTall || null };
-  } catch {
-    result = null;
+  } catch (e) {
+    // A failed lookup (network, token) is not "this song has no Canvas":
+    // report it and keep it out of the cache so it is tried again.
+    return { videoUrl: null, error: String(e?.message || e) };
   }
 
   canvasCache.set(key, { value: result, expiresAtMs: Date.now() + CACHE_TTL_MS });

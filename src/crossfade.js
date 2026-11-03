@@ -253,7 +253,7 @@
       const now = v ? v.currentTime - st.off : 0;
       const mix = A.planMix(analysis, st.dur, now + startDelay + 1.5);
       log('automix analysis took', Math.round(performance.now() - t0), 'ms');
-      if (!mix) { amxGiveUp('no usable beat grid'); return; }
+      if (!mix) { amxGiveUp(A.getLiveState().reason || 'no usable beat grid'); return; }
       amx.mix = mix;
       amx.state = 'ready';
     } catch (e) {
@@ -409,6 +409,7 @@
 
     const me = {
       phase: 'asked', oldId: st.id, N, mix, src, fade, bass, vol, base, muted: false,
+      aPos: p.start + idxT / sr - st.off,   // old song's position (s) at T, for the lyrics
       T, askedAt: 0, playedAt: 0, newId: '', newAt: 0, mixEnd: 0,
       tailEnd: T + (p.buf.duration - idxT / sr),
     };
@@ -450,6 +451,7 @@
     log('mixing for', M.toFixed(1), 's, startDelay', startDelay.toFixed(2), live.mix ? '(automix, ' + live.mix.bars + ' bars)' : '');
     live.phase = 'mixing';
     live.mixId = st.id;
+    live.mixStart = now;
     live.mixEnd = now + M;
   }
 
@@ -676,6 +678,16 @@
 
   window.__viviCrossfade = {
     active: () => !!live,
+    // While a blend is running the <video> already plays the next song, but
+    // the old one is what you mostly hear until the middle of the blend.
+    // Returns that song and its current position so the lyrics can stay on it.
+    lyricsHold: () => {
+      const g = graph();
+      if (!live || !g) return null;
+      const now = g.ctx.currentTime;
+      if (live.phase === 'mixing' && now >= (live.mixStart + live.mixEnd) / 2) return null;
+      return { id: live.oldId, timeSec: live.aPos + (now - live.T) };
+    },
     status: () => ({
       seconds: seconds(), graph: !!graph(), ctx: graph()?.ctx.state, state: st,
       remaining: st && graph() ? st.dur - (graph().video.currentTime - st.off) : null,

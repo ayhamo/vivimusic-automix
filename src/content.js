@@ -458,9 +458,23 @@
   // show up with zero perceptible delay.
   function primeMemCacheFromStorage() {
     chrome.storage.local.get(null, (all) => {
-      if (chrome.runtime.lastError) return;
+      if (chrome.runtime.lastError || !all) return;
+      // One-time cleanup: older builds saved failed lookups (for example while
+      // the background page was broken) as "no Canvas", which hid the Canvas
+      // of those songs forever. Drop every saved "no Canvas" once so they are
+      // looked up again.
+      const purge = !all.viviCanvasNotFoundPurgedV1;
+      const stale = [];
       for (const [k, v] of Object.entries(all)) {
-        if (k.startsWith(CACHE_PREFIX)) memCache[k.slice(CACHE_PREFIX.length)] = v;
+        if (!k.startsWith(CACHE_PREFIX)) continue;
+        if (purge && v && v.notFound) { stale.push(k); continue; }
+        memCache[k.slice(CACHE_PREFIX.length)] = v;
+      }
+      if (purge) {
+        chrome.storage.local.remove(stale, () => {
+          chrome.storage.local.set({ viviCanvasNotFoundPurgedV1: true });
+          if (stale.length) log('cleared', stale.length, 'saved "no Canvas" results so they are looked up again');
+        });
       }
     });
   }
@@ -895,16 +909,22 @@
   // of CORS both require that privileged context) — this just relays the
   // request over runtime messaging, same pattern already used for Spotify
   // Canvas and Last.fm.
+  // Resolves { videoUrl } (null = this song has no Canvas) or { failed: true }
+  // when the lookup itself broke, which must not be cached as "no Canvas".
   async function fetchAppleCanvasDirect(track) {
     try {
       const res = await chrome.runtime.sendMessage({
         type: 'VIVI_APPLE_CANVAS_DIRECT',
         track: { song: track.song, artist: track.artist, album: track.album || null },
       });
-      return res?.videoUrl || null;
+      if (!res || res.error) {
+        warn('Apple Canvas lookup failed:', res?.error || 'no reply');
+        return { failed: true };
+      }
+      return { videoUrl: res.videoUrl || null };
     } catch (err) {
       warn('Apple Canvas (direct) message failed:', err.message);
-      return null;
+      return { failed: true };
     }
   }
 
@@ -915,10 +935,12 @@
     // video is found and momentarily fails later, see makeMediaEl's
     // fallbackToImage), but a track with no motion asset must resolve as
     // "no canvas", not silently fall back to a static image.
-    const [videoUrl, artworkResult] = await Promise.all([
+    const [canvas, artworkResult] = await Promise.all([
       fetchAppleCanvasDirect(track),
       fetchItunesArtworkFallback(track, signal),
     ]);
+    if (canvas.failed) return null;   // try again next time instead of caching "no Canvas"
+    const videoUrl = canvas.videoUrl;
     if (!videoUrl) return { videoUrl: null, imageUrl: null, notFound: true };
     const imageUrl = artworkResult?.imageUrl || null;
     return { videoUrl, imageUrl, notFound: false };

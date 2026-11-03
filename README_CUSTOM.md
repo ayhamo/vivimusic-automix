@@ -17,7 +17,8 @@ Fork of [Archimetrix/VIVIMUSIC_WEB](https://github.com/Archimetrix/VIVIMUSIC_WEB
 | Crossfade on natural song end | Working (alignment 1.000, 6 s mix) |
 | Crossfade on manual skip (Next button / Shift+N) | Working (alignment 1.000 on click and Shift+N, no double skip); falls back to a plain skip when alignment is weak or the tail is not ready in 1.5 s |
 | Automix (beat-aligned blend) | Working (detected 114 BPM on a 113 BPM song, 8 bars / 16.8 s, started on a downbeat) |
-| Spotify Canvas / lyrics, Last.fm, ListenBrainz | Code paths fixed but not tested (need your accounts) |
+| Spotify Canvas | Lookup verified with a real account (connect, token, Canvas URL for Midnight Sun); needs "Connect" in the popup once, and Canvas priority set to Spotify to prefer it over Apple |
+| Last.fm, ListenBrainz | Code paths fixed but not tested (need your accounts) |
 
 ---
 
@@ -39,6 +40,9 @@ Fork of [Archimetrix/VIVIMUSIC_WEB](https://github.com/Archimetrix/VIVIMUSIC_WEB
 11. Apple artist art lookups are cached per artist instead of re-fetching the Apple Music page on every song.
 12. Manual-skip alignment waited too little: the analyser is attached at the click, and matching ran before it held real audio (seen as alignment 0.68 and a plain skip). It now waits until 0.4 s of audio is in; both test skips then aligned at 1.000.
 13. After a blend, the silent old tail kept the crossfade "busy" until its buffer ended (up to ~25 s), so a quick second skip got no blend. The crossfade now finishes as soon as the fade does.
+14. **Animated art / Canvas missing on songs that have one.** The artwork cache saved failed lookups (for example while the background page was broken) as "no Canvas", forever. Upstream's Apple resolver also reported network/token errors as "no Canvas". Failed lookups are now reported as failures and never cached, and the first start of this version clears every saved "no Canvas" once (`viviCanvasNotFoundPurgedV1`), so those songs are looked up again.
+15. **Automix gave up on dance tracks** ("fallback, no usable beat grid" at ~65 BPM). The beat model often locks onto half time; the planner now folds the tempo into 90–180 BPM (65 → 130), fills in the downbeats between the detected ones, and tries shorter blends (16 → 8 → 4 bars) before giving up.
+16. **Lyrics jumped to the next song as soon as a blend started**, while the old song was still the louder one (for up to 30 s with automix). During a blend the lyrics now stay on the old song, on its own clock, until the middle of the blend, then switch.
 
 ---
 
@@ -49,7 +53,7 @@ Files: `src/automix/automix.js` (planner), `src/automix/host.html` + `host.js` (
 1. Needs **Crossfade on** and the Automix toggle on (Audio playback card).
 2. ~50 s before a song ends on its own, crossfade.js asks the page world for the buffered outro; it retries until YouTube has buffered to the end (it buffers ~30–40 s ahead).
 3. The outro (mono, 22.05 kHz) goes to the Beat This model in the hidden extension frame. Firefox refuses Workers started from a content script with an extension URL, hence the frame.
-4. `planMix` picks 4/8/16 bars (auto: by grid confidence, capped at 30 s) and the latest downbeat that lets the whole blend finish before the song ends.
+4. `planMix` folds the detected tempo into 90–180 BPM (half/double time), picks 4/8/16 bars (auto: by grid confidence, capped at 30 s) and the latest downbeat that lets the whole blend finish before the song ends, trying shorter blends if the longer one no longer fits.
 5. At that downbeat (minus the learned next-song start delay) the normal crossfade hand-over runs with the longer length, plus a bass swap at the midpoint (outgoing low-shelf cut, incoming restored within one beat). The toast shows bars, length and BPM.
 6. If anything fails (weak grid, analysis too slow, missed downbeat), that song gets the normal crossfade instead.
 
