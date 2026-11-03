@@ -34,12 +34,40 @@
   let pendingOptions = null;   // options set before Kawarp instance exists
   let pauseWhenInactive = true; // "Pause when inactive" setting
   let pausedForVisibility = false;
+  // Firefox: every backdrop-filter surface (nav bar, tabs, cards...) has to be
+  // re-blurred on EVERY frame while the canvas animates behind it, and
+  // WebRender then drops tiles/text (sidebar streaks, stray lines, text-less
+  // chips). So animate only while the full player is open (the theme already
+  // turns those blurs off there) and hold a still frame on Home/Search/etc.
+  // Set to true to animate everywhere again (glitches may return in Firefox).
+  const ANIMATE_OUTSIDE_PLAYER = false;
+  function playerPageOpen() {
+    return !!document.querySelector('ytmusic-app-layout[player-page-open], #layout[player-page-open]');
+  }
+  function mayAnimate() {
+    if (!enabled) return false;
+    if (pauseWhenInactive && document.hidden) return false;
+    return ANIMATE_OUTSIDE_PLAYER || playerPageOpen();
+  }
+  // Start/stop the loop to match the current state. When stopping, make sure a
+  // frame is on the canvas so the still background is not blank.
+  function syncRun() {
+    if (!kawarp) return;
+    if (mayAnimate()) {
+      if (!kawarp.isPlaying) kawarp.start();
+    } else if (kawarp.isPlaying) {
+      kawarp.stop();
+    }
+  }
+  function paintStill() {
+    try { if (kawarp && !kawarp.isPlaying && kawarp.hasImage) kawarp.renderFrame(kawarp.accumulatedTime); } catch (_) {}
+  }
   let brightness = 0.5;       // CSS brightness on the canvas (1 = unchanged)
   let opacityOpt = 1.0;       // mirrors the Kawarp opacity setting
   let staticBgTimer = null;
 
   function log(...a) { console.log('[Vivi Kawarp]', ...a); }
-  function warn(...a) { console.debug('[Vivi Kawarp]', ...a); }
+  function warn(...a) { console.warn('[Vivi Kawarp]', ...a); }
 
   function getWrapper() {
     return document.getElementById(BG_ID);
@@ -162,33 +190,42 @@
   function artKey(url) { return String(url).replace(SIZE_SUFFIX_RE, ''); }
   function upsize(url) { return SIZE_SUFFIX_RE.test(url) ? url.replace(SIZE_SUFFIX_RE, '=w544-h544-l90-rj') : url; }
 
+  function loadImgDirect(src) {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = () => resolve(img);
+      img.onerror = () => reject(new Error('load failed: ' + src));
+      img.src = src;
+    });
+  }
+
+  // Firefox blocks the CORS image request from the page context for some
+  // YouTube thumbnail hosts, so fetch the bytes through the background page
+  // (host permissions, no CORS) and load them from a same-origin blob: URL —
+  // which also keeps the WebGL texture untainted.
   async function loadImg(src) {
     try {
-      const res = await fetch(src);
-      if (!res.ok) throw new Error('HTTP ' + res.status);
-      const blob = await res.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      return await new Promise((resolve, reject) => {
-        const img = new Image();
-        img.onload = () => {
-          URL.revokeObjectURL(blobUrl);
-          resolve(img);
-        };
-        img.onerror = () => {
-          URL.revokeObjectURL(blobUrl);
-          reject(new Error('blob load failed: ' + src));
-        };
-        img.src = blobUrl;
-      });
-    } catch {
-      return new Promise((resolve, reject) => {
-        const img = new Image();
-        img.crossOrigin = 'anonymous';
-        img.onload = () => resolve(img);
-        img.onerror = () => reject(new Error('load failed: ' + src));
-        img.src = src;
-      });
-    }
+      const resp = await chrome.runtime.sendMessage({ type: 'VIVI_FETCH', url: src });
+      if (resp?.ok && resp.status >= 200 && resp.status < 300 && resp.body) {
+        const bin = atob(resp.body);
+        const bytes = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+        const type = (resp.headers && resp.headers['content-type']) || 'image/jpeg';
+        const url = URL.createObjectURL(new Blob([bytes], { type }));
+        try {
+          return await new Promise((resolve, reject) => {
+            const img = new Image();
+            img.onload = () => resolve(img);
+            img.onerror = () => reject(new Error('blob decode failed'));
+            img.src = url;
+          });
+        } finally {
+          setTimeout(() => URL.revokeObjectURL(url), 10000);
+        }
+      }
+    } catch (e) { /* fall through to direct load */ }
+    return loadImgDirect(src);
   }
 
   // Kawarp is driven ONLY by the player-bar thumbnail (see watchBarThumb).
@@ -225,7 +262,8 @@
     }
     lastUrl = key;
     if (enabled) {
-      if (!(pauseWhenInactive && document.hidden)) inst.start();
+      syncRun();
+      paintStill();
       showCanvas();
     }
   }
@@ -266,9 +304,14 @@
       }
     } else if (pausedForVisibility) {
       pausedForVisibility = false;
-      if (enabled) kawarp.start();
+      syncRun();
+      paintStill();
     }
   }
+  // Follow the full player opening/closing.
+  new MutationObserver(() => { syncRun(); paintStill(); }).observe(document.documentElement, {
+    attributes: true, subtree: true, attributeFilter: ['player-page-open']
+  });
   document.addEventListener('visibilitychange', handleVisibilityChange);
 
 
@@ -332,9 +375,8 @@
     scheduleBarSync();
     if (lastUrl) {
       initKawarp();
-      if (!(pauseWhenInactive && document.hidden)) {
-        kawarp?.start();
-      }
+      syncRun();
+      paintStill();
       showCanvas();
     }
   }

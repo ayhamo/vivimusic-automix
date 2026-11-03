@@ -4,7 +4,12 @@
 
 'use strict';
 
-importScripts('md5.js', 'lastfm.js', 'listenbrainz.js', 'spotify.js', 'apple-canvas.js', 'lrcred.js');
+// Chrome runs this file as a service worker and pulls the helpers in here.
+// Firefox runs it as an event page, where importScripts does not exist; the
+// manifest's background.scripts list loads the same helpers before this file.
+if (typeof importScripts === 'function') {
+  importScripts('md5.js', 'lastfm.js', 'listenbrainz.js', 'spotify.js', 'apple-canvas.js', 'lrcred.js');
+}
 
 /* -------------------------------------------------------------------------
  * Apple Music Canvas — header spoofing
@@ -22,6 +27,7 @@ importScripts('md5.js', 'lastfm.js', 'listenbrainz.js', 'spotify.js', 'apple-can
 const AMP_HEADER_RULE_ID = 9001;
 
 async function ensureAmpHeaderSpoofRule() {
+  if (!chrome.declarativeNetRequest?.updateSessionRules) return; // Firefox build: handled by fx-headers.js (webRequest)
   try {
     await chrome.declarativeNetRequest.updateSessionRules({
       removeRuleIds: [AMP_HEADER_RULE_ID],
@@ -393,12 +399,14 @@ async function lastfmWebTryFinish() {
 async function lastfmWebPoll() {
   if (lastfmWebPolling) return;
   lastfmWebPolling = true;
+  const stopKA = viviKeepAlive();
   try {
     for (let i = 0; i < 150; i++) { // ~5 minutes at 2s
       if ((await lastfmWebTryFinish()) !== 'pending') break;
       await new Promise((r) => setTimeout(r, 2000));
     }
   } finally {
+    stopKA();
     lastfmWebPolling = false;
   }
 }
@@ -517,7 +525,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       setSpDc(msg.spDc).then(() => spotifyStatus()).then((s) => sendResponse({ ok: true, ...s })).catch((e) => sendResponse(spotifyJsonError(e.message)));
       return true;
     case 'VIVI_SPOTIFY_CONNECT':
-      spotifyConnectFromBrowser().then(sendResponse);
+      viviWithKeepAlive(spotifyConnectFromBrowser).then(sendResponse);
       return true;
     case 'VIVI_SPOTIFY_LOGOUT':
       clearSpotify().then(sendResponse);
@@ -541,7 +549,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       spotifyPlaylistTrackCount(msg.playlistId).then(count => sendResponse({ ok: true, count: Number(count) || 0 })).catch(e => sendResponse(spotifyJsonError(e.message)));
       return true;
     case 'VIVI_YTM_TRANSFER':
-      (async () => {
+      viviWithKeepAlive(async () => {
         let tabs = await chrome.tabs.query({ url: 'https://music.youtube.com/*' });
         let tab = tabs.find(t => t.active) || tabs[0];
         if (!tab?.id && msg.passive) return { ok: false, error: 'Open YouTube Music in a tab first.' };
@@ -563,7 +571,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           await chrome.scripting.executeScript({ target: { tabId: tab.id }, world: 'MAIN', files: ['src/ytm-page.js'] });
           return await chrome.tabs.sendMessage(tab.id, msg.payload);
         }
-      })().then(sendResponse).catch(e => sendResponse({ ok: false, error: e?.message || String(e) }));
+      }).then(sendResponse).catch(e => sendResponse({ ok: false, error: e?.message || String(e) }));
       return true;
 
     case 'VIVI_APPLE_CANVAS_DIRECT':

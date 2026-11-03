@@ -91,8 +91,8 @@
   }
 
   chrome.storage.local.get(
-    { lyricsEnabled: true, autoSwitchLyrics: true, lyricsShowForVideos: false, dancerOnNotFound: true, resourceSaverEnabled: false, lyricsAlign: 'center', lyricsAnimationStyle: 'apple', lyricsFont: 'default', lyricsRoman: 'off', lyricsRomanJa: true, lyricsRomanLangs: null },
-    (s) => { settings = s; applyLyricsStyleClasses(); }
+    { lyricsEnabled: true, autoSwitchLyrics: true, lyricsShowForVideos: false, dancerOnNotFound: true, resourceSaverEnabled: false, lyricsAlign: 'center', lyricsAnimationStyle: 'apple', lyricsFont: 'default', lyricsRoman: 'off', lyricsRomanJa: true, lyricsRomanLangs: false },
+    (s) => { if (s) settings = s; applyLyricsStyleClasses(); }
   );
 
   chrome.runtime.onMessage.addListener((msg) => {
@@ -1217,7 +1217,7 @@
     if (fromUrl) return fromUrl;
     const player = document.querySelector('#movie_player, ytmusic-player');
     try {
-      const data = player?.getVideoData?.();
+      const data = player?.getVideoData?.() || window.__viviPageVideoData?.();
       if (data?.video_id) return data.video_id;
     } catch { /* ignore */ }
     return null;

@@ -1,0 +1,7 @@
+# build output (rebuild with scripts/build_zip.py)
+vivimusic-firefox-ready-to-sign.zip
+*.tmp
+__pycache__/
+
+# local reference copy of another extension, not part of this project
+bitchrod extesnion/

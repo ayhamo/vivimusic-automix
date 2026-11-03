@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Vivimusic Web",
-  "version": "10.1.6",
+  "version": "10.1.7",
   "description": "Vivimusic Web — Apple Music artwork, Spotify Canvas, synced lyrics, Last.fm scrobbling and Spotify → YouTube Music playlist transfer using local Spotify Web GraphQL and YouTube Music page session.",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAodVgf320I+Nl4y2brFxWRyRRBW1XlSpf/Nr0uZvQk3H931IWS/lKNcCzL+x7SD+hEo6L3AbN3yo0jvwp828vPxPb7j0TN9VShKkCx8xub3b6u7umdbjqRw7TKF7L5CMsaEVMjtrCAtROQCjos4DL38So93jwbGhKja2vFPknLLRJQxoQ6y+srZx7HBRswidCcinkNrLrwATnrsnsvHijg6vDsnvQP+iRtPQ18H+QlMHGIzQY6FivqnCijLf2baRi/tWMnulTkWlZXURkKyP1L+wGdU19OZ66e79brteGKjOEaq1Sq6+ftPNLcQHfuJ9/EBqP5ZlQBsSaOlVAsQJIKwIDAQAB",
   "permissions": [
@@ -11,9 +11,9 @@
     "tabs",
     "alarms",
     "cookies",
-    "declarativeNetRequest",
-    "declarativeNetRequestWithHostAccess",
-    "scripting"
+    "scripting",
+    "webRequest",
+    "webRequestBlocking"
   ],
   "host_permissions": [
     "https://music.youtube.com/*",
@@ -62,12 +62,30 @@
     "https://*.apple.com/*",
     "https://*.cdn-apple.com/*",
     "https://*.itunes.apple.com/*",
-    "https://*.aaplimg.com/*"
+    "https://*.aaplimg.com/*",
+    "https://itunes.apple.com/*",
+    "https://music.apple.com/*",
+    "https://www.last.fm/*",
+    "https://*.scdn.co/*",
+    "https://*.spotifycdn.com/*",
+    "https://*.ggpht.com/*",
+    "https://*.ytimg.com/*"
   ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
+  },
   "background": {
     "scripts": [
+      "src/md5.js",
+      "src/lastfm.js",
+      "src/listenbrainz.js",
+      "src/spotify.js",
+      "src/apple-canvas.js",
+      "src/lrcred.js",
+      "src/fx-headers.js",
       "src/background.js"
-    ]
+    ],
+    "service_worker": "src/background.js"
   },
   "content_scripts": [
     {
@@ -85,6 +103,17 @@
         "https://music.youtube.com/*"
       ],
       "js": [
+        "src/favicon-main.js"
+      ],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://music.youtube.com/*"
+      ],
+      "js": [
+        "src/fx-storage.js",
         "src/announcements-toast.js",
         "src/loader.js",
         "src/ytm-transfer.js"
@@ -96,7 +125,9 @@
         "https://music.youtube.com/*"
       ],
       "js": [
+        "src/fx-storage.js",
         "src/net.js",
+        "src/fx-compat.js",
         "src/lyrics.js",
         "src/vendor/pinyin-pro.min.js",
         "src/romanize.js",

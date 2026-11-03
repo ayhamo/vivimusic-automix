@@ -478,8 +478,6 @@
     return res;
   }
 
-  // LRC header/metadata tags: [ar:..] [ti:..] [al:..] [by:..] [offset:..] [length: 03:45] [re:..] [ve:..]
-  // Any "[word:value]" line that is not a [mm:ss.xx] timestamp is metadata, never lyrics.
   function stripLrcMetaTags(text) {
     return String(text || '')
       .replace(/^\s*\[[a-zA-Z_ ]+\s*:[^\]]*\]\s*$/gm, '')
@@ -1219,15 +1217,32 @@
     let best = null;
     let orderedKeys = [];
     if (jobDefs.length) {
-      // Search ALL enabled providers concurrently (no provider is held back or skipped)
-      best = await raceProviders(jobDefs.map((j) => j.promise), onUpdate);
+      orderedKeys = priorityEnabled
+        ? priorityOrder.filter((k) => PRIORITY_ELIGIBLE_KEYS.includes(k) && jobDefs.some((j) => j.key === k))
+        : [];
+      if (orderedKeys.length) {
+        const priorityJobs = orderedKeys.map((k) => jobDefs.find((j) => j.key === k));
+        best = await racePriorityProviders(priorityJobs, priorityWaitEnabled);
+        if (!best) {
+          const remainingJobs = jobDefs.filter((j) => !orderedKeys.includes(j.key));
+          if (remainingJobs.length) {
+            log('priority list empty-handed, falling back to other enabled providers');
+            best = await raceProviders(remainingJobs.map((j) => j.promise), onUpdate);
+          }
+        }
+      } else {
+        best = await raceProviders(jobDefs.map((j) => j.promise), onUpdate);
+      }
 
-      // Quality-first scan across every provider (and Spotify for plain)
+      // Quality-first scan across every provider (and Spotify for plain).
       if (best && MODE_RANK[best.mode] < MODE_RANK.word) {
         const isPlain = best.mode === 'plain';
-        const scanJobs = jobDefs.slice();
-        if (isPlain && spotifyOn) scanJobs.push(getSpotify());
-        best = await upgradeResult(best, scanJobs, priorityOrder, isPlain ? UNSYNCED_UPGRADE_MS : LINE_UPGRADE_MS);
+        // Priority OFF already compared line results during its own window.
+        if (isPlain || orderedKeys.length) {
+          const scanJobs = jobDefs.slice();
+          if (isPlain && spotifyOn) scanJobs.push(getSpotify());
+          best = await upgradeResult(best, scanJobs, orderedKeys, isPlain ? UNSYNCED_UPGRADE_MS : LINE_UPGRADE_MS);
+        }
       }
     }
 

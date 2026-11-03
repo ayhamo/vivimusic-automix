@@ -1138,9 +1138,6 @@
       <h1>Vivimusic Web</h1>
       <p>The most powerful &amp; feature rich extension ever created for YouTube Music.</p>
     </div>
-    <a class="issue-button" href="https://github.com/Archimetrix/VIVIMUSIC_WEB/issues/new" target="_blank" rel="noopener noreferrer" aria-label="Report an issue on GitHub" title="Report an issue on GitHub">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
-    </a>
     <button class="announcement-button" type="button" aria-label="Announcements" title="Announcements">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10 21h4"/></svg>
       <span class="announcement-badge" hidden>0</span>
@@ -1298,7 +1295,7 @@
           <span class="slider"></span>
         </label>
       </div>
-      <p class="theme-sub" style="margin-top:2px;">On auto-advance, runs on-device Beat This neural network to beatmatch, align musical bars, and synchronize tempo across songs. If songs are incompatible (>12% tempo difference), silently falls back to standard crossfade.</p>
+      <p class="theme-sub" style="margin-top:2px;">Needs Crossfade on. When a song ends on its own, the on-device Beat This model finds the tempo and downbeats of its outro, and the blend starts on a downbeat and lasts a whole number of bars (up to 30 s), with a bass swap halfway. If the beat grid is unclear it uses the normal crossfade length.</p>
       <div class="kawarp-slider-row" id="automixBarsRow" style="margin-top:4px;">
         <div class="kw-label-row"><span>Automix transition bars</span><span class="kw-val" id="automixBarsVal">Auto adaptive</span></div>
         <select id="automixBarsSelect" style="width:100%;background:rgba(255,255,255,0.06);color:var(--text-1);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:5px 8px;font-size:12.5px;margin-top:4px;">
@@ -1315,7 +1312,7 @@
           <span class="slider"></span>
         </label>
       </div>
-      <p class="theme-sub" style="margin-top:2px;">Floating player HUD with real-time stream audio format and live Automix transition status. Shortcut: <code>Shift + D</code>.</p>
+      <p class="theme-sub" style="margin-top:2px;">Floating HUD with the current song, Web Audio state and live crossfade / Automix status. Shortcut: <code>Shift + D</code>.</p>
       <div class="row" style="margin-top:6px; padding-top:6px; border-top:1px solid rgba(255,255,255,0.08);">
         <span class="row-label">Mouse Wheel Volume</span>
         <label class="switch">
@@ -1495,6 +1492,10 @@
       <div class="provider-row">
         <span>Better Lyrics Legacy</span><span class="lvls"><i class="lvl lvl-line">LINE</i></span>
         <label class="switch small"><input type="checkbox" id="prov-betterlyricsLegacy" checked/><span class="slider"></span></label>
+      </div>
+      <div class="provider-row">
+        <span>LyricsPlus</span><span class="lvls"><i class="lvl lvl-syllable">SYLLABLE</i><i class="lvl lvl-word">WORD</i><i class="lvl lvl-line">LINE</i></span>
+        <label class="switch small"><input type="checkbox" id="prov-lyricsplus" checked/><span class="slider"></span></label>
       </div>
       <div class="provider-row">
         <span>Paxsenix (Apple Music)</span><span class="lvls"><i class="lvl lvl-syllable">SYLLABLE</i><i class="lvl lvl-word">WORD</i><i class="lvl lvl-line">LINE</i></span>
@@ -1777,12 +1778,6 @@
     <div class="update-status" id="updateStatus"></div>
   </div>
 
-  <div class="footer">
-    <div class="home-support"><span class="home-support-copy">Enjoying Vivimusic?</span><span class="home-support-actions">
-      <a class="support-pill tea" href="https://buymeatea.online/archimetrix" target="_blank" rel="noopener noreferrer" title="For Indian users — support via UPI"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9h13v5a5 5 0 0 1-5 5H9a5 5 0 0 1-5-5V9Z"/><path d="M17 10.5h1.5a2.5 2.5 0 0 1 0 5H16.6"/><path d="M8 3.5c0 1.2-1 1.3-1 2.5M12 3.5c0 1.2-1 1.3-1 2.5"/></svg>Support via UPI</a>
-      <a class="support-pill coffee" href="https://buymeacoffee.com/archimetrix" target="_blank" rel="noopener noreferrer"><svg class="bmc-mark" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6.9 0 5.68 2.8H3.88v2.52h.69l.7 4.48H4.17l1.46 8.23.94-.01L7.51 24h8.92l.94-5.98.89.01 1.46-8.23h-1.06l.71-4.48h.75V2.8h-1.92L16.99 0H6.9Zm.53.8h9.04l.77 1.78H6.65l.78-1.78ZM4.68 3.6h14.64v.92H4.68V3.6Zm.45 7h13.64l-1.18 6.62-5.65-.06-5.64.06-1.17-6.62Z"/></svg>Buy me a coffee</a>
-    </span></div>
-  </div>
 
   <div class="cache-preview-overlay" id="cachePreviewOverlay">
     <button class="cache-preview-close" id="cachePreviewClose" title="Close" aria-label="Close preview">

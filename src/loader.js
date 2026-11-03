@@ -26,54 +26,78 @@
   // isn't ours the instant it appears, which is as close to zero-flicker as
   // a content script can get (a native browser feature, not something we
   // can hook synchronously the way a MutationObserver requires a tick).
+  // Firefox won't show moz-extension:// icons that a web page links as its
+  // favicon (the tab strip loads favicons outside the page's context), so the
+  // icon is embedded as a small data: URI, which works in every browser.
+  const FAVICON_DATA_URI = chrome.runtime.getURL('icons/custom-logo-icon.png');
+
   function installFaviconOverride() {
-    if (!logoUrl) return;
+    function isOurs(el) { return el.dataset && el.dataset.vivi === '1'; }
 
     function ourLink() {
       const link = document.createElement('link');
       link.rel = 'icon';
       link.type = 'image/png';
-      link.href = logoUrl;
+      link.href = FAVICON_DATA_URI;
+            link.dataset.vivi = '1';
       return link;
     }
 
     function stripForeignIcons(root) {
-      root.querySelectorAll('link[rel~="icon"]').forEach((el) => {
-        if (el.href !== logoUrl && !el.href.endsWith(logoUrl)) el.remove();
+      root.querySelectorAll('link[rel~="icon"], link[rel="apple-touch-icon"], link[rel="shortcut icon"]').forEach((el) => {
+        if (!isOurs(el)) el.remove();
       });
     }
 
-    if (document.head) {
+    function ensureOurs() {
+      if (!document.head) return;
       stripForeignIcons(document.head);
-      document.head.insertBefore(ourLink(), document.head.firstChild);
+      if (!document.head.querySelector('link[data-vivi="1"]')) {
+        document.head.insertBefore(ourLink(), document.head.firstChild);
+      }
     }
 
-    // Catch <head> arriving later, and catch YT Music inserting its own
-    // icon link(s) at any point afterward (it does this again on some
-    // client-side navigations), removing them the instant they land.
+    ensureOurs();
+
     const observer = new MutationObserver((mutations) => {
       if (!document.head) return;
-      let sawForeignIcon = false;
+      let needs = false;
       for (const m of mutations) {
         for (const node of m.addedNodes) {
           if (node.nodeType !== 1) continue;
-          if (node.matches?.('link[rel~="icon"]') && node.href !== logoUrl && !node.href?.endsWith?.(logoUrl)) {
-            sawForeignIcon = true;
-          } else if (node.querySelector?.('link[rel~="icon"]')) {
-            sawForeignIcon = true;
-          }
+          if (node.matches?.('link[rel~="icon"]') && !isOurs(node)) needs = true;
+          else if (node.querySelector?.('link[rel~="icon"]')) needs = true;
+        }
+        for (const node of m.removedNodes) {
+          if (node.nodeType === 1 && isOurs(node)) needs = true;
         }
       }
-      if (sawForeignIcon) {
-        stripForeignIcons(document.head);
-        if (!document.head.querySelector(`link[rel~="icon"][href="${logoUrl}"]`)) {
-          document.head.insertBefore(ourLink(), document.head.firstChild);
-        }
-      }
+      if (needs) ensureOurs();
     });
     observer.observe(document.documentElement, { childList: true, subtree: true });
+    // Belt and braces: re-assert on load and periodically for the first minute.
+    window.addEventListener('load', ensureOurs);
+    let n = 0; const t = setInterval(() => { ensureOurs(); if (++n > 30) clearInterval(t); }, 2000);
   }
   installFaviconOverride();
+  // Firefox only (re)loads the tab icon reliably when a link's href CHANGES after
+  // the initial pass, so re-point our icon link at the packaged logo several
+  // times while the page loads (the query string is ignored by the file).
+  (function bumpFavicon() {
+    let n = 0;
+    const base = chrome.runtime.getURL('icons/custom-logo-icon.png');
+    function bump() {
+      const el = document.querySelector('link[data-vivi="1"]');
+      if (!el) return;
+      el.href = base + '?v=' + (++n);
+    }
+    [300, 1000, 2000, 3500, 6000].forEach((ms) => setTimeout(bump, ms));
+    document.addEventListener('DOMContentLoaded', bump);
+    window.addEventListener('load', bump);
+  })();
+
+
+
 
   // ── Title override, as early as possible ──
   // YT Music may replace the entire <title> node (not merely its text), so

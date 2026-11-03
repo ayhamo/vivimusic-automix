@@ -125,6 +125,7 @@
   }
 
   const DEFAULT_PROVIDERS = {
+    lyricsplus: true,
     lrcred: true,
     betterlyricsTTML: true,
     betterlyricsKugou: true,
@@ -150,6 +151,7 @@
     unison: 'Better Lyrics Unison (Syllable / Word)',
     binilyrics: 'BiniLyrics (Syllable)',
     paxsenix: 'Paxsenix (Apple Music)',
+    lyricsplus: 'LyricsPlus (Syllable / Word)',
     betterlyricsPortato: 'Better Lyrics Portato (Word)',
     musixmatch: 'Musixmatch (Word)',
   };
@@ -169,7 +171,7 @@
   };
 
   chrome.storage.local.get(
-    { enabled: true, themeEnabled: true, imageOnlyMode: false, kawarpEnabled: false, eqEnabled: false, crossfadeEnabled: false, crossfadeSeconds: 6, lyricsEnabled: true, autoSwitchLyrics: true, sponsorBlockEnabled: true, lyricsShowForVideos: false, dancerOnNotFound: true, lyricsAlign: 'center', lyricsAnimationStyle: 'apple', lyricsFont: 'default', lyricsRoman: 'off', lyricsRomanJa: true, lyricsRomanLangs: null, lyricsProviders: DEFAULT_PROVIDERS, ...KAWARP_DEFAULTS },
+    { enabled: true, themeEnabled: true, imageOnlyMode: false, kawarpEnabled: false, eqEnabled: false, crossfadeEnabled: false, crossfadeSeconds: 6, lyricsEnabled: true, autoSwitchLyrics: true, sponsorBlockEnabled: true, lyricsShowForVideos: false, dancerOnNotFound: true, lyricsAlign: 'center', lyricsAnimationStyle: 'apple', lyricsFont: 'default', lyricsRoman: 'off', lyricsRomanJa: true, lyricsRomanLangs: false, lyricsProviders: DEFAULT_PROVIDERS, ...KAWARP_DEFAULTS },
     ({ enabled, themeEnabled, imageOnlyMode, kawarpEnabled, eqEnabled, crossfadeEnabled, crossfadeSeconds, lyricsEnabled, autoSwitchLyrics, sponsorBlockEnabled, lyricsShowForVideos, dancerOnNotFound, lyricsAlign, lyricsAnimationStyle, lyricsFont, lyricsRoman, lyricsRomanJa, lyricsRomanLangs, lyricsProviders,
        kawarpPauseWhenInactive, kawarpOpacity, kawarpWarpIntensity, kawarpBlurPasses, kawarpSaturation, kawarpBrightness, kawarpDithering, kawarpAnimationSpeed, kawarpTransitionDuration }) => {
       enableToggle.checked = enabled;
@@ -1346,7 +1348,6 @@
       renderUpdateResult(result);
     });
   });
-})();
 
   /* -------------------------------------------------------------------------
    * ListenBrainz Scrobbling
@@ -1422,3 +1423,4 @@
       refreshListenbrainzStatus();
     });
   });
+})();

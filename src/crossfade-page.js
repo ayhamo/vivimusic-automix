@@ -121,8 +121,19 @@
     }
     if (!capturing || !sink.init) return;
     const t = segmentStart(u, sink.webm, sink.tick);
-    if (t == null || !isFinite(t)) return;
-    sink.parts.push({ t, shift: sb.timestampOffset, init: sink.init, bytes: u.slice() });
+    if (t == null || !isFinite(t)) {
+      // YouTube Music often appends one segment in several chunks; only the
+      // first starts with a cluster / fragment header. The rest belong to the
+      // segment before them, and dropping them leaves holes the decoder stops at.
+      const last = sink.parts[sink.parts.length - 1];
+      if (!last || last.init !== sink.init || last.shift !== sb.timestampOffset) return;
+      const joined = new Uint8Array(last.bytes.byteLength + u.byteLength);
+      joined.set(last.bytes, 0);
+      joined.set(u, last.bytes.byteLength);
+      last.bytes = joined;
+    } else {
+      sink.parts.push({ t, shift: sb.timestampOffset, init: sink.init, bytes: u.slice() });
+    }
     sink.bytes += u.byteLength;
     while (sink.bytes > MAX_BYTES_PER_SINK && sink.parts.length > 1) {
       sink.bytes -= sink.parts.shift().bytes.byteLength;
@@ -167,13 +178,13 @@
   // ───────────────────────── tail decoding ─────────────────────────
   async function buildTail(req) {
     const snap = snapshot();
-    if (!snap || snap.id !== req.id) return { ok: false, why: 'track-changed', manualSkip: !!req.manualSkip };
+    if (!snap || snap.id !== req.id) return { ok: false, why: 'track-changed', automix: !!req.automix, manualSkip: !!req.manualSkip };
     const sink = liveSink();
-    if (!sink || !sink.parts.length) return { ok: false, why: 'no-data', manualSkip: !!req.manualSkip };
+    if (!sink || !sink.parts.length) return { ok: false, why: 'no-data', automix: !!req.automix, manualSkip: !!req.manualSkip };
 
     // Segments belonging to this song share one timestampOffset.
     const mine = sink.parts.filter((p) => Math.abs(p.shift - snap.off) < 0.05);
-    if (!mine.length) return { ok: false, why: 'no-group', manualSkip: !!req.manualSkip };
+    if (!mine.length) return { ok: false, why: 'no-group', automix: !!req.automix, manualSkip: !!req.manualSkip };
 
     // Order by time, de-duplicate re-appended segments.
     mine.sort((a, b) => a.t - b.t);
@@ -186,7 +197,7 @@
     const limit = typical * 1.6 + 0.5;
 
     let run;
-    if (req.manualSkip || req.isAutomix) {
+    if (req.manualSkip) {
       let first = -1;
       for (let i = 0; i < uniq.length; i++) {
         const segStart = uniq[i].t + uniq[i].shift;
@@ -208,9 +219,9 @@
       // The song must be buffered right to the end...
       const trackEnd = snap.off + snap.dur;
       const lastStart = solid[solid.length - 1].t + solid[solid.length - 1].shift;
-      if (lastStart < trackEnd - (typical * 1.5 + 1)) return { ok: false, why: 'not-buffered' };
+      if (lastStart < trackEnd - (typical * 1.5 + 1)) return { ok: false, why: 'not-buffered', automix: !!req.automix };
       // ...and the unbroken part must reach back far enough to cover the fade.
-      if (solid[0].t + solid[0].shift > trackEnd - (req.cover || 6)) return { ok: false, why: 'short' };
+      if (solid[0].t + solid[0].shift > trackEnd - (req.cover || 6)) return { ok: false, why: 'short', automix: !!req.automix };
 
       // Start at the last segment that begins at or before the requested time.
       let first = 0;
@@ -220,7 +231,14 @@
       run = solid.slice(first);
     }
 
-    if (!run.length || !run[0].init) return { ok: false, why: 'empty-run', manualSkip: !!req.manualSkip };
+    // A quality switch mid-song brings a new init segment; one decode can only
+    // cover segments of one format, so keep the run that reaches the end.
+    if (run.length > 1) {
+      let k = run.length - 1;
+      while (k > 0 && run[k - 1].init === run[k].init) k--;
+      run = run.slice(k);
+    }
+    if (!run.length || !run[0].init) return { ok: false, why: 'empty-run', automix: !!req.automix, manualSkip: !!req.manualSkip };
     const init = run[0].init;
     const total = run.reduce((n, p) => n + p.bytes.byteLength, init.byteLength);
     const blob = new Uint8Array(total);
@@ -233,64 +251,18 @@
       const offline = new OfflineAudioContext(2, 1, req.sampleRate);
       decoded = await offline.decodeAudioData(blob.buffer);
     } catch {
-      return { ok: false, why: 'decode', manualSkip: !!req.manualSkip };
+      return { ok: false, why: 'decode', automix: !!req.automix, manualSkip: !!req.manualSkip };
     }
 
     // Song might have changed while decoding.
     const again = snapshot();
-    if (!again || again.id !== req.id) return { ok: false, why: 'track-changed', manualSkip: !!req.manualSkip };
+    if (!again || again.id !== req.id) return { ok: false, why: 'track-changed', automix: !!req.automix, manualSkip: !!req.manualSkip };
 
     const channels = [];
     for (let c = 0; c < Math.min(2, decoded.numberOfChannels); c++) {
       channels.push(decoded.getChannelData(c).slice());
     }
-    return { ok: true, sampleRate: decoded.sampleRate, start: run[0].t + run[0].shift, channels, isAutomix: !!req.isAutomix, manualSkip: !!req.manualSkip };
-  }
-
-  async function fetchTrackBIntro(req) {
-    const videoId = req.videoId;
-    if (!videoId) return { ok: false, why: 'no-videoid' };
-    try {
-      const key = window.ytcfg?.get?.('INNERTUBE_API_KEY');
-      const ctx = window.ytcfg?.get?.('INNERTUBE_CONTEXT') || {
-        client: { clientName: 'WEB_REMIX', clientVersion: '1.20260901.01.00', hl: 'en-US', gl: 'US' }
-      };
-      if (!key) return { ok: false, why: 'no-ytcfg' };
-
-      const res = await fetch(`/youtubei/v1/player?key=${encodeURIComponent(key)}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Origin': window.location.origin,
-        },
-        credentials: 'include',
-        body: JSON.stringify({ context: ctx, videoId }),
-      });
-      if (!res.ok) return { ok: false, why: 'player-endpoint-' + res.status };
-      const data = await res.json();
-      const formats = data?.streamingData?.adaptiveFormats || [];
-      const audioFormats = formats.filter((f) => String(f.mimeType || '').startsWith('audio/'));
-      const selectedFormat = audioFormats.find((f) => f.mimeType && f.mimeType.includes('webm')) || audioFormats[0];
-      if (!selectedFormat || !selectedFormat.url) return { ok: false, why: 'no-stream-url' };
-
-      const rangeRes = await fetch(selectedFormat.url, {
-        headers: { Range: 'bytes=0-1200000' },
-        credentials: 'omit',
-      });
-      if (!rangeRes.ok && rangeRes.status !== 206) return { ok: false, why: 'range-fetch-' + rangeRes.status };
-
-      const arrayBuf = await rangeRes.arrayBuffer();
-      const offlineCtx = new OfflineAudioContext(2, 1, 44100);
-      const decoded = await offlineCtx.decodeAudioData(arrayBuf);
-
-      const channels = [];
-      for (let c = 0; c < Math.min(2, decoded.numberOfChannels); c++) {
-        channels.push(decoded.getChannelData(c).slice());
-      }
-      return { ok: true, videoId, sampleRate: decoded.sampleRate, channels };
-    } catch (e) {
-      return { ok: false, why: e?.message || 'fetch-intro-failed' };
-    }
+    return { ok: true, sampleRate: decoded.sampleRate, start: run[0].t + run[0].shift, channels, automix: !!req.automix, manualSkip: !!req.manualSkip };
   }
 
   function setPlayerVolume(vol) {
@@ -344,9 +316,6 @@
       pressNext();
     } else if (d.type === 'set-volume') {
       setPlayerVolume(d.volume);
-    } else if (d.type === 'fetch-intro') {
-      const result = await fetchTrackBIntro(d);
-      say({ type: 'intro', id: d.videoId, ...result });
     }
   });
 })();

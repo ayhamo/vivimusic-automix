@@ -1,0 +1,161 @@
+# Fork-only workflow. Once a day it checks upstream Vivimusic Web in its two
+# places: the latest GitHub release tag of Archimetrix/VIVIMUSIC_WEB (Chrome
+# source) and the current AMO version (Firefox port, never pushed to GitHub).
+# When either one, or this fork's own main branch, has something this fork has
+# not released yet, it merges upstream into this branch's patches (in the
+# runner only, nothing is pushed), lints, builds the zip, signs it on AMO when
+# the AMO_JWT_* secrets are set, and publishes it as a release here. If a merge
+# needs a human (conflicts, new upstream manifest changes) or the linter finds
+# errors, the run fails and nothing is published.
+name: Fork sync and release
+
+on:
+  schedule:
+    - cron: "23 5 * * *"
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Rebuild and replace the release even if it exists"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: fork-sync-release
+  cancel-in-progress: false
+
+env:
+  UPSTREAM_REPO: Archimetrix/VIVIMUSIC_WEB
+  AMO_SLUG: vivimusicweb
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    outputs:
+      gh_tag: ${{ steps.ver.outputs.gh_tag }}
+      amo_version: ${{ steps.ver.outputs.amo_version }}
+      tag: ${{ steps.ver.outputs.tag }}
+      build: ${{ steps.ver.outputs.build }}
+    steps:
+      - name: compare upstream versions with fork releases
+        id: ver
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FORCE: ${{ inputs.force }}
+        run: |
+          set -euo pipefail
+          gh_tag=$(gh release view -R "$UPSTREAM_REPO" --json tagName --jq .tagName)
+          amo_version=$(curl -fsSL "https://addons.mozilla.org/api/v5/addons/addon/$AMO_SLUG/" | jq -r .current_version.version)
+          ours=$(gh api "repos/$GITHUB_REPOSITORY/commits/${GITHUB_REF_NAME}" --jq .sha)
+          tag="fork-${gh_tag}-amo${amo_version}-${ours:0:7}"
+          echo "upstream GitHub: $gh_tag | upstream AMO: $amo_version | fork: ${ours:0:7}"
+          echo "gh_tag=$gh_tag" >> "$GITHUB_OUTPUT"
+          echo "amo_version=$amo_version" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          if gh release view "$tag" -R "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            if [ "$FORCE" = "true" ]; then
+              echo "build=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "$tag already released, nothing to do"
+              echo "build=false" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    needs: check
+    if: needs.check.outputs.build == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      - name: merge upstream GitHub release (Chrome source)
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git remote add upstream "https://github.com/$UPSTREAM_REPO.git"
+          git fetch --tags upstream
+          python scripts/merge_upstream.py "${{ needs.check.outputs.gh_tag }}" --commit
+
+      - name: merge upstream AMO build (Firefox port)
+        run: python scripts/sync_upstream_firefox.py --apply --remote upstream --tag "v${{ needs.check.outputs.amo_version }}"
+
+      - name: set a unique version and build the zip
+        id: build
+        run: |
+          set -euo pipefail
+          # AMO needs a new, higher version for every upload: <manifest version>.<run number>
+          version=$(jq -r .version manifest.json).${GITHUB_RUN_NUMBER}
+          jq --arg v "$version" '.version = $v' manifest.json > manifest.tmp && mv manifest.tmp manifest.json
+          python scripts/build_zip.py
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: lint with addons-linter (fails on errors)
+        run: |
+          set -euo pipefail
+          npx --yes addons-linter vivimusic-firefox-ready-to-sign.zip --output json > lint.json || true
+          jq '.summary' lint.json
+          test "$(jq '.summary.errors' lint.json)" = "0"
+
+      - name: sign on AMO (unlisted), when the AMO_JWT secrets are set
+        id: sign
+        env:
+          AMO_JWT_ISSUER: ${{ secrets.AMO_JWT_ISSUER }}
+          AMO_JWT_SECRET: ${{ secrets.AMO_JWT_SECRET }}
+        run: |
+          set -euo pipefail
+          if [ -z "${AMO_JWT_ISSUER}" ] || [ -z "${AMO_JWT_SECRET}" ]; then
+            echo "no AMO_JWT secrets, publishing the unsigned zip only"
+            exit 0
+          fi
+          mkdir -p signed unpacked
+          unzip -q vivimusic-firefox-ready-to-sign.zip -d unpacked
+          npx --yes web-ext sign --source-dir unpacked --artifacts-dir signed \
+            --channel unlisted --api-key "$AMO_JWT_ISSUER" --api-secret "$AMO_JWT_SECRET" --approval-timeout 900000
+          xpi=$(ls signed/*.xpi | head -n1)
+          mv "$xpi" "vivimusic-web-${{ steps.build.outputs.version }}.xpi"
+          echo "xpi=vivimusic-web-${{ steps.build.outputs.version }}.xpi" >> "$GITHUB_OUTPUT"
+
+      - name: publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.check.outputs.tag }}
+          VERSION: ${{ steps.build.outputs.version }}
+          GH_TAG: ${{ needs.check.outputs.gh_tag }}
+          AMO_VERSION: ${{ needs.check.outputs.amo_version }}
+          XPI: ${{ steps.sign.outputs.xpi }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" -R "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            gh release delete "$TAG" -R "$GITHUB_REPOSITORY" --yes --cleanup-tag
+          fi
+          cp vivimusic-firefox-ready-to-sign.zip "vivimusic-web-${VERSION}-unsigned.zip"
+          files=("vivimusic-web-${VERSION}-unsigned.zip")
+          if [ -n "${XPI}" ]; then files=("$XPI" "${files[@]}"); fi
+          {
+            echo "Vivimusic Web ${VERSION} for Firefox (this fork's patches on top of upstream)."
+            echo
+            echo "- Upstream GitHub: ${GH_TAG} (https://github.com/${UPSTREAM_REPO}/releases/tag/${GH_TAG})"
+            echo "- Upstream Firefox (AMO): ${AMO_VERSION}"
+            echo "- Fork commit: ${GITHUB_SHA}"
+            echo
+            if [ -n "${XPI}" ]; then echo "Install the signed .xpi."; else echo "Unsigned: load the zip in about:debugging, or upload it to AMO (unlisted) to sign it."; fi
+          } > notes.md
+          gh release create "$TAG" "${files[@]}" -R "$GITHUB_REPOSITORY" \
+            --title "Vivimusic Web ${VERSION} (upstream ${GH_TAG}, AMO ${AMO_VERSION})" \
+            --notes-file notes.md --latest

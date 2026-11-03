@@ -137,11 +137,12 @@
       });
     } else if (d.type === 'vivi-automix-status') {
       const a = window.__viviAutomix;
-      console.log('%c[ViVi Automix Status]', 'color:#ff4b8b;font-weight:bold;', {
+      console.log('%c[ViVi Automix Status]', 'color:#ff4b8b;font-weight:bold;', JSON.stringify({
         enabled: a?.isEnabled(),
         bars: a?.getBars(),
-        nextTrack: a?.getNextTrackInfo()
-      });
+        engine: a?.getLiveState(),
+        crossfade: window.__viviCrossfade?.status(),
+      }));
     }
   });
 
@@ -161,49 +162,43 @@
     tap = null;
   }
 
-  let manualSkipPending = false;
-  // ───────── Automix (Auto-DJ) State ─────────
-  let automixState = {
-    id: '',
-    preparing: false,
-    planned: null,
-    fallback: false,
-    deckB: null,
-    deckBVol: null,
-    deckBEq: null,
-    tailBuffer: null,
-    resolveTail: null,
-  };
-
-  function resetAutomix(cancelPlayback = true) {
-    if (cancelPlayback && automixState.deckB) {
-      try { automixState.deckB.stop(); } catch(_) {}
-      try { automixState.deckBVol.disconnect(); } catch(_) {}
-    }
-    automixState.preparing = false;
-    automixState.planned = null;
-    automixState.deckB = null;
-    automixState.deckBVol = null;
-    automixState.tailBuffer = null;
-    automixState.resolveTail = null;
-  }
-
+  // Manual skip: the click on Next is held back until the tail is decoded,
+  // then the normal hand-over runs and presses Next itself.
+  let skip = null;              // { id, timer } while a manual skip is waiting
+  // Automix for the current song: idle → analyzing → ready | fallback
+  let amx = { id: '', state: 'idle', mix: null };
+  const MAX_MIX = 30;           // longest blend automix may plan (s)
+  const AMX_LEAD = 50;          // ask for the outro this long before the end (s)
 
   function acceptTail(d) {
     log('tail reply:', d.ok ? 'ok, ' + (d.channels[0].length / d.sampleRate).toFixed(1) + 's of audio' : 'failed (' + d.why + ')');
-    if (!st || d.id !== st.id) return;
-    if (d.isAutomix) {
-      if (automixState.resolveTail) {
-        automixState.resolveTail(d.ok ? d : null);
-        automixState.resolveTail = null;
-      }
+    if (d.manualSkip) {
+      if (!skip || skip.id !== d.id || !st || st.id !== d.id) return;   // too late: Next was already pressed
+      clearTimeout(skip.timer);
+      const tapAt = skip.tapAt;
+      skip = null;
+      const g = graph();
+      const go = () => {
+        if (d.ok && g && !live && seconds() > 0 && st && st.id === d.id && tap) {
+          setPlan(g, d);
+          handOver(g, g.video, seconds());
+        }
+        if (!live) { dropPlan(); post({ type: 'next' }); }   // could not blend: just skip
+      };
+      // The analyser was attached at the click; alignment needs it to hold
+      // real audio (its 0.34 s window) before matching against the tail.
+      const wait = tapAt + 400 - performance.now();
+      if (wait > 0) { skip = { id: d.id, timer: setTimeout(() => { skip = null; go(); }, wait), tapAt }; }
+      else go();
       return;
     }
+    if (!st || d.id !== st.id) return;
     if (!d.ok) {
-      if (d.manualSkip) {
-        log('manual skip tail extraction failed (' + d.why + '), falling back to immediate next');
-        manualSkipPending = false;
-        post({ type: 'next' });
+      if (d.automix) {
+        // YouTube Music buffers only ~30-40 s ahead: keep asking until the end is in.
+        reqId = ''; retryAt = performance.now() + 1500;
+        if (d.why !== 'not-buffered' && d.why !== 'no-data' && d.why !== 'no-group') amxGiveUp('outro not available (' + d.why + ')');
+        else amx.state = 'idle';
         return;
       }
       if (d.why === 'not-buffered' || d.why === 'no-data' || d.why === 'no-group' || d.why === 'short') {
@@ -215,6 +210,16 @@
     }
     const g = graph();
     if (!g || !d.channels.length) return;
+    if (d.automix && d.channels[0].length / d.sampleRate < 16) {
+      // Too little of the outro is buffered yet to find a beat grid: ask again.
+      reqId = ''; retryAt = performance.now() + 1500; amx.state = 'idle';
+      return;
+    }
+    setPlan(g, d);
+    if (d.automix) runAutomix(d);
+  }
+
+  function setPlan(g, d) {
     const len = d.channels[0].length;
     const buf = g.ctx.createBuffer(d.channels.length, len, d.sampleRate);
     d.channels.forEach((c, i) => buf.copyToChannel(c, i));
@@ -222,74 +227,88 @@
     const mono = new Float32Array(len);
     for (let i = 0; i < len; i++) mono[i] = (L[i] + R[i]) * 0.5;
     plan = { id: d.id, buf, mono, rate: d.sampleRate, start: d.start };
+  }
 
-    if (d.manualSkip) {
-      manualSkipPending = false;
-      const v = g.video;
-      if (v && seconds() > 0 && !live) {
-        log('triggering immediate handover for manual skip');
-        handOver(g, v, seconds());
-      }
+  function amxGiveUp(why) {
+    if (amx.state !== 'fallback') log('automix: using a plain crossfade for this song —', why);
+    amx.state = 'fallback';
+    amx.mix = null;
+    // The plain crossfade needs a tail that covers where playback is now.
+    const v = graph()?.video;
+    if (plan && v && (v.currentTime < plan.start || v.currentTime > plan.start + plan.buf.duration - 2)) { dropPlan(); reqId = ''; }
+    window.__viviAutomix?.setStatus('fallback', { mix: null, reason: why });
+  }
+
+  // Beat-track the outro, then plan a bar-aligned blend starting on a downbeat.
+  async function runAutomix(d) {
+    const A = window.__viviAutomix, id = d.id;
+    if (!A || amx.id !== id) return;
+    amx.state = 'analyzing';
+    try {
+      const t0 = performance.now();
+      const songOff = st.off;   // tail times are element-timeline; songs start at st.off
+      const analysis = await A.analyzeTail(id, d.channels, d.sampleRate, d.start - songOff);
+      if (amx.id !== id || !st || st.id !== id) return;
+      const v = graph()?.video;
+      const now = v ? v.currentTime - st.off : 0;
+      const mix = A.planMix(analysis, st.dur, now + startDelay + 1.5);
+      log('automix analysis took', Math.round(performance.now() - t0), 'ms');
+      if (!mix) { amxGiveUp('no usable beat grid'); return; }
+      amx.mix = mix;
+      amx.state = 'ready';
+    } catch (e) {
+      if (amx.id === id) amxGiveUp(String(e?.message || e));
     }
   }
 
   function onManualSkipRequested(e) {
-    if (!userManualSkip || seconds() === 0) return;
+    if (!userManualSkip || seconds() === 0 || skip || live) return;
     const g = graph();
     const v = g?.video;
-    if (!g || !v || !st || st.ad || v.paused || live) return;
-    if (manualSkipPending) return;
-    if (automixState.planned || automixState.deckB) {
-      log('manual skip overrides active automix');
-      resetAutomix(true);
-    }
+    if (!g || !v || !st || st.ad || v.paused || st.id === failedId || g.ctx.state !== 'running') return;
+    if (performance.now() - stAt > 1500) return;
+    if (st.dur - (v.currentTime - st.off) < seconds() + 2) return;   // the song is ending anyway
 
-    if (e && e.cancelable) {
-      e.preventDefault();
-      e.stopPropagation();
-    }
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    dropPlan();
+    tap = g.ctx.createAnalyser();
+    tap.fftSize = 16384;
+    tap.smoothingTimeConstant = 0;
+    try { g.source.connect(tap); } catch { /* ignore */ }
 
-    manualSkipPending = true;
-    if (!tap) {
-      tap = g.ctx.createAnalyser();
-      tap.fftSize = 16384;
-      tap.smoothingTimeConstant = 0;
-      try { g.source.connect(tap); } catch { /* ignore */ }
-    }
-
-    const curId = st.id;
-    log('manual skip requested, asking for tail starting at', (v.currentTime + st.off).toFixed(1));
+    const id = st.id;
+    log('manual skip: asking for the tail from', (v.currentTime - st.off).toFixed(1), 's');
+    skip = {
+      id,
+      tapAt: performance.now(),
+      // Never hold the click hostage: if decoding is slow, skip normally.
+      timer: setTimeout(() => {
+        if (!skip || skip.id !== id) return;
+        skip = null;
+        log('manual skip: tail not ready in time, skipping without a blend');
+        post({ type: 'next' });
+      }, 1500),
+    };
     post({
-      type: 'prepare',
-      id: curId,
-      sampleRate: g.ctx.sampleRate,
-      needFrom: st.off + v.currentTime,
+      type: 'prepare', id, sampleRate: g.ctx.sampleRate,
+      needFrom: v.currentTime - 0.5,   // element timeline
       cover: seconds() + 2,
       manualSkip: true,
     });
-
-    setTimeout(() => {
-      if (manualSkipPending && !live && st?.id === curId) {
-        log('manual skip preparation timed out, falling back to direct next');
-        manualSkipPending = false;
-        post({ type: 'next' });
-      } else {
-        manualSkipPending = false;
-      }
-    }, 400);
   }
 
+  // Only real user input: our own hand-over presses Next with a synthetic click.
   document.addEventListener('click', (e) => {
-    const btn = e.target.closest?.('.next-button, #right-controls .next-button, ytmusic-player-bar .next-button');
-    if (btn) onManualSkipRequested(e);
+    if (!e.isTrusted) return;
+    if (e.target.closest?.('ytmusic-player-bar .next-button')) onManualSkipRequested(e);
   }, true);
 
   document.addEventListener('keydown', (e) => {
-    if (e.shiftKey && (e.key === 'N' || e.key === 'n') && !e.ctrlKey && !e.altKey && !e.metaKey) {
-      const active = document.activeElement;
-      if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable)) return;
-      onManualSkipRequested(e);
-    }
+    if (!e.isTrusted || !e.shiftKey || e.ctrlKey || e.altKey || e.metaKey || (e.key !== 'N' && e.key !== 'n')) return;
+    const active = e.composedPath?.()[0] || document.activeElement;
+    if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable)) return;
+    onManualSkipRequested(e);
   }, true);
 
   // ───────── alignment: where in the decoded tail are we right now? ─────────
@@ -343,7 +362,7 @@
   }
 
   // ───────── hand-over: live element → buffered tail ─────────
-  function handOver(g, v, N) {
+  function handOver(g, v, N, mix = null) {
     const ctx = g.ctx, p = plan, sr = p.rate;
     const frame = new Float32Array(tap.fftSize);
     tap.getFloatTimeDomainData(frame);
@@ -374,9 +393,13 @@
 
     const src = ctx.createBufferSource();
     const fade = ctx.createGain();
+    const bass = ctx.createBiquadFilter();   // automix bass swap (flat otherwise)
     const vol = ctx.createGain();
+    bass.type = 'lowshelf';
+    bass.frequency.value = 250;
+    bass.gain.value = 0;
     src.buffer = p.buf;
-    src.connect(fade); fade.connect(vol); vol.connect(g.entry);
+    src.connect(fade); fade.connect(bass); bass.connect(vol); vol.connect(g.entry);
     vol.gain.setValueAtTime(0, T);
     vol.gain.linearRampToValueAtTime(base, T + SWITCH);
     hold(g.gate.gain, ctx.currentTime);
@@ -385,7 +408,7 @@
     src.start(T, idxT / sr);
 
     const me = {
-      phase: 'asked', oldId: st.id, N, src, fade, vol, base, muted: false,
+      phase: 'asked', oldId: st.id, N, mix, src, fade, bass, vol, base, muted: false,
       T, askedAt: 0, playedAt: 0, newId: '', newAt: 0, mixEnd: 0,
       tailEnd: T + (p.buf.duration - idxT / sr),
     };
@@ -404,7 +427,7 @@
     const ctx = g.ctx, now = ctx.currentTime;
     const room = live.tailEnd - now;
     if (room < 0.25) { finishLive(); return; }
-    const M = clamp(Math.min(live.N, room), 0.3, MAX_SECONDS);
+    const M = clamp(Math.min(live.N, room), 0.3, MAX_MIX);
     startDelay = clamp(startDelay * 0.7 + (now - live.askedAt) * 0.3, 0.1, 2.5);
     // Both params are at rest here (gate at 0, fade at 1). Only clear what is
     // scheduled from now on: a value *event* at `now` would collide with the
@@ -413,7 +436,18 @@
     g.gate.gain.setValueCurveAtTime(FADE_IN, now, M);
     live.fade.gain.cancelScheduledValues(now);
     live.fade.gain.setValueCurveAtTime(FADE_OUT, now, M);
-    log('mixing for', M.toFixed(1), 's, startDelay', startDelay.toFixed(2));
+    if (live.mix) {
+      // Bass swap: the outgoing low end stays until the middle of the blend,
+      // then hands over to the incoming song's within one beat.
+      const beat = 60 / live.mix.bpm, mid = now + M / 2, CUT = -18;
+      const gb = g.bassFilter?.gain;
+      if (gb) { gb.cancelScheduledValues(now); gb.setValueAtTime(CUT, now); gb.setValueAtTime(CUT, mid - beat / 2); gb.linearRampToValueAtTime(0, mid + beat / 2); }
+      const ab = live.bass.gain;
+      ab.cancelScheduledValues(now); ab.setValueAtTime(0, mid - beat / 2); ab.linearRampToValueAtTime(CUT, mid + beat / 2);
+      showAutomixNotification(live.mix.bars, M, live.mix.bpm);
+      setTimeout(finishAutomixNotification, M * 1000);
+    }
+    log('mixing for', M.toFixed(1), 's, startDelay', startDelay.toFixed(2), live.mix ? '(automix, ' + live.mix.bars + ' bars)' : '');
     live.phase = 'mixing';
     live.mixId = st.id;
     live.mixEnd = now + M;
@@ -421,6 +455,7 @@
 
   function cleanup(L, g, rampGate) {
     const ctx = g.ctx, now = ctx.currentTime;
+    if (g.bassFilter) { g.bassFilter.gain.cancelScheduledValues(now); g.bassFilter.gain.setValueAtTime(0, now); }
     hold(g.gate.gain, now);
     if (rampGate) {
       g.gate.gain.setValueAtTime(g.gate.gain.value, now);
@@ -445,8 +480,8 @@
     reqId = ''; failedId = ''; tries = 0;
   }
 
-  function abortLive() {
-    log('aborted crossfade');
+  function abortLive(why = '') {
+    log('aborted crossfade', why);
     const g = graph(), L = live;
     live = null;
     if (!g || !L) return;
@@ -458,7 +493,7 @@
   // ───────── per-tick logic while a crossfade is in progress ─────────
   function driveLive(g, v) {
     const now = g.ctx.currentTime;
-    if (seconds() === 0 || !v || g.video !== v) { abortLive(); return; }
+    if (seconds() === 0 || !v || g.video !== v) { abortLive('crossfade off or player changed'); return; }
 
     // honour a mute that happens while the tail is still audible
     const muted = v.muted || v.volume === 0;
@@ -473,25 +508,26 @@
       const sinceAsk = now - live.askedAt;
       const changed = st && st.id && st.id !== live.oldId;
       if (!changed) {
-        if (sinceAsk > 1 && v.paused) abortLive();          // user paused, or next did nothing
-        else if (sinceAsk > 8) abortLive();                 // nothing followed (end of queue?)
+        if (sinceAsk > 1 && v.paused) abortLive('paused');   // user paused, or next did nothing
+        else if (sinceAsk > 8) abortLive('next song never started');
         return;
       }
       if (!live.newId) { live.newId = st.id; live.newAt = now; }
-      else if (st.id !== live.newId) { abortLive(); return; }   // user skipped again
-      if (st.ad) { abortLive(); return; }
+      else if (st.id !== live.newId) { abortLive('skipped again'); return; }
+      if (st.ad) { abortLive('ad'); return; }
       const audible = !v.paused && (live.playedAt >= live.askedAt || now - live.newAt > 1.2);
       if (audible) beginMix(g);
-      else if (now - live.newAt > 5) abortLive();
+      else if (now - live.newAt > 5) abortLive('next song silent');
     } else if (live.phase === 'mixing') {
-      if (v.paused || st.id !== live.mixId) abortLive();
+      if (v.paused || st.id !== live.mixId) abortLive(v.paused ? 'paused' : 'song changed');
+      else if (now > live.mixEnd + 0.25) finishLive();   // old tail is silent now; free the next skip
     }
   }
 
   const remaining0 = (v) => st.dur - (v.currentTime - st.off);
   const tick = {};
   // ───────── Visual Automix HUD Notification ─────────
-  function showAutomixNotification(bars, durSec, bpmA, bpmB) {
+  function showAutomixNotification(bars, durSec, bpm) {
     try {
       let toast = document.getElementById('vivi-automix-toast');
       if (!toast) {
@@ -514,12 +550,11 @@
 
       const title = document.createElement('span');
       title.className = 'vivi-automix-title';
-      title.textContent = 'AI Automix Active';
+      title.textContent = 'Automix';
 
       const subtitle = document.createElement('span');
       subtitle.className = 'vivi-automix-subtitle';
-      const bpmText = (bpmA && bpmB) ? ` • ${bpmA.toFixed(0)} ➔ ${bpmB.toFixed(0)} BPM` : '';
-      subtitle.textContent = `${bars} bars (${durSec.toFixed(1)}s)${bpmText}`;
+      subtitle.textContent = `${bars} bars · ${durSec.toFixed(1)} s · ${Math.round(bpm)} BPM`;
 
       content.appendChild(title);
       content.appendChild(subtitle);
@@ -549,11 +584,11 @@
 
       const title = document.createElement('span');
       title.className = 'vivi-automix-title';
-      title.textContent = 'Automix Complete';
+      title.textContent = 'Automix';
 
       const subtitle = document.createElement('span');
       subtitle.className = 'vivi-automix-subtitle';
-      subtitle.textContent = 'Seamlessly blended';
+      subtitle.textContent = 'Blend finished';
 
       content.appendChild(title);
       content.appendChild(subtitle);
@@ -572,6 +607,7 @@
     const g = graph();
     const v = g?.video;
     if (live) { if (g) driveLive(g, v); else live = null; return; }
+    if (skip) return;   // a manual skip is being prepared
 
     const N = seconds();
     if (!N || !g || !v || !st || performance.now() - stAt > 1500) return;
@@ -583,145 +619,49 @@
     if (!eligible) { if (remaining0(v) < N + PREP_LEAD && !tick[st.id]) { tick[st.id] = 1; log('not eligible:', { paused: v.paused, rate: v.playbackRate, ad: st.ad, repeatOne: st.rep, dur: st.dur, id: st.id, failed: st.id === failedId }); } return; }
 
     if (!userAutoAdvance) return;
-    const remaining = st.dur - (v.currentTime - st.off);
+    const pos = v.currentTime - st.off;
+    const remaining = st.dur - pos;
+    const ensureTap = () => {
+      if (tap) return;
+      tap = g.ctx.createAnalyser();
+      tap.fftSize = 16384;
+      tap.smoothingTimeConstant = 0;
+      g.source.connect(tap);
+    };
 
-    // ───────── Automix (Auto-DJ) Check at T - 60s ─────────
-    const automix = window.__viviAutomix;
-    if (automix && automix.isEnabled() && remaining <= 60 && remaining > 5 && (v.currentTime - st.off >= 3 || st.dur < 30) && !automixState.fallback && !automixState.preparing && automixState.id !== st.id && !live) {
-      automixState.id = st.id;
-      automixState.preparing = true;
-      log('60s mark reached on Track A. Preparing Automix beatmatching...');
-
-      (async () => {
-        try {
-          const nextTrack = automix.getNextTrackInfo();
-          if (!nextTrack || !nextTrack.videoId) {
-            log('No upcoming track found in queue. Automix falling back to standard crossfade.');
-            automixState.fallback = true;
-            automixState.preparing = false;
-            return;
-          }
-
-          // Fetch Track A outro tail (up to 59s) and Track B intro audio concurrently
-          const tailPromise = new Promise((res) => {
-            automixState.resolveTail = res;
-            post({
-              type: 'prepare',
-              id: st.id,
-              sampleRate: g.ctx.sampleRate,
-              needFrom: st.off + Math.max(0, st.dur - 59),
-              cover: 59,
-              isAutomix: true,
-            });
-            setTimeout(() => { if (automixState.resolveTail === res) { automixState.resolveTail = null; res(null); } }, 15000);
-          });
-
-          const [tailData, trackBBuffer] = await Promise.all([
-            tailPromise,
-            automix.fetchTrackBIntroAudio(nextTrack.videoId),
-          ]);
-
-          if (!tailData || !tailData.ok || !trackBBuffer) {
-            log('Failed to obtain outro/intro audio for automix. Falling back to standard crossfade.');
-            automixState.fallback = true;
-            automixState.preparing = false;
-            return;
-          }
-
-          // Build AudioBuffer for Track A
-          const lenA = tailData.channels[0].length;
-          const bufA = g.ctx.createBuffer(tailData.channels.length, lenA, tailData.sampleRate);
-          tailData.channels.forEach((c, idx) => bufA.copyToChannel(c, idx));
-
-          // Analyze both tracks with on-device Beat This neural network
-          log('Running ONNX Beat This analysis on Track A outro & Track B intro...');
-          const [analysisA, analysisB] = await Promise.all([
-            automix.analyzeAudio(st.id + '_outro', bufA, Math.max(0, st.dur - 59)),
-            automix.analyzeAudio(nextTrack.videoId + '_intro', trackBBuffer, 0),
-          ]);
-
-          // Plan transition
-          const plan = automix.planTransition(analysisA, analysisB, automix.getBars());
-          if (!plan || !plan.canMix) {
-            log('Tracks incompatible for beatmatch (' + (plan?.reason || 'unsupported') + '). Falling back to 5s crossfade.');
-            automixState.fallback = true;
-            automixState.preparing = false;
-            return;
-          }
-
-          automixState.planned = {
-            ...plan,
-            trackBBuffer,
-            nextVideoId: nextTrack.videoId,
-            started: false,
-          };
-          automixState.preparing = false;
-          log(`Automix transition locked: ${plan.bars} bars (${plan.transitionDurationSec.toFixed(1)}s) at ${plan.rateB.toFixed(3)}x tempo.`);
-        } catch (err) {
-          warn('Automix preparation failed:', err?.message || err);
-          automixState.fallback = true;
-          automixState.preparing = false;
-        }
-      })();
-    }
-
-    // ───────── Automix Transition Execution ─────────
-    if (automixState.planned && !automixState.planned.started && !live) {
-      const p = automixState.planned;
-      if (remaining <= p.transitionDurationSec + 0.3 && remaining >= 1) {
-        p.started = true;
-        log(`Executing Automix beatmatched transition: ${p.bars} bars (${p.transitionDurationSec.toFixed(1)}s)!`);
-        showAutomixNotification(p.bars, p.transitionDurationSec, p.bpmA, p.bpmB);
-
-        const now = g.ctx.currentTime;
-        const dur = p.transitionDurationSec;
-
-        // Deck B (Track B) playback setup
-        const srcB = g.ctx.createBufferSource();
-        const volB = g.ctx.createGain();
-        srcB.buffer = p.trackBBuffer;
-        srcB.playbackRate.value = p.rateB;
-
-        srcB.connect(volB);
-        volB.connect(g.entry);
-
-        // Deck B fades IN (0 -> 1)
-        volB.gain.setValueAtTime(0, now);
-        volB.gain.linearRampToValueAtTime(1, now + dur);
-
-        // Deck A (Track A) fades OUT (current -> 0)
-        hold(g.gate.gain, now);
-        g.gate.gain.linearRampToValueAtTime(0, now + dur);
-
-        srcB.start(now);
-        automixState.deckB = srcB;
-        automixState.deckBVol = volB;
-
-        // On transition completion: trigger next and clean up
-        setTimeout(() => {
-          log('Automix transition finished, advancing to Track B');
-          finishAutomixNotification();
-          post({ type: 'next' });
-          setTimeout(() => {
-            hold(g.gate.gain, g.ctx.currentTime);
-            g.gate.gain.setValueAtTime(1, g.ctx.currentTime);
-            resetAutomix(true);
-          }, 800);
-        }, dur * 1000);
-        return;
+    // Automix: fetch the outro early enough to beat-track it before the blend.
+    const A = window.__viviAutomix;
+    if (amx.id !== st.id) amx = { id: st.id, state: 'idle', mix: null };
+    if (amx.state === 'idle' && (!A || !A.isEnabled())) amx.state = 'off';
+    if (amx.state === 'idle' && remaining <= AMX_LEAD && reqId !== st.id && performance.now() >= retryAt) {
+      if (remaining < N + 8) { amxGiveUp('outro was not buffered in time'); }
+      else {
+        reqId = st.id;
+        amx.state = 'waiting';
+        ensureTap();
+        log('automix: requesting the outro, remaining', remaining.toFixed(1), 's');
+        post({
+          type: 'prepare', id: st.id, sampleRate: g.ctx.sampleRate,
+          needFrom: st.off + Math.max(0, st.dur - AMX_LEAD + 2), cover: N + 3, automix: true,
+        });
       }
+    }
+    if (amx.state === 'ready' && plan && plan.id === st.id && tap) {
+      const handAt = amx.mix.startAt - startDelay;
+      if (pos >= handAt - TICK_MS / 2000) { amx.state = 'done'; handOver(g, v, amx.mix.mixSec, amx.mix); return; }
+      if (pos > handAt + 1) amxGiveUp('missed the downbeat');
+      else return;   // waiting for the planned downbeat
+    }
+    if (amx.state === 'waiting' || amx.state === 'analyzing') {
+      if (remaining > N + startDelay + 0.5) return;   // still time for the analysis to land
+      amxGiveUp('analysis too slow');
     }
 
     if (remaining > N + PREP_LEAD + 1 || remaining < 0.8) return;
 
     if (reqId !== st.id && performance.now() >= retryAt) {
       reqId = st.id;
-      if (!tap) {
-        tap = g.ctx.createAnalyser();
-        tap.fftSize = 16384;
-        tap.smoothingTimeConstant = 0;
-        g.source.connect(tap);
-      }
+      ensureTap();
       log('requesting tail, remaining', remaining.toFixed(1), 's');
       post({
         type: 'prepare', id: st.id, sampleRate: g.ctx.sampleRate,
@@ -739,7 +679,7 @@
     status: () => ({
       seconds: seconds(), graph: !!graph(), ctx: graph()?.ctx.state, state: st,
       remaining: st && graph() ? st.dur - (graph().video.currentTime - st.off) : null,
-      plan: !!plan, reqId, failedId, live: live && live.phase,
+      plan: !!plan, reqId, failedId, live: live && live.phase, automix: { state: amx.state, mix: amx.mix },
     }),
   };
 })();

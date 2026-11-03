@@ -2301,6 +2301,70 @@ ytmusic-app-layout[player-page-open] > [slot=content],
 }
 
 
+/* ── Firefox-only additions (v9.1.6) ─────────────────────────────────────────
+   Firefox draws a thin overlay scrollbar thumb on every scroller (the stray
+   vertical line beside Search results). Chrome hides these via
+   ::-webkit-scrollbar, which Firefox ignores. */
+html.vivi-theme-on, html.vivi-theme-on * {
+  scrollbar-width: none !important;
+  scrollbar-color: transparent transparent !important;
+}
+/* Chips: swap instantly instead of fading colour/background. */
+html.vivi-theme-on ytmusic-chip-cloud-chip-renderer a,
+html.vivi-theme-on #chips a.yt-simple-endpoint.ytmusic-chip-cloud-chip-renderer {
+  transition: none !important;
+}
+
+
+/* ── Firefox tile-seam fix (v9.1.7) ──────────────────────────────────────────
+   Firefox splits large backdrop-filter surfaces on its 1024px tile grid and
+   leaves visible seams: a vertical line at x≈1022 through the Search
+   "top result" card / sticky tabs, and a short streak across the sidebar.
+   Remove the blur ONLY on surfaces that have no scrolling content beneath
+   them (sidebar, top-result card, small buttons). The sticky tab row is
+   covered instead by extending the nav bar's blur (a full-width element
+   that renders cleanly) down over it. */
+html.vivi-theme-on #guide-wrapper,
+html.vivi-theme-on #mini-guide-background,
+html.vivi-theme-on #mini-guide,
+html.vivi-theme-on .undercards-container.ytmusic-card-shelf-renderer::before,
+html.vivi-theme-on .card-content-container.ytmusic-card-shelf-renderer::before,
+html.vivi-theme-on ytmusic-card-shelf-renderer,
+html.vivi-theme-on ytmusic-subscribe-button-renderer,
+html.vivi-theme-on .ytSpecButtonShapeNextMono.ytSpecButtonShapeNextFilled,
+html.vivi-theme-on ytmusic-tabs.stuck {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+/* Sidebar streak: a thin horizontal sliver (sidebar-wide, ~43% down the window)
+   that shows on Home while a track plays. The sidebar's own blur is already off,
+   so remove every other full-height, sidebar-wide helper layer that has no
+   visual purpose here, and give the sidebar its own paint surface so Firefox
+   cannot reuse a stale tile of the background underneath it. */
+html.vivi-theme-on #mini-guide-background {
+  display: none !important;
+}
+html.vivi-theme-on #guide-wrapper,
+html.vivi-theme-on #mini-guide,
+html.vivi-theme-on #guide-content,
+html.vivi-theme-on #contentContainer.tp-yt-app-drawer {
+  background: transparent !important;
+  box-shadow: none !important;
+  outline: 0 !important;
+  will-change: auto !important;
+  filter: none !important;
+}
+html.vivi-theme-on #guide-wrapper {
+  isolation: isolate;
+}
+html.vivi-theme-on tp-yt-app-drawer #scrim,
+html.vivi-theme-on tp-yt-app-drawer::before,
+html.vivi-theme-on tp-yt-app-drawer::after {
+  display: none !important;
+}
+
+
 /* Blank-Home fix: YT Music keeps `player-page-open` set after the player is
    collapsed / you navigate back to Home. content.js flags that situation on
    <html> and the page under the player is shown again. */

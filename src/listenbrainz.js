@@ -50,7 +50,7 @@ async function listenbrainzUpdateNowPlaying(token, track) {
       track_name: track.song,
       additional_info: {
         submission_client: 'Vivimusic Web',
-        submission_client_version: '10.1.0'
+        submission_client_version: chrome.runtime.getManifest().version
       }
     }
   };
@@ -68,7 +68,7 @@ async function listenbrainzScrobble(token, track, timestamp) {
       track_name: track.song,
       additional_info: {
         submission_client: 'Vivimusic Web',
-        submission_client_version: '10.1.0'
+        submission_client_version: chrome.runtime.getManifest().version
       }
     }
   };
