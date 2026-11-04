@@ -42,7 +42,7 @@ import zipfile
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 AMO_API = 'https://addons.mozilla.org/api/v5/addons/addon/vivimusicweb/'
 # Upstream's star-verification gate was removed from this fork on purpose.
-SKIP = {'src/gate.js', 'src/gate.css', 'src/stargate.js', 'manifest.json'}
+SKIP = {'src/gate.js', 'src/gate.css', 'src/stargate.js', 'src/loader.js', 'src/favicon-main.js', 'icons/custom-logo-full.png', 'icons/custom-logo-icon.png', 'manifest.json'}
 # Files where this fork deliberately differs from the AMO build: conflicting
 # hunks keep our side (non-conflicting upstream changes still merge in).
 # background.js: AMO drops the VIVI_NET_FETCH relay that net.js needs.

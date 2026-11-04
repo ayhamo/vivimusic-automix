@@ -103,19 +103,8 @@
         "https://music.youtube.com/*"
       ],
       "js": [
-        "src/favicon-main.js"
-      ],
-      "run_at": "document_start",
-      "world": "MAIN"
-    },
-    {
-      "matches": [
-        "https://music.youtube.com/*"
-      ],
-      "js": [
         "src/fx-storage.js",
         "src/announcements-toast.js",
-        "src/loader.js",
         "src/ytm-transfer.js"
       ],
       "run_at": "document_start"
@@ -169,8 +158,6 @@
         "icons/icon128.png",
         "icons/apple-music-lyrics.png",
         "icons/lyrics-dancer.webm",
-        "icons/custom-logo-full.png",
-        "icons/custom-logo-icon.png",
         "src/apple-canvas-player.html",
         "src/vendor/automix/*",
         "src/automix/*"

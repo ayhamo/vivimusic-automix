@@ -14,7 +14,7 @@ Settings are in the popup (toolbar icon): **Artwork, Audio playback, Lyrics, App
 
 ## 1. Basics
 
-- [ ] 1.1 Tab title ends in `VIVIMUSIC`, tab icon is the Vivimusic logo.
+- [ ] 1.1 Tab title, tab icon, top-left logo and the sidebar's Upgrade entry are YouTube Music's own; no loading splash.
 - [ ] 1.2 Dark glassy theme is on. Appearance → Theme off/on switches it live.
 - [ ] 1.3 Popup opens on the card grid; no donation footer, no warning-triangle button.
 - [ ] 1.4 Every card opens its page and the back arrow returns.

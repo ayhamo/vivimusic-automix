@@ -446,66 +446,6 @@
   // "hide on real videos" setting agree on what counts as a video.
   window.__viviTrackInfo = { isRealMusicVideo };
 
-  // ── Custom branding: tab title + favicon ──
-  // YT Music is free to rewrite or replace <title> at any time, including on
-  // SPA navigation and background playback changes. Keep a permanent title
-  // enforcer alive so the browser tab never falls back to "YouTube Music".
-  let viviDesiredTitle = 'VIVIMUSIC';
-
-  // The browser normalises whatever is written to document.title (runs of
-  // spaces/tabs/newlines collapse to one space, ends are trimmed). A desired
-  // title that isn't already in that form can never compare equal to what
-  // document.title returns, so the observer below would rewrite it forever —
-  // each rewrite is itself a mutation — and freeze the tab. Songs whose names
-  // contain double spaces etc. triggered exactly that.
-  const normalizeTitle = (s) => String(s).replace(/[\t\n\f\r ]+/g, ' ').trim();
-  let titleWrites = [];
-
-  function enforceViviTitle() {
-    if (document.title === viviDesiredTitle) return;
-    // Belt and braces: never fight the page more than ~20 times a second.
-    const now = performance.now();
-    titleWrites = titleWrites.filter((t) => now - t < 1000);
-    if (titleWrites.length >= 20) return;
-    titleWrites.push(now);
-    document.title = viviDesiredTitle;
-  }
-
-  function installViviTitleGuard() {
-    try {
-      enforceViviTitle();
-      const headObserver = new MutationObserver(() => {
-        enforceViviTitle();
-      });
-      const attach = () => {
-        if (!document.head) return;
-        headObserver.observe(document.head, {
-          childList: true,
-          subtree: true,
-          characterData: true,
-        });
-        enforceViviTitle();
-      };
-      attach();
-
-      // YT Music can rebuild <head> on unusual navigations. Re-attach if the
-      // current title element gets replaced along with the rest of the head.
-      const rootObserver = new MutationObserver(() => attach());
-      rootObserver.observe(document.documentElement, { childList: true, subtree: true });
-    } catch (e) {
-      warn('Title guard failed', e?.message);
-    }
-  }
-
-  installViviTitleGuard();
-
-  function applyViviTitle(track) {
-    if (!track?.song) return;
-    window.__viviTitleTakeover = true;
-    viviDesiredTitle = normalizeTitle(`${track.song} | VIVIMUSIC`);
-    enforceViviTitle();
-  }
-
   // Shared artist-text extraction so every place that derives a cache key
   // from a "byline" element (player bar, queue panel, ...) agrees on the
   // same string for the same song. Previously getCurrentTrack() read only
@@ -2967,11 +2907,10 @@
   async function handleTrackChange(track, { recover = false } = {}) {
     const key = `${track.artist}—${track.song}`;
     // recover = re-render the Canvas for the song that is already current,
-    // without redoing lyrics / SponsorBlock / title work for it.
+    // without redoing lyrics / SponsorBlock work for it.
     if (key !== currentTrackKey && !recover) {
       window.__viviLyricsUI?.handleTrack(track);
       loadSponsorSegmentsForTrack(track).catch((e) => warn('SponsorBlock: track load failed', e?.message));
-      applyViviTitle(track);
       applyAppleArtistArtForTrack(track);
     }
     if (key === currentTrackKey && !recover) return;

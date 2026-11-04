@@ -1,7 +1,8 @@
 """Merge an upstream GitHub tag (Chrome source) into the current branch.
 
 Resolves only the conflicts that are routine for this fork:
-  * files this fork deleted on purpose (star gate, funding links): stay deleted
+  * files this fork deleted on purpose (star gate, funding links, splash,
+    tab icon): stay deleted
   * manifest.json hunks where the two sides differ only in the "version"
     line: keep ours (the fork has its own version numbers)
 Anything else is left unmerged and the script exits 2, so CI fails loudly.
@@ -14,7 +15,7 @@ import subprocess
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DELETED_HERE = {'src/gate.js', 'src/gate.css', 'src/stargate.js', '.github/FUNDING.yml'}
+DELETED_HERE = {'src/gate.js', 'src/gate.css', 'src/stargate.js', 'src/loader.js', 'src/favicon-main.js', 'icons/custom-logo-full.png', 'icons/custom-logo-icon.png', '.github/FUNDING.yml'}
 VERSION_LINE = re.compile(r'^\s*"version"\s*:')
 
 

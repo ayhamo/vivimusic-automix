@@ -154,47 +154,6 @@ try {
 }
 
 
-/* ---- Tab icon: rewrite the initial HTML ----
- * Firefox registers every <link rel=icon> it parses and then picks the "best"
- * one, so removing YouTube's links afterwards (from JS) is too late. Rewrite
- * the document itself: drop YouTube's icon links and put ours first.
- */
-const VIVI_FAVICON_HREF = chrome.runtime.getURL('icons/custom-logo-icon.png');
-const VIVI_FAVICON_TAG = '<link rel="icon" type="image/png" data-vivi="1" href="' + VIVI_FAVICON_HREF + '">';
-try {
-  chrome.webRequest.onBeforeRequest.addListener(
-    (details) => {
-      if (details.type !== 'main_frame' || !chrome.webRequest.filterResponseData) return {};
-      let filter;
-      try { filter = chrome.webRequest.filterResponseData(details.requestId); } catch { return {}; }
-      const chunks = [];
-      filter.ondata = (ev) => { chunks.push(new Uint8Array(ev.data)); };
-      filter.onstop = () => {
-        try {
-          let len = 0; for (const c of chunks) len += c.length;
-          const all = new Uint8Array(len); let o = 0; for (const c of chunks) { all.set(c, o); o += c.length; }
-          const head = new TextDecoder('utf-8').decode(all.subarray(0, 256)).trimStart().toLowerCase();
-          if (!(head.startsWith('<!doctype html') || head.startsWith('<html'))) { filter.write(all); filter.close(); return; }
-          let html = new TextDecoder('utf-8').decode(all);
-          html = html.replace(/<link\b[^>]*\brel\s*=\s*["']?(?:shortcut\s+icon|icon|apple-touch-icon(?:-precomposed)?)["']?[^>]*>/gi, '');
-          html = /<head[^>]*>/i.test(html) ? html.replace(/<head[^>]*>/i, (m) => m + VIVI_FAVICON_TAG) : html;
-          filter.write(new TextEncoder().encode(html));
-          filter.close();
-        } catch (e) {
-          try { let len = 0; for (const c of chunks) len += c.length; const all = new Uint8Array(len); let o = 0; for (const c of chunks) { all.set(c, o); o += c.length; } filter.write(all); filter.close(); } catch { /* ignore */ }
-        }
-      };
-      filter.onerror = () => { try { filter.disconnect(); } catch { /* ignore */ } };
-      return {};
-    },
-    { urls: ['https://music.youtube.com/*'], types: ['main_frame'] },
-    ['blocking']
-  );
-} catch (e) {
-  console.debug('[Vivi] HTML icon rewrite unavailable:', e?.message);
-}
-
-
 /* ---- Keep-alive for long-running background work ---- */
 function viviKeepAlive() {
   const t = setInterval(() => { try { chrome.runtime.getPlatformInfo(() => void chrome.runtime.lastError); } catch { /* ignore */ } }, 15000);
