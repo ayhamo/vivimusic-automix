@@ -2594,7 +2594,41 @@
     const playing = !!video && !video.paused && !video.ended;
     document.documentElement.classList.toggle('vivi-disc-playing', playing);
     syncDiscTonearm();
+    syncCanvasWithSong(playing);
   }
+
+  // Canvas videos (Apple animated art, Spotify Canvas) and the lyrics dancer
+  // pause with the song and resume with it. While the tab is hidden,
+  // updateBackgroundTabMode owns their playback instead.
+  let canvasSongPlaying = true;
+  function syncCanvasWithSong(playing) {
+    if (document.hidden) return;
+    const changed = playing !== canvasSongPlaying;
+    canvasSongPlaying = playing;
+    document.querySelectorAll('.vivi-canvas-media, .vivi-canvas-player-media, .vivi-lyrics-dancer').forEach((media) => {
+      if (media.tagName === 'IFRAME') {
+        // Pause is re-sent while paused so a frame created meanwhile stops too.
+        if (!playing || changed) {
+          try { media.contentWindow?.postMessage({ __viviAppleCanvasControl: playing ? 'resume' : 'pause' }, '*'); } catch (_) {}
+        }
+        return;
+      }
+      if (!playing) {
+        if (!media.paused && !media.dataset.viviDeferredSrc) {
+          media.dataset.viviPausedForSong = '1';
+          try { media.pause(); } catch (_) {}
+        }
+      } else if (media.dataset.viviPausedForSong === '1') {
+        delete media.dataset.viviPausedForSong;
+        media.play?.().catch(() => {});
+      }
+    });
+  }
+  // Catches Canvas media that appear while the song is already paused.
+  setInterval(() => {
+    const video = getVideoEl();
+    if (video && video.paused && !document.hidden) syncCanvasWithSong(false);
+  }, 1000);
 
   function applyDiscShine(enabled) {
     discShineEnabled = enabled !== false;

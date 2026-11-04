@@ -57,14 +57,22 @@
     if (hls) hls.stopLoad();
   }
 
+  // The page pauses this frame when the song is paused; becoming visible
+  // again must not restart it until the page says the song plays again.
+  var pausedByPage = false;
   window.addEventListener('message', function (event) {
     if (event.source !== window.parent) return;
-    if (event.data && event.data.__viviAppleCanvasControl === 'pause') pausePlayback();
-    else if (event.data && event.data.__viviAppleCanvasControl === 'resume') startPlayback();
+    if (event.data && event.data.__viviAppleCanvasControl === 'pause') {
+      pausedByPage = true;
+      if (playbackRequested || !video.paused) pausePlayback();
+    } else if (event.data && event.data.__viviAppleCanvasControl === 'resume') {
+      pausedByPage = false;
+      startPlayback();
+    }
   });
   document.addEventListener('visibilitychange', function () {
     if (document.hidden) pausePlayback();
-    else startPlayback();
+    else if (!pausedByPage) startPlayback();
   });
 
   if (!(window.Hls && window.Hls.isSupported()) && !nativeHls) {

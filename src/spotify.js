@@ -25,8 +25,11 @@ let spotifyClientInfo = null;
 function spotifyJsonError(msg) { return { ok: false, error: msg }; }
 
 async function getSpDc() {
-  const { spotifySpDc } = await chrome.storage.local.get('spotifySpDc');
+  const { spotifySpDc, spotifyDisconnected } = await chrome.storage.local.get(['spotifySpDc', 'spotifyDisconnected']);
   if (spotifySpDc) return spotifySpDc;
+  // After "Disconnect" the browser's own Spotify login is left alone, so do
+  // not pick it up again until the user presses Connect.
+  if (spotifyDisconnected) return null;
 
   try {
     const stores = await chrome.cookies.getAllCookieStores().catch(() => [{ id: null }]);
@@ -99,7 +102,11 @@ async function setSpDc(value) {
   if (!value) throw new Error('Empty sp_dc');
   // Keep a local copy and also install it as the Spotify web-player cookie so
   // extension fetch() requests can authenticate with credentials: include.
-  await chrome.storage.local.set({ spotifySpDc: value });
+  await chrome.storage.local.set({ spotifySpDc: value, spotifyDisconnected: false });
+  // Only install the cookie when the browser does not already have this
+  // login: rewriting it would turn a remembered login into a session cookie.
+  const existing = await chrome.cookies.get({ url: SPOTIFY_HOME, name: 'sp_dc' }).catch(() => null);
+  if (existing?.value === value) return;
   await chrome.cookies.set({
     url: SPOTIFY_HOME,
     name: 'sp_dc',
@@ -108,7 +115,8 @@ async function setSpDc(value) {
     path: '/',
     secure: true,
     httpOnly: true,
-    sameSite: 'lax'
+    sameSite: 'lax',
+    expirationDate: Math.floor(Date.now() / 1000) + 365 * 24 * 3600,
   });
 }
 
@@ -565,6 +573,7 @@ async function spotifyStatus() {
 }
 
 async function spotifyConnectFromBrowser() {
+  await chrome.storage.local.set({ spotifyDisconnected: false });
   // 1. First, check if sp_dc is ALREADY available right now in browser cookies!
   const existingSpDc = await getSpDc();
   if (existingSpDc) {
@@ -602,8 +611,10 @@ async function spotifyConnectFromBrowser() {
 async function clearSpotify() {
   spotifyTokenCache = null;
   spotifyClientTokenCache = null;
+  // Forget the session here only. Removing the browser's sp_dc cookie (as
+  // before) logged the user out of open.spotify.com as well.
   await chrome.storage.local.remove(['spotifySpDc']);
-  try { await chrome.cookies.remove({ url: SPOTIFY_HOME, name: 'sp_dc' }); } catch {}
+  await chrome.storage.local.set({ spotifyDisconnected: true });
   return { ok: true };
 }
 
