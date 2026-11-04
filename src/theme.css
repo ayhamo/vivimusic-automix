@@ -17,7 +17,10 @@
   --bg-saturate: 1.5;
   --bg-player-opacity: 1;
 
-  --font-family: "Inter","PingFangSC-Regular","Apple SD Gothic Neo";
+  /* YouTube Music's own font stack (the page loads Roboto). The old "Inter"
+     stack is not bundled and fell back to a serif font on Windows. Lyrics set
+     their own fonts and are not affected. */
+  --font-family: "YouTube Sans","Roboto","Noto Naskh Arabic UI",Arial,sans-serif;
   --font-weight: 400;
   --text-primary: white;
   --text-secondary: rgba(255,255,255,0.7);
