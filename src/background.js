@@ -576,7 +576,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
     case 'VIVI_APPLE_CANVAS_DIRECT':
       resolveAppleCanvasDirect(msg.track)
-        .then((result) => sendResponse({ ok: !!result?.videoUrl, videoUrl: result?.videoUrl || null, error: result?.error || null }))
+        .then((result) => sendResponse({ ok: !!result?.videoUrl, videoUrl: result?.videoUrl || null, fallbackUrl: result?.fallbackUrl || null, error: result?.error || null }))
         .catch((e) => sendResponse({ ok: false, videoUrl: null, error: String(e?.message || e) }));
       return true;
 

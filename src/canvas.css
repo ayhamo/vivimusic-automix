@@ -365,7 +365,8 @@ ytmusic-player .vivi-canvas-slot {
   opacity: 0.5;
   transform: scale(0.94);
   transform-origin: left center;
-  filter: blur(min(calc(var(--vivi-d, 1) * 0.9px), 2.5px));
+  /* --vivi-line-blur: 0 off, 0.4 low (default), 1 normal (popup setting) */
+  filter: blur(min(calc(var(--vivi-d, 1) * 0.9px * var(--vivi-line-blur, 0.4)), calc(2.5px * var(--vivi-line-blur, 0.4))));
   transition: color 0.4s ease, opacity 0.4s ease, filter 0.5s cubic-bezier(0.22, 0.8, 0.24, 1), transform 0.5s cubic-bezier(0.22, 0.8, 0.24, 1);
   will-change: auto;
 }
@@ -1304,4 +1305,33 @@ html.vivi-disc-playing .vivi-disc-tonearm .vivi-arm-drift {
 @keyframes vivi-wave-pulse {
   0% { transform: scaleY(0.25); }
   100% { transform: scaleY(1.15); }
+}
+
+/* ── Spotify Canvas behind the side panel (placement "lyrics" / "side") ──
+   A blurred, darkened copy of the Canvas fills the side panel behind the
+   lyrics while the Lyrics tab is open; the panel's own content sits above. */
+ytmusic-player-page #side-panel:has(> #vivi-lyrics-canvas) {
+  position: relative;
+  isolation: isolate;
+}
+/* Bleeds past the panel and fades out at every edge, so it melts into the
+   page instead of sitting in a box. */
+#vivi-lyrics-canvas {
+  position: absolute;
+  inset: -12vh -4vw -12vh -10vw;
+  width: calc(100% + 14vw);
+  height: calc(100% + 24vh);
+  object-fit: cover;
+  z-index: -1;
+  pointer-events: none;
+  opacity: 0;
+  filter: blur(var(--vivi-canvas-blur, 3px)) brightness(0.5) saturate(1.2);
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 22%, #000 88%, transparent), linear-gradient(to bottom, transparent, #000 15%, #000 85%, transparent);
+  mask-image: linear-gradient(to right, transparent, #000 22%, #000 88%, transparent), linear-gradient(to bottom, transparent, #000 15%, #000 85%, transparent);
+  -webkit-mask-composite: source-in;
+  mask-composite: intersect;
+  transition: opacity 0.6s ease;
+}
+html.vivi-lyrics-canvas-visible #vivi-lyrics-canvas {
+  opacity: 1;
 }

@@ -40,7 +40,9 @@ Test songs: **Zara Larsson – Midnight Sun**, **The Weeknd – Blinding Lights*
 - [ ] 3.1 Log in to open.spotify.com in this Firefox. Popup → Spotify Canvas → **Connect**: shows connected (masked id).
 - [ ] 3.2 "When both are available, prefer" → **Spotify**. Play Midnight Sun: the Spotify Canvas (short looping clip) plays on the cover.
 - [ ] 3.3 Switch preference back to Apple: the Apple animation shows instead.
-- [ ] 3.4 Disconnect: status shows not connected; Apple art still works.
+- [ ] 3.4 "Show the Spotify Canvas": Behind the lyrics → on Midnight Sun the Canvas plays blurred behind the lyrics and the cover shows Apple's animated art; pausing the song pauses it; Up next hides it. Behind the side panel → it stays on Up next and Related too. Off → no Canvas. On the cover → back to the original. The blur slider changes its blur live.
+- [ ] 3.4b Lyrics → Blur around the current line: Off makes all lines sharp, Normal is the old strong blur.
+- [ ] 3.5 Disconnect: status shows not connected; Apple art still works.
 
 ## 4. Lyrics
 

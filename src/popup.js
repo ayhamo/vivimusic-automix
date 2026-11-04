@@ -1141,6 +1141,47 @@
     relay({ spotifyCanvasEnabled: enabled });
   });
 
+  // Placement of the Spotify Canvas; "Off" is the same as the switch above.
+  const placementSelect = document.getElementById('spotifyCanvasPlacement');
+  const canvasBlurPx = document.getElementById('canvasBlurPx');
+  const canvasBlurPxVal = document.getElementById('canvasBlurPxVal');
+  chrome.storage.local.get({ spotifyCanvasPlacement: 'cover', spotifyCanvasEnabled: true, canvasBlurPx: 3 }, (s) => {
+    placementSelect.value = s.spotifyCanvasEnabled === false ? 'off' : (['lyrics', 'side'].includes(s.spotifyCanvasPlacement) ? s.spotifyCanvasPlacement : 'cover');
+    canvasBlurPx.value = s.canvasBlurPx;
+    canvasBlurPxVal.textContent = s.canvasBlurPx + ' px';
+  });
+  placementSelect.addEventListener('change', () => {
+    const v = placementSelect.value;
+    if (v === 'off') {
+      spotifyCanvasEnabled.checked = false;
+      chrome.storage.local.set({ spotifyCanvasEnabled: false });
+      relay({ spotifyCanvasEnabled: false });
+      return;
+    }
+    spotifyCanvasEnabled.checked = true;
+    chrome.storage.local.set({ spotifyCanvasEnabled: true, spotifyCanvasPlacement: v });
+    relay({ spotifyCanvasEnabled: true, spotifyCanvasPlacement: v });
+  });
+  spotifyCanvasEnabled.addEventListener('change', () => {
+    if (!spotifyCanvasEnabled.checked) placementSelect.value = 'off';
+    else if (placementSelect.value === 'off') {
+      chrome.storage.local.get({ spotifyCanvasPlacement: 'cover' }, (s) => { placementSelect.value = s.spotifyCanvasPlacement; });
+    }
+  });
+  canvasBlurPx.addEventListener('input', () => {
+    const px = Number(canvasBlurPx.value);
+    canvasBlurPxVal.textContent = px + ' px';
+    chrome.storage.local.set({ canvasBlurPx: px });
+    relay({ canvasBlurPx: px });
+  });
+
+  const lyricsLineBlurSelect = document.getElementById('lyricsLineBlurSelect');
+  chrome.storage.local.get({ lyricsLineBlur: 'low' }, (s) => { lyricsLineBlurSelect.value = s.lyricsLineBlur; });
+  lyricsLineBlurSelect.addEventListener('change', () => {
+    chrome.storage.local.set({ lyricsLineBlur: lyricsLineBlurSelect.value });
+    relay({ lyricsLineBlur: lyricsLineBlurSelect.value });
+  });
+
   canvasPrioritySelect.addEventListener('change', () => {
     const canvasPriority = canvasPrioritySelect.value === 'apple' ? 'apple' : 'spotify';
     chrome.storage.local.set({ canvasPriority });

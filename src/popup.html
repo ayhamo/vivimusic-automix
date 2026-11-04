@@ -1397,6 +1397,16 @@
     <p class="theme-sub">Fill sweep: karaoke-style left-to-right fill on the current word. Glow up: the current word lights up with a soft glow instead. Word bounce: each word pops with a little spring as it's sung. Smooth zoom: the current line scales up while the others shrink back. Apple Music: big bold lines with the others softly blurred. Smooth zoom and Apple Music are always left-aligned.</p>
 
     <div class="row" style="margin-top:8px;">
+      <span class="row-label">Blur around the current line</span>
+      <select id="lyricsLineBlurSelect" style="background:rgba(255,255,255,0.06); color:var(--text-1); border:1px solid rgba(255,255,255,0.12); border-radius:8px; padding:5px 8px; font-size:12.5px;">
+        <option value="off">Off</option>
+        <option value="low" selected>Low</option>
+        <option value="normal">Normal</option>
+      </select>
+    </div>
+    <p class="theme-sub">How much the lines before and after the sung one are blurred (Apple Music style).</p>
+
+    <div class="row" style="margin-top:8px;">
       <span class="row-label">Lyrics font</span>
       <select id="lyricsFontSelect" style="background:rgba(255,255,255,0.06); color:var(--text-1); border:1px solid rgba(255,255,255,0.12); border-radius:8px; padding:5px 8px; font-size:12.5px;">
         <option value="default" selected>Default (Inter)</option>
@@ -1636,6 +1646,22 @@
       </select>
     </div>
     <p class="theme-sub">If a track has both a Spotify Canvas and Apple Music-style artwork: picking Spotify always prefers it. Picking Apple Music only shows it instantly if that track's artwork is already cached — otherwise Spotify Canvas plays immediately while Apple Music's artwork downloads quietly in the background, ready for instant playback the next time you play that song.</p>
+
+    <div class="row" style="margin-top:10px;">
+      <span class="row-label">Show the Spotify Canvas</span>
+      <select id="spotifyCanvasPlacement" style="background:rgba(255,255,255,0.06); color:var(--text-1); border:1px solid rgba(255,255,255,0.12); border-radius:8px; padding:5px 8px; font-size:12.5px;">
+        <option value="cover" selected>On the cover</option>
+        <option value="lyrics">Behind the lyrics</option>
+        <option value="side">Behind the side panel</option>
+        <option value="off">Off</option>
+      </select>
+    </div>
+    <p class="theme-sub">On the cover: the original. Behind the lyrics: plays blurred behind the lyrics while the Lyrics tab is open. Behind the side panel: the same, on every tab (Up next, Lyrics, Related). With either of those, the cover shows Apple Music's animated artwork when the song has it, otherwise the normal cover.</p>
+
+    <div class="kawarp-slider-row" style="margin-top:10px;">
+      <div class="kw-label-row"><span>Blur behind the panel</span><span class="kw-val" id="canvasBlurPxVal">3 px</span></div>
+      <input type="range" id="canvasBlurPx" min="0" max="20" step="1" value="3"/>
+    </div>
 
     <div id="spotifyDisconnected" style="margin-top:11px; display:flex; flex-direction:column; gap:7px;">
       <button id="spotifyConnectBtn" class="update-btn primary" style="width:100%;">Connect Spotify</button>

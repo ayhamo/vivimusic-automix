@@ -59,6 +59,13 @@
   // Apple Music-style animated artwork available. 'spotify' (default)
   // preserves the original always-try-Spotify-first behavior; 'apple' flips it.
   let canvasPriority = 'apple';
+  // Where the Spotify Canvas plays: 'cover' (on the artwork, the original),
+  // 'lyrics' (blurred behind the lyrics) or 'side' (behind the whole side
+  // panel). Behind the panel the cover keeps Apple's animated art (or the
+  // still cover). Kept apart from currentSpotifyCanvasUrl, which drives the
+  // cover overlay.
+  let canvasPlacement = 'cover';
+  let lyricsCanvasUrl = null;
   let currentSpotifyCanvasUrl = null;
   let deferredCanvasTrack = null;
   let spotifyCanvasRequestKey = null;
@@ -281,6 +288,7 @@
     const entry = {
       trackKey,
       videoUrl: data.videoUrl || null,
+      fallbackVideoUrl: data.fallbackVideoUrl || null,
       imageUrl: data.imageUrl || null,
       notFound: !!data.notFound,
       song: track.song,
@@ -356,7 +364,7 @@
   // remote URLs. No object: URLs, no Blobs, nothing to revoke.
   function resolvePlayableSource(entry) {
     if (!entry) return null;
-    return { videoUrl: entry.videoUrl || null, imageUrl: entry.imageUrl || null };
+    return { videoUrl: entry.videoUrl || null, fallbackVideoUrl: entry.fallbackVideoUrl || null, imageUrl: entry.imageUrl || null };
   }
 
   function clearArtworkCache() {
@@ -656,7 +664,7 @@
         warn('Apple Canvas lookup failed:', res?.error || 'no reply');
         return { failed: true };
       }
-      return { videoUrl: res.videoUrl || null };
+      return { videoUrl: res.videoUrl || null, fallbackUrl: res.fallbackUrl || null };
     } catch (err) {
       warn('Apple Canvas (direct) message failed:', err.message);
       return { failed: true };
@@ -678,7 +686,7 @@
     const videoUrl = canvas.videoUrl;
     if (!videoUrl) return { videoUrl: null, imageUrl: null, notFound: true };
     const imageUrl = artworkResult?.imageUrl || null;
-    return { videoUrl, imageUrl, notFound: false };
+    return { videoUrl, fallbackVideoUrl: canvas.fallbackUrl || null, imageUrl, notFound: false };
   }
 
  
@@ -1153,7 +1161,7 @@
     vid.src = url;
   }
 
-  function makeMediaEl({ videoUrl, imageUrl }, wrapper, options = {}) {
+  function makeMediaEl({ videoUrl, imageUrl, fallbackVideoUrl }, wrapper, options = {}) {
     const appleOverlay = options.appleOverlay === true;
     if (videoUrl && !imageOnlyMode) {
       const isMain = wrapper?.classList?.contains(MAIN_PLAYER_CLASS);
@@ -1161,6 +1169,11 @@
 
       if (isAppleCdnHlsUrl(videoUrl)) {
         const fallbackToImage = () => {
+          // Apple ships the clip in several renditions: try the other one first.
+          if (fallbackVideoUrl && fallbackVideoUrl !== videoUrl) {
+            const alt = makeMediaEl({ videoUrl: fallbackVideoUrl, imageUrl }, wrapper, options);
+            if (alt) { alt.style.opacity = frame.style.opacity || '1'; frame.replaceWith(alt); return; }
+          }
           if (imageUrl) {
             const img = makeMediaEl({ videoUrl: null, imageUrl }, wrapper, { appleOverlay });
             if (img) {
@@ -2000,6 +2013,83 @@
       warn('Spotify Canvas:', e?.message || e);
       return null;
     }
+  }
+
+  // ── Spotify Canvas behind the lyrics ──
+  const LYRICS_CANVAS_ID = 'vivi-lyrics-canvas';
+
+  async function fetchLyricsCanvas(track, key) {
+    try {
+      const r = await chrome.runtime.sendMessage({
+        type: 'VIVI_SPOTIFY_CANVAS',
+        track: { song: track.song, artist: track.artist, videoId: track.videoId },
+      });
+      if (key !== currentTrackKey || canvasPlacement === 'cover') return;
+      if (!r?.ok) { log('No Spotify Canvas for the lyrics background:', r?.error || 'none'); return; }
+      setLyricsCanvas(r.videoUrl);
+    } catch (e) {
+      warn('Spotify Canvas (lyrics background):', e?.message || e);
+    }
+  }
+
+  function setLyricsCanvas(url) {
+    lyricsCanvasUrl = url || null;
+    if (!lyricsCanvasUrl) {
+      const old = document.getElementById(LYRICS_CANVAS_ID);
+      if (old) {
+        try { old.pause(); old.removeAttribute('src'); old.load(); } catch (_) {}
+        old.remove();
+      }
+      document.documentElement.classList.remove('vivi-lyrics-canvas-visible');
+      return;
+    }
+    placeLyricsCanvas();
+  }
+
+  // YT Music re-renders the side panel freely, so the video is (re)attached
+  // and shown only while the full player's Lyrics tab is open.
+  function placeLyricsCanvas() {
+    if (!lyricsCanvasUrl) return;
+    const host = document.querySelector('ytmusic-player-page #side-panel');
+    let vid = document.getElementById(LYRICS_CANVAS_ID);
+    if (host && (!vid || vid.parentElement !== host)) {
+      if (!vid) {
+        vid = document.createElement('video');
+        vid.id = LYRICS_CANVAS_ID;
+        vid.className = 'vivi-lyrics-canvas-media';
+        vid.muted = true;
+        vid.loop = true;
+        vid.playsInline = true;
+        vid.autoplay = true;
+        vid.setAttribute('aria-hidden', 'true');
+      }
+      host.insertBefore(vid, host.firstChild);
+    }
+    if (!vid) return;
+    if (vid.dataset.src !== lyricsCanvasUrl) {
+      vid.dataset.src = lyricsCanvasUrl;
+      vid.src = lyricsCanvasUrl;
+    }
+    const lyricsPanel = document.getElementById('vivi-lyrics-panel');
+    const show = isMainPlayerPageActive() && (canvasPlacement === 'side'
+      ? vid.parentElement?.offsetParent !== null
+      : !!lyricsPanel && lyricsPanel.offsetParent !== null);
+    document.documentElement.classList.toggle('vivi-lyrics-canvas-visible', show);
+    // Plays only while it is visible and the song plays; pauses with the song.
+    const shouldPlay = show && !document.hidden && getVideoEl()?.paused === false;
+    if (shouldPlay && vid.paused) vid.play().catch(() => {});
+    else if (!shouldPlay && !vid.paused) vid.pause();
+  }
+  setInterval(placeLyricsCanvas, 500);
+
+  // Blur of the lyric lines around the active one (off / low / normal) and of
+  // the Canvas behind the panel (px). Either may be undefined: keep the old.
+  const LINE_BLUR = { off: 0, low: 0.4, normal: 1 };
+  function applyBlurSettings(lineBlur, canvasBlurPx) {
+    const root = document.documentElement.style;
+    if (lineBlur in LINE_BLUR) root.setProperty('--vivi-line-blur', String(LINE_BLUR[lineBlur]));
+    const px = Number(canvasBlurPx);
+    if (canvasBlurPx != null && Number.isFinite(px)) root.setProperty('--vivi-canvas-blur', Math.max(0, Math.min(30, px)) + 'px');
   }
 
   // The dedicated Canvas player belongs only to the full player/watch page.
@@ -2921,6 +3011,7 @@
     spotifyCanvasRequestKey = null;
     currentSpotifyCanvasUrl = null;
     currentVideoUrl = null; currentImageUrl = null;
+    setLyricsCanvas(null);
 
     // Clear whatever the previous track was showing right away, before either
     // artwork source has had a chance to respond — this is what stops the old
@@ -3037,6 +3128,21 @@
     // background — so this play isn't held up, but the *next* play of this
     // same song shows Apple Music's artwork instantly (cached URL + the
     // browser's own HTTP cache for the actual bytes).
+    // Canvas behind lyrics: Spotify goes behind the lyrics, the cover only
+    // ever gets Apple's animated art (or stays the normal cover).
+    if (canvasPlacement !== 'cover' && spotifyCanvasEnabled && !imageOnlyMode) {
+      fetchLyricsCanvas(track, key);
+      if (appleCanvasEnabled) {
+        const appleResult = await attemptApple();
+        if (appleResult === 'stop') return;
+        setBackgroundVar(null);
+        scheduleRetry(track, key, 0);
+      } else {
+        setBackgroundVar(null);
+      }
+      return;
+    }
+
     if (canvasPriority === 'apple' && appleCanvasEnabled && spotifyCanvasEnabled) {
       const cached = await readCache(key);
       if (key !== currentTrackKey) return;
@@ -3369,14 +3475,14 @@
   });
 
   chrome.storage.local.get({
-    wheelVolumeEnabled: true, appleArtistArtEnabled: true, nerdStatsEnabled: false, enabled: true, themeEnabled: true, imageOnlyMode: false, spotifyCanvasEnabled: true, canvasPriority: 'apple', sponsorBlockEnabled: true,
+    wheelVolumeEnabled: true, appleArtistArtEnabled: true, nerdStatsEnabled: false, enabled: true, themeEnabled: true, imageOnlyMode: false, spotifyCanvasEnabled: true, canvasPriority: 'apple', spotifyCanvasPlacement: 'cover', lyricsLineBlur: 'low', canvasBlurPx: 3, sponsorBlockEnabled: true,
     discStyleEnabled: false, discShineEnabled: true,
     playerTabIcons: true,
     kawarpEnabled: false, kawarpPauseWhenInactive: true, eqEnabled: false, resourceSaverEnabled: false,
     kawarpWarpIntensity: 1.0, kawarpBlurPasses: 6, kawarpAnimationSpeed: 4.15,
     kawarpTransitionDuration: 0, kawarpSaturation: 2.6, kawarpDithering: 0.034, kawarpOpacity: 1.0, kawarpBrightness: 0.5,
   }, ({
-    wheelVolumeEnabled: wvEnabled, appleArtistArtEnabled: aaaEnabled, nerdStatsEnabled: nsEnabled, enabled, themeEnabled, imageOnlyMode: imgOnly, spotifyCanvasEnabled: spCanvas, canvasPriority: canvasPrio, sponsorBlockEnabled: sbEnabled,
+    wheelVolumeEnabled: wvEnabled, appleArtistArtEnabled: aaaEnabled, nerdStatsEnabled: nsEnabled, enabled, themeEnabled, imageOnlyMode: imgOnly, spotifyCanvasEnabled: spCanvas, canvasPriority: canvasPrio, spotifyCanvasPlacement: cPlace, lyricsLineBlur: lineBlur, canvasBlurPx: cBlur, sponsorBlockEnabled: sbEnabled,
     discStyleEnabled: discStyle, discShineEnabled: discShine,
     playerTabIcons: tabIcons,
     kawarpEnabled: kwEnabled, kawarpPauseWhenInactive: kwPause, eqEnabled: eqEnabled_, resourceSaverEnabled: rsEnabled,
@@ -3391,6 +3497,8 @@
     applyDiscStyle(discStyle);
     applyPlayerTabIcons(tabIcons);
     canvasPriority = canvasPrio === 'apple' ? 'apple' : 'spotify';
+    canvasPlacement = ['lyrics', 'side'].includes(cPlace) ? cPlace : 'cover';
+    applyBlurSettings(lineBlur, cBlur);
     sponsorUserEnabled = sbEnabled !== false;
     themeUserEnabled = themeEnabled;
     imageOnlyMode = imgOnly;
@@ -3711,6 +3819,12 @@
       if ('playerTabIcons' in msg) applyPlayerTabIcons(msg.playerTabIcons);
       if ('spotifyCanvasEnabled' in msg) {
         spotifyCanvasEnabled = msg.spotifyCanvasEnabled !== false && !discStyleEnabled;
+        reCheckCanvas = true;
+      }
+      if ('lyricsLineBlur' in msg || 'canvasBlurPx' in msg) applyBlurSettings(msg.lyricsLineBlur, msg.canvasBlurPx);
+      if ('spotifyCanvasPlacement' in msg) {
+        canvasPlacement = ['lyrics', 'side'].includes(msg.spotifyCanvasPlacement) ? msg.spotifyCanvasPlacement : 'cover';
+        setLyricsCanvas(null);
         reCheckCanvas = true;
       }
       if ('canvasPriority' in msg) {

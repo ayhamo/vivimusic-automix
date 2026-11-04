@@ -33,17 +33,20 @@
 
 const AMP_BASE_URL = 'https://amp-api.music.apple.com';
 
-// Public read-only JWT used by the Apple Music web player for unauthenticated
-// catalog reads. This will eventually expire; getOrFetchAmpToken() always
-// tries to scrape a fresh one first and only falls back to this.
-const APPLE_MUSIC_TOKEN_FALLBACK =
-  'eyJ0eXAiOiJKV1QiLCJhbGciOiJFUzI1NiIsImtpZCI6IldlYlBsYXlLaWQifQ' +
-  '.eyJpc3MiOiJBTVBXZWJQbGF5IiwiaWF0IjoxNzgxMDMyODU1LCJleHAiOjE3ODQw' +
-  'NTY4NTUsInJvb3RfaHR0cHNfb3JpZ2luIjpbImFwcGxlLmNvbSJdfQ' +
-  '.fiMFcJWkfSlxKP9NVA0UW9CbItD1Rge0SISuepz203XcpU762OqdCpU9M-YkmtKkjRmaIWtjsfGgqZPrlMonpA';
+// Token handling (ported from BitChord's AppleMusicCanvas.kt):
+//  - the web player's own JWT is scraped from music.apple.com's bundles,
+//    picked by its kid/iss, not just the first JWT that parses;
+//  - the last good one is saved in storage as the backup for when a scrape
+//    fails, until it expires (no baked-in token, those die within weeks);
+//  - a 401 strikes the token off (never picked again), re-scrapes and retries
+//    the request once; a failed scrape waits 30 min before the next try.
+const APPLE_TOKEN_BACKUP_KEY = 'viviAppleTokenBackup';
+const APPLE_TOKEN_RETRY_MS = 30 * 60 * 1000;
 
 let cachedAmpToken = null;
 let ampTokenExpiryMs = 0;
+let ampScrapeRetryAt = 0;
+const rejectedAmpTokens = new Set();
 
 function base64UrlDecode(str) {
   const padded = str.replace(/-/g, '+').replace(/_/g, '/').padEnd(str.length + (4 - (str.length % 4)) % 4, '=');
@@ -54,65 +57,98 @@ function base64UrlDecode(str) {
   return new TextDecoder('utf-8').decode(bytes);
 }
 
+function jwtExpiryMs(jwt) {
+  try {
+    const payload = JSON.parse(base64UrlDecode(jwt.split('.')[1]));
+    return payload && payload.exp ? payload.exp * 1000 : null;
+  } catch { return null; }
+}
+
+// The web player's token names itself: header kid "WebPlayKid", payload iss "AMPWebPlay".
+function isWebPlayerToken(jwt) {
+  try {
+    const [h, p] = jwt.split('.');
+    return base64UrlDecode(h).includes('WebPlayKid') || base64UrlDecode(p).includes('AMPWebPlay');
+  } catch { return false; }
+}
+
+async function useBackupAmpToken(now) {
+  try {
+    const { [APPLE_TOKEN_BACKUP_KEY]: b } = await chrome.storage.local.get(APPLE_TOKEN_BACKUP_KEY);
+    if (b?.jwt && b.exp - 60_000 > now && !rejectedAmpTokens.has(b.jwt)) {
+      cachedAmpToken = b.jwt;
+      ampTokenExpiryMs = b.exp;
+      return b.jwt;
+    }
+  } catch { /* storage unavailable */ }
+  return null;
+}
+
+async function scrapeAmpToken(now) {
+  const htmlRes = await fetch('https://music.apple.com/us/browse');
+  const html = await htmlRes.text();
+  const scripts = [...new Set(html.match(/\/assets\/index(?:-legacy)?[~-][a-zA-Z0-9_-]+\.js/g) || [])];
+  for (const scriptPath of scripts) {
+    let scriptText;
+    try {
+      scriptText = await (await fetch(`https://music.apple.com${scriptPath}`)).text();
+    } catch { continue; }
+    const candidates = [...new Set(scriptText.match(/ey[a-zA-Z0-9_-]+\.ey[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+/g) || [])]
+      .filter((t) => !rejectedAmpTokens.has(t))
+      .map((t) => ({ t, exp: jwtExpiryMs(t) }))
+      .filter((c) => c.exp && c.exp > now);
+    if (!candidates.length) continue;
+    // The web player's own token first; any other is a guess, kept so a change
+    // in how Apple labels it is not fatal.
+    return candidates.find((c) => isWebPlayerToken(c.t)) || candidates[0];
+  }
+  return null;
+}
+
 async function getOrFetchAmpToken() {
   const now = Date.now();
   if (cachedAmpToken && now < ampTokenExpiryMs - 60_000) return cachedAmpToken;
+  if (now < ampScrapeRetryAt) return useBackupAmpToken(now);
 
-  try {
-    const htmlRes = await fetch('https://music.apple.com/us/browse');
-    const html = await htmlRes.text();
-
-    const scriptRe = /\/assets\/index(?:-legacy)?[~-][a-zA-Z0-9_-]+\.js/g;
-    const scripts = [...new Set(html.match(scriptRe) || [])];
-
-    for (const scriptPath of scripts) {
-      let scriptText;
-      try {
-        const scriptRes = await fetch(`https://music.apple.com${scriptPath}`);
-        scriptText = await scriptRes.text();
-      } catch {
-        continue;
-      }
-
-      const tokenRe = /ey[a-zA-Z0-9_-]+\.ey[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+/g;
-      const tokens = scriptText.match(tokenRe) || [];
-      for (const token of tokens) {
-        try {
-          const payload = JSON.parse(base64UrlDecode(token.split('.')[1]));
-          if (payload && payload.iss && payload.exp && payload.exp * 1000 > now) {
-            cachedAmpToken = token;
-            ampTokenExpiryMs = payload.exp * 1000;
-            return token;
-          }
-        } catch {
-          // not a real/decodable JWT — keep scanning
-        }
-      }
-    }
-  } catch {
-    // network hiccup scraping music.apple.com — fall through to fallback token
+  let found = null;
+  try { found = await scrapeAmpToken(now); } catch { /* network hiccup */ }
+  if (found) {
+    cachedAmpToken = found.t;
+    ampTokenExpiryMs = found.exp;
+    try { await chrome.storage.local.set({ [APPLE_TOKEN_BACKUP_KEY]: { jwt: found.t, exp: found.exp } }); } catch { /* ignore */ }
+    return found.t;
   }
-
-  return APPLE_MUSIC_TOKEN_FALLBACK;
+  console.warn('[Vivi Apple] no usable web player token found; retrying in 30 min, using the saved one meanwhile');
+  ampScrapeRetryAt = now + APPLE_TOKEN_RETRY_MS;
+  return useBackupAmpToken(now);
 }
 
-async function ampGet(path, params) {
+async function rejectAmpToken(token) {
+  rejectedAmpTokens.add(token);
+  if (cachedAmpToken === token) { cachedAmpToken = null; ampTokenExpiryMs = 0; }
+  ampScrapeRetryAt = 0;   // a rejected token is worth an immediate re-scrape
+  try {
+    const { [APPLE_TOKEN_BACKUP_KEY]: b } = await chrome.storage.local.get(APPLE_TOKEN_BACKUP_KEY);
+    if (b?.jwt === token) await chrome.storage.local.remove(APPLE_TOKEN_BACKUP_KEY);
+  } catch { /* ignore */ }
+}
+
+// Throws on network errors, a missing token and a 401 that a fresh token did
+// not fix, so callers report a failed lookup instead of caching "no Canvas".
+async function ampGet(path, params, retried = false) {
   const token = await getOrFetchAmpToken();
+  if (!token) throw new Error('no Apple Music token');
   const url = new URL(AMP_BASE_URL + path);
   for (const [k, v] of Object.entries(params || {})) {
     if (v !== undefined && v !== null && v !== '') url.searchParams.set(k, String(v));
   }
-  // Origin/Referer are spoofed to music.apple.com's own by a
-  // declarativeNetRequest session rule registered in background.js — fetch()
-  // itself refuses to let script code set those (they're forbidden request
-  // headers), which is exactly why this has to run here, not in content.js.
-  let res;
-  try {
-    res = await fetch(url.toString(), {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-  } catch {
-    return null;
+  // Origin/Referer are rewritten to music.apple.com's by fx-headers.js.
+  const res = await fetch(url.toString(), { headers: { Authorization: `Bearer ${token}` } });
+  if (res.status === 401) {
+    console.warn('[Vivi Apple] token rejected by the catalog API; re-scraping');
+    await rejectAmpToken(token);
+    if (retried) throw new Error('Apple Music token rejected');
+    return ampGet(path, params, true);
   }
   if (!res.ok) return null;
   try {
@@ -149,19 +185,24 @@ function isBlacklistedAlbumName(name) {
 }
 
 // Apple's motion-artwork payload can carry the actual media URL under any of
-// a few different keys depending on the asset's shape (some are a segmented
-// HLS manifest, some are a plain progressive file) — try each in turn.
-function extractEditorialVideoUrl(ev, preferTall) {
-  const order = preferTall
-    ? ['motionDetailTall', 'motionDetailRaw', 'motionDetailSquare', 'motionDetailStatic']
-    : ['motionDetailSquare', 'motionDetailRaw', 'motionDetailTall', 'motionDetailStatic'];
-  for (const key of order) {
-    const asset = ev?.[key];
-    if (!asset) continue;
-    const video = asset.video || asset.videoUrl || asset.hlsUrl || asset.url;
-    if (video) return video;
-  }
-  return null;
+// a few keys depending on the asset's shape (segmented HLS or a plain file),
+// and older payloads use motionSquareVideo1x1 / motionTallVideo3x4.
+function motionLink(ev, key) {
+  const asset = ev?.[key];
+  const v = asset && (asset.video || asset.videoUrl || asset.hlsUrl || asset.url);
+  return v || null;
+}
+// { primary, alternate, tall }: the square clip first (fills a square cover
+// uncropped), a different one to retry with when it won't play, and the 3:4
+// one for portrait surfaces.
+function motionUrls(ev) {
+  const square = motionLink(ev, 'motionDetailSquare') || motionLink(ev, 'motionSquareVideo1x1');
+  const raw = motionLink(ev, 'motionDetailRaw');
+  const tall = motionLink(ev, 'motionDetailTall') || motionLink(ev, 'motionTallVideo3x4');
+  const primary = square || raw || tall || motionLink(ev, 'motionDetailStatic');
+  if (!primary) return null;
+  const alternate = [square, raw, tall].find((u) => u && u !== primary) || null;
+  return { primary, alternate, tall };
 }
 
 async function fetchMotionArtwork(albumId, storefront, fallbackArtist, titleOverride, artistOverride) {
@@ -183,20 +224,17 @@ async function fetchMotionArtwork(albumId, storefront, fallbackArtist, titleOver
   const finalTitle = titleOverride || albumName;
   const finalArtist = artistOverride || artistName;
 
-  const ev = attributes.editorialVideo;
-  if (ev) {
-    const url = extractEditorialVideoUrl(ev, false);
-    const tallUrl = extractEditorialVideoUrl(ev, true);
-    if (url) {
-      return {
-        name: finalTitle,
-        artist: finalArtist,
-        albumId,
-        albumName,
-        animated: url,
-        animatedTall: tallUrl || null,
-      };
-    }
+  const m = attributes.editorialVideo && motionUrls(attributes.editorialVideo);
+  if (m) {
+    return {
+      name: finalTitle,
+      artist: finalArtist,
+      albumId,
+      albumName,
+      animated: m.primary,
+      animatedAlt: m.alternate,
+      animatedTall: m.tall,
+    };
   }
   return null;
 }
@@ -277,22 +315,19 @@ async function searchAndFetchMotion(term, artist, album, storefront, type) {
     if (!targetAlbumId || String(targetAlbumId).startsWith('pl.')) continue;
 
     // Motion asset sometimes rides along directly on the search result itself.
-    const ev = attributes.editorialVideo;
-    if (ev) {
-      const hlsUrl = extractEditorialVideoUrl(ev, false);
-      const tallHlsUrl = extractEditorialVideoUrl(ev, true);
-      if (hlsUrl) {
-        const name = attributes.name || '';
-        const collName = attributes.collectionName || null;
-        return {
-          name,
-          artist: resultArtistName,
-          albumId: targetAlbumId,
-          albumName: itemType === 'songs' ? collName : name,
-          animated: hlsUrl,
-          animatedTall: tallHlsUrl || null,
-        };
-      }
+    const m = attributes.editorialVideo && motionUrls(attributes.editorialVideo);
+    if (m) {
+      const name = attributes.name || '';
+      const collName = attributes.collectionName || attributes.albumName || null;
+      return {
+        name,
+        artist: resultArtistName,
+        albumId: targetAlbumId,
+        albumName: itemType === 'songs' ? collName : name,
+        animated: m.primary,
+        animatedAlt: m.alternate,
+        animatedTall: m.tall,
+      };
     }
 
     const fetched = await fetchMotionArtwork(
@@ -322,7 +357,16 @@ function cacheKey(prefix, ...parts) {
  * @param {string} storefront
  * @returns {Promise<{videoUrl: string|null}|null>}
  */
-async function resolveAppleCanvasDirect(track, storefront = 'us') {
+// Motion art is per storefront: use the browser's region (en-GB -> gb), else us.
+function defaultStorefront() {
+  try {
+    const region = new Intl.Locale(navigator.language).maximize().region;
+    if (region && /^[A-Z]{2}$/.test(region)) return region.toLowerCase();
+  } catch { /* ignore */ }
+  return 'us';
+}
+
+async function resolveAppleCanvasDirect(track, storefront = defaultStorefront()) {
   const { song, artist, album } = track || {};
   if (!song || !artist) return null;
 
@@ -333,7 +377,7 @@ async function resolveAppleCanvasDirect(track, storefront = 'us') {
   let result = null;
   try {
     const motion = await searchAndFetchMotion(song, artist, album || null, storefront, 'songs');
-    if (motion) result = { videoUrl: motion.animated || motion.animatedTall || null };
+    if (motion) result = { videoUrl: motion.animated || null, fallbackUrl: motion.animatedAlt || null, tallUrl: motion.animatedTall || null };
   } catch (e) {
     // A failed lookup (network, token) is not "this song has no Canvas":
     // report it and keep it out of the cache so it is tried again.
