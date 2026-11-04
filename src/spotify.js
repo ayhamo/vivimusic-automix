@@ -31,6 +31,15 @@ async function getSpDc() {
   // not pick it up again until the user presses Connect.
   if (spotifyDisconnected) return null;
 
+  // Upstream's plain lookup first: the normal first-party login cookie.
+  try {
+    const c = await chrome.cookies.get({ url: SPOTIFY_HOME, name: 'sp_dc' });
+    if (c?.value) {
+      await chrome.storage.local.set({ spotifySpDc: c.value });
+      return c.value;
+    }
+  } catch {}
+
   try {
     const stores = await chrome.cookies.getAllCookieStores().catch(() => [{ id: null }]);
     const storeIds = [null, ...stores.map(s => s.id).filter(Boolean)];
@@ -573,7 +582,18 @@ async function spotifyStatus() {
 }
 
 async function spotifyConnectFromBrowser() {
+  // Read the browser's current login, not an older saved copy.
+  spotifyTokenCache = null;
+  await chrome.storage.local.remove('spotifySpDc');
   await chrome.storage.local.set({ spotifyDisconnected: false });
+  // Without the Spotify host permission Firefox hides the cookie entirely.
+  try {
+    const allowed = await chrome.permissions.contains({ origins: ['https://open.spotify.com/*'] });
+    if (!allowed) {
+      console.warn('[Vivi Spotify] no host permission for open.spotify.com');
+      return spotifyJsonError('Vivimusic Web is not allowed to access Spotify. Allow it in about:addons → Vivimusic Web → Permissions, then press Connect again.');
+    }
+  } catch {}
   // 1. First, check if sp_dc is ALREADY available right now in browser cookies!
   const existingSpDc = await getSpDc();
   if (existingSpDc) {

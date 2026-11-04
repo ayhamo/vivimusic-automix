@@ -1114,6 +1114,7 @@
   const spotifyStatus = document.getElementById('spotifyStatus');
   const canvasPrioritySelect = document.getElementById('canvasPrioritySelect');
   const SPOTIFY_DEFAULTS = { spotifyCanvasEnabled: true, canvasPriority: 'apple' };
+  const SPOTIFY_ORIGINS = ['https://open.spotify.com/*', 'https://*.spotify.com/*', 'https://spotify.com/*'];
 
   function refreshSpotifyStatus() {
     chrome.runtime.sendMessage({ type: 'VIVI_SPOTIFY_STATUS' }, (resp) => {
@@ -1150,6 +1151,25 @@
     spotifyConnectBtn.disabled = true;
     spotifyConnectBtn.textContent = 'Opening Spotify…';
     spotifyStatus.textContent = 'Log in to Spotify in the opened tab, then return here.';
+    // Firefox lets the user withhold host permissions of MV3 add-ons; without
+    // the Spotify ones the cookie API sees no sp_dc and Connect waits forever.
+    // permissions.request must run straight from the click, before any await.
+    const api = globalThis.browser?.permissions || chrome.permissions;
+    const ask = api?.request
+      ? Promise.resolve(api.request({ origins: SPOTIFY_ORIGINS })).catch(() => false)
+      : Promise.resolve(true);
+    ask.then((granted) => {
+      if (!granted) {
+        spotifyConnectBtn.disabled = false;
+        spotifyConnectBtn.textContent = 'Connect Spotify';
+        spotifyStatus.textContent = 'Spotify access was not allowed. Allow it to connect (about:addons → Vivimusic Web → Permissions).';
+        return;
+      }
+      connectSpotify();
+    });
+  });
+
+  function connectSpotify() {
     chrome.runtime.sendMessage({ type: 'VIVI_SPOTIFY_CONNECT' }, (resp) => {
       spotifyConnectBtn.disabled = false;
       spotifyConnectBtn.textContent = 'Connect Spotify';
@@ -1158,7 +1178,7 @@
       }
       refreshSpotifyStatus();
     });
-  });
+  }
 
   spotifySaveCookieBtn.addEventListener('click', () => {
     const value = spotifySpDc.value.trim();

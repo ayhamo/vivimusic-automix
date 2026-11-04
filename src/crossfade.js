@@ -635,6 +635,8 @@
     const A = window.__viviAutomix;
     if (amx.id !== st.id) amx = { id: st.id, state: 'idle', mix: null };
     if (amx.state === 'idle' && (!A || !A.isEnabled())) amx.state = 'off';
+    // Load the beat model in the middle of the song, well before the outro.
+    if (amx.state === 'idle' && (pos >= st.dur / 2 || remaining <= AMX_LEAD + 30)) A?.warmup?.();
     if (amx.state === 'idle' && remaining <= AMX_LEAD && reqId !== st.id && performance.now() >= retryAt) {
       if (remaining < N + 8) { amxGiveUp('outro was not buffered in time'); }
       else {

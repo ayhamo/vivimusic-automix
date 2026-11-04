@@ -115,6 +115,28 @@
     return { bpm, conf, downbeats: Array.isArray(grid?.downbeats) ? grid.downbeats : [] };
   }
 
+  // The worker loads essentia and the ONNX model on its first analysis, which
+  // can take ~15 s. Run a throwaway analysis on near-silence mid-song so the real
+  // one near the end only does the work itself.
+  let warm = null;
+  function warmup() {
+    if (warm || !enabled || frameDead) return;
+    warm = (async () => {
+      const t0 = performance.now();
+      await ensureFrame();
+      // Faint noise rather than digital silence, so no analysis step divides by zero.
+      const samples = new Float32Array(ANALYSIS_RATE * 4);
+      for (let i = 0; i < samples.length; i++) samples[i] = (Math.random() - 0.5) * 1e-3;
+      const fileKey = 'warmup:' + (++seq);
+      await new Promise((resolve) => {
+        pending.set(fileKey, { resolve, reject: resolve });
+        setTimeout(() => { if (pending.delete(fileKey)) resolve(); }, 60000);
+        frame.contentWindow.postMessage({ ch: 'vivi-automix', type: 'analyze', fileKey, samples, sampleRate: ANALYSIS_RATE, offsetSec: 0 }, HOST_ORIGIN, [samples.buffer]);
+      });
+      log('analysis model loaded in', Math.round(performance.now() - t0), 'ms');
+    })().catch((e) => { warm = null; log('warm-up failed:', e?.message || e); });
+  }
+
   /**
    * Pick bar count and the downbeat the blend starts on.
    * songEnd: song duration (s). earliest: first song time we could still start at.
@@ -174,6 +196,7 @@
     getBars: () => barsSetting,
     analyzeTail,
     planMix,
+    warmup,
     setStatus,
     getLiveState: () => ({ ...live }),
     MAX_MIX_SEC,

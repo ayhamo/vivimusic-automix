@@ -1196,18 +1196,6 @@ html.vivi-disc-playing .vivi-disc-tonearm .vivi-arm-drift {
 
 @keyframes vivi-vinyl-spin { to { transform: rotate(360deg); } }
 
-/* ── Custom logo sizing ──
-   The stock YT Music logo is an SVG rendered at a fixed 24px height; our
-   replacement is a raster PNG with a different intrinsic aspect ratio, so
-   keep it constrained to the same box and let it scale proportionally. */
-ytmusic-logo img,
-ytmusic-logo picture {
-  height: 24px;
-  width: auto;
-  max-width: none;
-  object-fit: contain;
-}
-
 /* ── Glyph overhang fix (handwritten / script lyric fonts) ──────────────────
    Each word/syllable is an inline-block painted with background-clip:text, so
    the fill can only show inside the span's box. Script fonts (Caveat, Dancing
