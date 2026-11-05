@@ -190,15 +190,26 @@
   // at that moment can silently miss the "Lyrics" tab element entirely and,
   // unlike the render path, nothing else ever retries the click on its own.
   let lyricsTabRetryId = null;
+  // The user picking a tab themselves ends the wait for the Lyrics tab.
+  document.addEventListener('click', (e) => {
+    if (!e.isTrusted || !lyricsTabRetryId) return;
+    if (e.target?.closest?.('ytmusic-player-page tp-yt-paper-tab, ytmusic-player-page yt-tab-shape')) {
+      clearTimeout(lyricsTabRetryId);
+      lyricsTabRetryId = null;
+    }
+  }, true);
   function clickLyricsTabWithRetry(attemptsLeft) {
     if (lyricsTabRetryId) { clearTimeout(lyricsTabRetryId); lyricsTabRetryId = null; }
-    if (attemptsLeft == null) attemptsLeft = 20; // ~3s at 150ms apart
+    // ~15 s at 150 ms apart: after a page reload YT Music can open the player
+    // with an empty tab bar and only fill in Up next / Lyrics / Related
+    // seconds later, so a short wait gave up before the Lyrics tab existed.
+    if (attemptsLeft == null) attemptsLeft = 100;
     const tab = findTabByLabel('lyrics');
     if (tab) {
       enableLyricsTabIfDisabled();
       if (tab.getAttribute('aria-selected') !== 'true' && !tab.hasAttribute('selected')) {
         tab.click();
-        log('auto-switched to Lyrics tab (attempt', 21 - attemptsLeft, ')');
+        log('auto-switched to Lyrics tab (attempt', 101 - attemptsLeft, ')');
       }
       return;
     }
