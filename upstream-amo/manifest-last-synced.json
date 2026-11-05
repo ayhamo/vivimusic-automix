@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Vivimusic Web",
-  "version": "10.1.1",
+  "version": "10.2.0",
   "description": "Vivimusic Web \u2014 Apple Music artwork, Spotify Canvas, synced lyrics, Last.fm scrobbling and Spotify \u2192 YouTube Music playlist transfer using local Spotify Web GraphQL and YouTube Music page session.",
   "permissions": [
     "storage",

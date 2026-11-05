@@ -118,20 +118,41 @@
   const warn = (...a) => DEBUG && console.debug('[Vivi]', ...a);
 
   
+  let themeCssInjected = false;
+  function requestThemeCss(on, attempt) {
+    try {
+      chrome.runtime.sendMessage({ type: 'VIVI_THEME_CSS', on }, (res) => {
+        void chrome.runtime.lastError;
+        // Retry a couple of times (e.g. background still starting up).
+        if (on && !res?.ok && attempt < 2 && themeCssInjected) {
+          setTimeout(() => { if (themeCssInjected) requestThemeCss(true, attempt + 1); }, 800 * (attempt + 1));
+        }
+      });
+    } catch { /* extension context gone */ }
+  }
+
   function applyTheme(enabled) {
     themeCurrentlyOn = enabled;
+    // After the extension is reloaded/updated, tabs that were already open keep
+    // running the OLD content script with a dead extension context. Its attempt
+    // to load theme.css is refused by the browser and logged as an error on
+    // chrome://extensions. A dead context has no runtime id, so skip quietly.
+    if (enabled && !chrome.runtime?.id) return;
     const existing = document.getElementById(THEME_LINK_ID);
     if (enabled) {
       // canvas.css's header/sidebar glass-tint rules key off this class so
       // that they only ever apply while the theme is actually on — see
       // canvas.css for why they can't just live in theme.css itself.
       document.documentElement.classList.add('vivi-theme-on');
-      if (existing) return;
-      const link = document.createElement('link');
-      link.id   = THEME_LINK_ID;
-      link.rel  = 'stylesheet';
-      link.href = chrome.runtime.getURL('src/theme.css');
-      document.head.appendChild(link);
+      // theme.css is injected by the background script (scripting.insertCSS)
+      // instead of a <link> to a chrome-extension:// URL. The browser refuses
+      // that kind of page-side load in some situations ("Unsafe attempt to
+      // load URL … Domains, protocols and ports must match"), which was logged
+      // as an error on the extensions page. insertCSS has no such check.
+      if (existing) existing.remove(); // leftover <link> from an older version
+      if (themeCssInjected) return;
+      themeCssInjected = true;
+      requestThemeCss(true, 0);
       // Restore background layer if we have artwork
       if (currentVideoUrl || currentImageUrl) {
         setBackgroundVar(currentImageUrl);
@@ -139,6 +160,7 @@
     } else {
       document.documentElement.classList.remove('vivi-theme-on');
       existing?.remove();
+      if (themeCssInjected) { themeCssInjected = false; requestThemeCss(false, 0); }
       const inner = document.getElementById(BG_IMG_ID);
       if (inner) inner.style.backgroundImage = '';
       document.documentElement.style.removeProperty('--blyrics-background-img');
@@ -2216,6 +2238,10 @@
     });
   }
 
+  function applyPillPlayer(enabled) {
+    document.documentElement.classList.toggle('vivi-pill-player', enabled !== false);
+  }
+
   function applyPlayerTabIcons(enabled) {
     playerTabIconsEnabled = enabled !== false;
     document.documentElement.classList.toggle('vivi-player-tab-icons', playerTabIconsEnabled);
@@ -3504,6 +3530,7 @@
     applyDiscShine(discShine);
     applyDiscStyle(discStyle);
     applyPlayerTabIcons(tabIcons);
+    chrome.storage.local.get({ pillPlayerEnabled: true }, ({ pillPlayerEnabled }) => applyPillPlayer(pillPlayerEnabled));
     canvasPriority = canvasPrio === 'apple' ? 'apple' : 'spotify';
     canvasPlacement = ['lyrics', 'side'].includes(cPlace) ? cPlace : 'cover';
     applyBlurSettings(lineBlur, cBlur);
@@ -3825,6 +3852,7 @@
         applyTheme(msg.themeEnabled);
       }
       if ('playerTabIcons' in msg) applyPlayerTabIcons(msg.playerTabIcons);
+      if ('pillPlayerEnabled' in msg) applyPillPlayer(msg.pillPlayerEnabled);
       if ('spotifyCanvasEnabled' in msg) {
         spotifyCanvasEnabled = msg.spotifyCanvasEnabled !== false && !discStyleEnabled;
         reCheckCanvas = true;

@@ -73,7 +73,8 @@ async function ensureAmpHeaderSpoofRule() {
   }
 }
 
-const REPO = 'Archimetrix/VIVIMUSIC_WEB';
+// This fork's own releases (the repo is private: an unauthenticated check gets a 404).
+const REPO = 'ayhamo/vivimusic-firefox';
 const RELEASES_API = `https://api.github.com/repos/${REPO}/releases/latest`;
 const RELEASES_PAGE = `https://github.com/${REPO}/releases/latest`;
 const ALARM_NAME = 'vivi-update-check';
@@ -213,9 +214,12 @@ async function checkForUpdate() {
     const res = await fetch(RELEASES_API, {
       headers: { Accept: 'application/vnd.github+json' },
     });
+    if (res.status === 404) throw new Error('the fork repo is private, open its releases page while signed in to GitHub');
     if (!res.ok) throw new Error(`GitHub API ${res.status}`);
     const data = await res.json();
-    const latestVersion = data.tag_name || data.name || '';
+    // Fork release titles read "Vivimusic Web 10.2.0.12 (upstream …)"; the tag
+    // (fork-v10.2.0-amo10.2.0-<sha>) carries upstream's version, not ours.
+    const latestVersion = (String(data.name || '').match(/\d+(?:\.\d+)+/) || [data.tag_name || ''])[0];
     const updateAvailable = latestVersion ? isNewer(latestVersion, currentVersion) : false;
     result = {
       ok: true,
@@ -230,6 +234,7 @@ async function checkForUpdate() {
       ok: false,
       currentVersion,
       error: e.message,
+      releaseUrl: RELEASES_PAGE,
       checkedAt: Date.now(),
     };
   }
@@ -268,10 +273,26 @@ async function migrateLyricsDefaults() {
   // previously picked. Applied once.
   const sy = await chrome.storage.local.get({ vivi_priority_syllable_word_only: false, lyricsPriorityOrder: [] });
   if (!sy.vivi_priority_syllable_word_only) {
-    const ok = ['lrcred', 'betterlyricsTTML', 'betterlyricsPortato', 'unison', 'binilyrics', 'musixmatch'];
+    const ok = ['lrcred', 'betterlyricsTTML', 'betterlyricsPortato', 'betterlyrics', 'unison', 'binilyrics', 'musixmatch'];
     const cleaned = (Array.isArray(sy.lyricsPriorityOrder) ? sy.lyricsPriorityOrder : [])
       .filter((k, i, a) => ok.includes(k) && a.indexOf(k) === i).slice(0, 3);
     await chrome.storage.local.set({ lyricsPriorityOrder: cleaned, vivi_priority_syllable_word_only: true });
+  }
+  // Better Lyrics TTML/Legato/Portato/Legacy merged into one provider —
+  // fold old toggles and priority picks into the new 'betterlyrics' key. Once.
+  const bl = await chrome.storage.local.get({ vivi_betterlyrics_merged: false, lyricsProviders: {}, lyricsPriorityOrder: [] });
+  if (!bl.vivi_betterlyrics_merged) {
+    const OLD = ['betterlyricsTTML', 'betterlyricsKugou', 'betterlyricsLegacy', 'betterlyricsPortato'];
+    const prov = { ...bl.lyricsProviders };
+    if (!('betterlyrics' in prov)) {
+      const had = OLD.filter((k) => k in prov);
+      if (had.length) prov.betterlyrics = had.some((k) => prov[k]);
+    }
+    OLD.forEach((k) => { delete prov[k]; });
+    const order = (Array.isArray(bl.lyricsPriorityOrder) ? bl.lyricsPriorityOrder : [])
+      .map((k) => (OLD.includes(k) ? 'betterlyrics' : k))
+      .filter((k, i, a) => a.indexOf(k) === i).slice(0, 3);
+    await chrome.storage.local.set({ lyricsProviders: prov, lyricsPriorityOrder: order, vivi_betterlyrics_merged: true });
   }
   const s = await chrome.storage.local.get({
     vivi_lyrics_defaults_lrcred: false,
@@ -1309,6 +1330,23 @@ async function getMusixmatchLyrics(track) {
   }
   throw lastErr || new Error('Musixmatch unavailable');
 }
+
+// Inject / remove theme.css for the sending tab. Done from here (not with a
+// <link> in the page) so the browser's page-side extension-URL check is never
+// involved.
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg?.type !== 'VIVI_THEME_CSS') return undefined;
+  if (!sender?.tab?.id) { sendResponse({ ok: false }); return undefined; }
+  const target = { tabId: sender.tab.id, frameIds: [sender.frameId || 0] };
+  const files = ['src/theme.css'];
+  const job = msg.on
+    ? chrome.scripting.insertCSS({ target, files })
+    : chrome.scripting.removeCSS({ target, files });
+  Promise.resolve(job)
+    .then(() => sendResponse({ ok: true }))
+    .catch((e) => sendResponse({ ok: false, error: String(e?.message || e) }));
+  return true;
+});
 
 // Add the Musixmatch bridge to the existing listener above without changing
 // the popup/Spotify/Last.fm message contracts.

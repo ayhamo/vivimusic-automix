@@ -62,10 +62,7 @@
   const DEFAULT_PROVIDERS = {
     lyricsplus: true,
     lrcred: true,
-    betterlyricsTTML: true,
-    betterlyricsKugou: true,
-    betterlyricsLegacy: true,
-    betterlyricsPortato: true,
+    betterlyrics: true,
     lrclib: true,
     musixmatch: true,
     unison: true,
@@ -87,8 +84,23 @@
   // in the top-3 priority list (line-only sources — Legato/Kugou, Legacy,
   // LRCLIB — are not offered there). A priority provider's
   // reply is shown whatever level it turns out to be, even line-synced.
-  const PRIORITY_ELIGIBLE_KEYS = ['lyricsplus', 'lrcred', 'betterlyricsTTML', 'paxsenix', 'betterlyricsPortato', 'unison', 'binilyrics', 'musixmatch'];
-  const sanitizeOrder = (arr) => (Array.isArray(arr) ? arr : [])
+  const PRIORITY_ELIGIBLE_KEYS = ['lyricsplus', 'lrcred', 'betterlyrics', 'paxsenix', 'unison', 'binilyrics', 'musixmatch'];
+  // The four Better Lyrics sub-sources (TTML, Legato/Kugou, Portato/QQ,
+  // Legacy) used to be separate toggles; they are now one "betterlyrics"
+  // provider. Old saved settings are folded into the new key on load.
+  const LEGACY_BL_KEYS = ['betterlyricsTTML', 'betterlyricsKugou', 'betterlyricsLegacy', 'betterlyricsPortato'];
+  function normalizeProviders(p) {
+    const out = { ...(p || {}) };
+    if (!('betterlyrics' in out)) {
+      const had = LEGACY_BL_KEYS.filter((k) => k in out);
+      if (had.length) out.betterlyrics = had.some((k) => out[k]);
+    }
+    LEGACY_BL_KEYS.forEach((k) => { delete out[k]; });
+    return out;
+  }
+  const mapLegacyOrder = (arr) => (Array.isArray(arr) ? arr : [])
+    .map((k) => (LEGACY_BL_KEYS.includes(k) ? 'betterlyrics' : k));
+  const sanitizeOrder = (arr) => mapLegacyOrder(arr)
     .filter((k, i, a) => PRIORITY_ELIGIBLE_KEYS.includes(k) && a.indexOf(k) === i)
     .slice(0, 3);
   // Defaults: lrc.red first, then BiniLyrics, then BetterLyrics (word-sync).
@@ -104,7 +116,7 @@
   chrome.storage.local.get(
     { lyricsProviders: DEFAULT_PROVIDERS, lyricsPriorityEnabled: true, lyricsPriorityOrder: DEFAULT_PRIORITY_ORDER, lyricsPriorityWaitEnabled: true },
     (s) => {
-      providerSettings = { ...DEFAULT_PROVIDERS, ...s.lyricsProviders };
+      providerSettings = { ...DEFAULT_PROVIDERS, ...normalizeProviders(s.lyricsProviders) };
       priorityEnabled = !!s.lyricsPriorityEnabled;
       priorityOrder = sanitizeOrder(s.lyricsPriorityOrder);
       priorityWaitEnabled = s.lyricsPriorityWaitEnabled !== false;
@@ -113,7 +125,7 @@
 
   chrome.runtime.onMessage.addListener((msg) => {
     if (msg.type !== 'VIVI_SETTINGS') return;
-    if (msg.lyricsProviders) providerSettings = { ...providerSettings, ...msg.lyricsProviders };
+    if (msg.lyricsProviders) providerSettings = { ...providerSettings, ...normalizeProviders(msg.lyricsProviders) };
     if ('lyricsPriorityEnabled' in msg) priorityEnabled = !!msg.lyricsPriorityEnabled;
     if ('lyricsPriorityOrder' in msg) priorityOrder = sanitizeOrder(msg.lyricsPriorityOrder);
     if ('lyricsPriorityWaitEnabled' in msg) priorityWaitEnabled = msg.lyricsPriorityWaitEnabled !== false;
@@ -576,6 +588,19 @@
     if (!parsed) return null;
     parsed.provider = 'BetterLyrics (Portato)';
     return parsed;
+  }
+
+  // Single Better Lyrics provider. Instead of four independent requests per
+  // song, ask the word/syllable-synced sources first (TTML + Portato in
+  // parallel); only if neither gives word-level sync, fall back to the
+  // line-synced ones (Legato/Kugou + Legacy). The best level found wins.
+  async function fromBetterLyrics(track) {
+    const safe = (fn) => fn(track).catch((e) => { log('betterlyrics sub-source failed', e && e.message); return null; });
+    let best = null;
+    for (const r of await Promise.all([safe(fromBetterLyricsTTML), safe(fromBetterLyricsPortato)])) best = better(best, r);
+    if (best && MODE_RANK[best.mode] >= MODE_RANK.word) return best;
+    for (const r of await Promise.all([safe(fromBetterLyricsKugou), safe(fromBetterLyricsLegacy)])) best = better(best, r);
+    return best;
   }
 
   async function fromBetterLyricsLegacy(track) {
@@ -1115,10 +1140,7 @@
   // list itself.
   const PROVIDER_NAME_BY_KEY = {
     lrcred: 'lrc.red',
-    betterlyricsTTML: 'BetterLyrics (TTML)',
-    betterlyricsKugou: 'BetterLyrics (Legato)',
-    betterlyricsLegacy: 'BetterLyrics (Legacy)',
-    betterlyricsPortato: 'BetterLyrics (Portato)',
+    betterlyrics: 'BetterLyrics',
     lrclib: 'LRCLIB',
     musixmatch: 'Musixmatch',
     unison: 'Unison',
@@ -1132,7 +1154,8 @@
     Object.entries(PROVIDER_NAME_BY_KEY).map(([k, v]) => [v, k])
   );
   function providerKeyForName(name) {
-    if (name === 'BetterLyrics (Kugou)') return 'betterlyricsKugou'; // pre-rename label
+    // Result labels name the sub-source that answered; all belong to one provider.
+    if (typeof name === 'string' && name.startsWith('BetterLyrics')) return 'betterlyrics';
     return PROVIDER_KEY_BY_NAME[name] || null;
   }
 
@@ -1198,11 +1221,8 @@
       if (providerSettings[key] && !excludeKeys.has(key)) jobDefs.push({ key, promise: fn(track) });
     };
     add('lrcred', fromLrcRed);
-    add('betterlyricsTTML', fromBetterLyricsTTML);
-    add('betterlyricsKugou', fromBetterLyricsKugou);
-    add('betterlyricsPortato', fromBetterLyricsPortato);
+    add('betterlyrics', fromBetterLyrics);
     add('lrclib', fromLrclib);
-    add('betterlyricsLegacy', fromBetterLyricsLegacy);
     add('musixmatch', fromMusixmatch);
     add('unison', fromUnison);
     add('binilyrics', fromBiniLyrics);
