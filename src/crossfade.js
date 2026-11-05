@@ -373,7 +373,13 @@
 
     let startIdx = Math.round((v.currentTime - p.start) * sr) - L;
     if (loud > 0.001) {
-      let hit = locate(tmpl, p.mono, startIdx, Math.round(3 * sr));
+      // Search close to the estimate first. Songs repeat themselves bar after
+      // bar (a bar is ~1.5-2.5 s), so a wide search can match an earlier copy
+      // of the same bar a hair better than the real spot: the blend then
+      // started ~2 s back and that part was heard twice. ±0.75 s is shorter
+      // than a bar even at 160 BPM.
+      let hit = locate(tmpl, p.mono, startIdx, Math.round(0.75 * sr));
+      if (!hit || hit.score < 0.9) hit = locate(tmpl, p.mono, startIdx, Math.round(3 * sr));
       if (!hit || hit.score < 0.9) {
         // my position estimate was off: look through the whole tail instead
         hit = locate(tmpl, p.mono, Math.round(p.mono.length / 2), p.mono.length);
@@ -517,7 +523,13 @@
       if (!live.newId) { live.newId = st.id; live.newAt = now; }
       else if (st.id !== live.newId) { abortLive('skipped again'); return; }
       if (st.ad) { abortLive('ad'); return; }
-      const audible = !v.paused && (live.playedAt >= live.askedAt || now - live.newAt > 1.2);
+      // YouTube can switch the title before the <video> really plays the new
+      // song. Fading the player back in then replays the old song's last
+      // moments over the tail. Only bring it in once its position looks like
+      // the start of the new song.
+      const newPos = v.currentTime - (st.off || 0);
+      const fresh = newPos >= 0 && newPos < (now - live.askedAt) + 2;
+      const audible = fresh && !v.paused && (live.playedAt >= live.askedAt || now - live.newAt > 1.2);
       if (audible) beginMix(g);
       else if (now - live.newAt > 5) abortLive('next song silent');
     } else if (live.phase === 'mixing') {
