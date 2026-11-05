@@ -1,5 +1,7 @@
 # build output (rebuild with scripts/build_zip.py)
 vivimusic-firefox-ready-to-sign.zip
+vivimusic-chromium.zip
+dist/
 *.tmp
 __pycache__/
 

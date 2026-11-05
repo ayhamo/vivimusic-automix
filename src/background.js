@@ -8,7 +8,9 @@
 // Firefox runs it as an event page, where importScripts does not exist; the
 // manifest's background.scripts list loads the same helpers before this file.
 if (typeof importScripts === 'function') {
-  importScripts('md5.js', 'lastfm.js', 'listenbrainz.js', 'spotify.js', 'apple-canvas.js', 'lrcred.js');
+  // fx-headers.js holds the keep-alive and the VIVI_FETCH proxy; its
+  // webRequest header rewrite is Firefox-only and skips itself in Chrome.
+  importScripts('fx-headers.js', 'md5.js', 'lastfm.js', 'listenbrainz.js', 'spotify.js', 'apple-canvas.js', 'lrcred.js');
 }
 
 /* -------------------------------------------------------------------------
@@ -25,12 +27,13 @@ if (typeof importScripts === 'function') {
  * headers for the page's own traffic.
  * ------------------------------------------------------------------------- */
 const AMP_HEADER_RULE_ID = 9001;
+const SPOTIFY_HEADER_RULE_ID = 9002;
 
 async function ensureAmpHeaderSpoofRule() {
   if (!chrome.declarativeNetRequest?.updateSessionRules) return; // Firefox build: handled by fx-headers.js (webRequest)
   try {
     await chrome.declarativeNetRequest.updateSessionRules({
-      removeRuleIds: [AMP_HEADER_RULE_ID],
+      removeRuleIds: [AMP_HEADER_RULE_ID, SPOTIFY_HEADER_RULE_ID],
       addRules: [{
         id: AMP_HEADER_RULE_ID,
         priority: 1,
@@ -43,6 +46,24 @@ async function ensureAmpHeaderSpoofRule() {
           requestHeaders: [
             { header: 'Origin', operation: 'set', value: 'https://music.apple.com' },
             { header: 'Referer', operation: 'set', value: 'https://music.apple.com/' },
+          ],
+        },
+      }, {
+        // Chrome/Edge: the Spotify web-player endpoints want the web player's
+        // Origin/Referer. tabIds [-1] = only this extension's own requests,
+        // never the open.spotify.com page itself.
+        id: SPOTIFY_HEADER_RULE_ID,
+        priority: 1,
+        condition: {
+          requestDomains: ['spotify.com'],   // and every subdomain (spclient hosts vary)
+          resourceTypes: ['xmlhttprequest'],
+          tabIds: [-1],
+        },
+        action: {
+          type: 'modifyHeaders',
+          requestHeaders: [
+            { header: 'Origin', operation: 'set', value: 'https://open.spotify.com' },
+            { header: 'Referer', operation: 'set', value: 'https://open.spotify.com/' },
           ],
         },
       }],
@@ -149,7 +170,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
   if (msg.type === 'VIVI_ANNOUNCEMENTS_FOR_YTMUSIC') {
-    if (sender.url && !sender.url.startsWith('https://music.youtube.com/') && !sender.url.startsWith('moz-extension://')) {
+    if (sender.url && !sender.url.startsWith('https://music.youtube.com/') && !sender.url.startsWith(chrome.runtime.getURL(''))) {
       sendResponse({ ok: false, announcements: [] });
       return false;
     }
@@ -160,7 +181,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
   if (msg.type === 'VIVI_ANNOUNCEMENTS_TOASTED') {
-    if (sender.url && !sender.url.startsWith('https://music.youtube.com/') && !sender.url.startsWith('moz-extension://')) {
+    if (sender.url && !sender.url.startsWith('https://music.youtube.com/') && !sender.url.startsWith(chrome.runtime.getURL(''))) {
       sendResponse({ ok: false });
       return false;
     }

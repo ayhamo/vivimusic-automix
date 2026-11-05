@@ -45,7 +45,7 @@
     const url = typeof input === 'string' ? input : (input && input.url) || String(input);
     let abs;
     try { abs = new URL(url, location.href); } catch { return nativeFetch(input, init); }
-    if (abs.origin === location.origin || abs.protocol === 'moz-extension:' || abs.protocol === 'blob:' || abs.protocol === 'data:') {
+    if (abs.origin === location.origin || abs.protocol === 'moz-extension:' || abs.protocol === 'chrome-extension:' || abs.protocol === 'blob:' || abs.protocol === 'data:') {
       return nativeFetch(input, init);
     }
     try {

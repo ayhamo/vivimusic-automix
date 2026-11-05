@@ -436,7 +436,15 @@
     }
   }
 
+  // A YouTube ad playing before the song is a 16:9 video too; judging the
+  // track then marked songs as music videos ("Lyrics are off for video
+  // songs", no Canvas). While an ad shows, nothing is known about the song.
+  function adIsShowing() {
+    return !!document.querySelector('.html5-video-player.ad-showing, .html5-video-player.ad-interrupting');
+  }
+
   function isRealMusicVideo() {
+    if (adIsShowing()) return false;
     if (playerBarLooksLikeRealVideo()) return true;
     const widescreen = nativeVideoIsWidescreen();
     if (widescreen === true) return true;
@@ -452,7 +460,7 @@
   // but it only calls this lazily on track changes — by then this IIFE has
   // long since run and set it) so both the Canvas overlay and the lyrics
   // "hide on real videos" setting agree on what counts as a video.
-  window.__viviTrackInfo = { isRealMusicVideo };
+  window.__viviTrackInfo = { isRealMusicVideo, adIsShowing };
 
   // Shared artist-text extraction so every place that derives a cache key
   // from a "byline" element (player bar, queue panel, ...) agrees on the
