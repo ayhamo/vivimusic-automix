@@ -2224,7 +2224,9 @@
       playerTabIconsContainer = container;
       if (container && playerTabIconsEnabled) {
         playerTabIconsObserver = new MutationObserver(() => decoratePlayerTabIcons());
-        playerTabIconsObserver.observe(container, { childList: true, subtree: true });
+        // characterData: YT Music can fill a tab's label in place, after the
+        // tab itself was added.
+        playerTabIconsObserver.observe(container, { childList: true, subtree: true, characterData: true });
       }
     }
     if (!container || !playerTabIconsEnabled) return;

@@ -1056,8 +1056,10 @@ html.vivi-background-tab ytmusic-player-bar .image img {
 html.vivi-background-tab #vivi-bg-layer { display: none !important; }
 
 /* Optional icon-only labels for YouTube Music's full-player tabs. The original
-   label text stays in the DOM for accessibility; only its visual text is hidden. */
-html.vivi-player-tab-icons ytmusic-player-page #tabsContainer tp-yt-paper-tab.ytmusic-player-page .tab-content {
+   label text stays in the DOM for accessibility; only its visual text is hidden,
+   and only once the tab has its icon (a tab without one keeps its text, so the
+   tab bar never looks empty). */
+html.vivi-player-tab-icons ytmusic-player-page #tabsContainer tp-yt-paper-tab.ytmusic-player-page[data-vivi-player-tab-icon] .tab-content {
   color: transparent !important;
   font-size: 0 !important;
 }

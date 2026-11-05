@@ -153,11 +153,19 @@
   });
 
   
+  // YT Music's tab order is fixed: Up next, Lyrics, (Comments), Related.
+  const TAB_POSITION = { lyrics: 1 };
   function findTabByLabel(label) {
-    const tabs = document.querySelectorAll('ytmusic-player-page tp-yt-paper-tab, ytmusic-player-page yt-tab-shape');
+    const tabs = [...document.querySelectorAll('ytmusic-player-page tp-yt-paper-tab, ytmusic-player-page yt-tab-shape')];
     for (const tab of tabs) {
       const text = (tab.textContent || '').trim().toLowerCase();
       if (text === label) return tab;
+    }
+    // Starting the first song from a playlist, YT Music can draw the tab bar
+    // with every label still empty and fill the names in only later (seen in
+    // Firefox). Fall back to the tab's position while all labels are empty.
+    if (label in TAB_POSITION && tabs.length >= 3 && tabs.every((t) => !(t.textContent || '').trim())) {
+      return tabs[TAB_POSITION[label]] || null;
     }
     return null;
   }
@@ -785,7 +793,8 @@
       contentDirty = true;
       manualOffsetMs = await loadOffset(currentTrack, result.provider);
       savedOffsetMs = manualOffsetMs;
-      offsetPanelOpen = true;
+      // Leave the info panel as it was: open when refetched from inside it,
+      // closed when refetched with the tab-bar refresh button.
       syncPanelVisibility();
       return true;
     } finally {
