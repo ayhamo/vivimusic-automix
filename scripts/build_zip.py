@@ -1,7 +1,7 @@
 """Build the two release zips from the repo root:
 
-  vivimusic-firefox-ready-to-sign.zip  Firefox (upload to AMO to sign)
-  vivimusic-chromium.zip               Edge and Chrome (load unpacked)
+  vivimusic-automix-firefox.zip      Firefox (upload to AMO to sign)
+  vivimusic-automix-edge-chrome.zip  Edge and Chrome (load unpacked)
 
 Same code in both. The Chromium manifest is derived from manifest.json:
 service worker only, declarativeNetRequest instead of blocking webRequest,
@@ -15,8 +15,8 @@ import os
 import zipfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-OUT_FIREFOX = os.path.join(ROOT, 'vivimusic-firefox-ready-to-sign.zip')
-OUT_CHROMIUM = os.path.join(ROOT, 'vivimusic-chromium.zip')
+OUT_FIREFOX = os.path.join(ROOT, 'vivimusic-automix-firefox.zip')
+OUT_CHROMIUM = os.path.join(ROOT, 'vivimusic-automix-edge-chrome.zip')
 SKIP_DIRS = {'.git', '.github', '.claude', 'scripts', 'upstream-amo', 'dist', 'bitchrod extesnion'}
 SKIP_FILES = {os.path.basename(OUT_FIREFOX), os.path.basename(OUT_CHROMIUM),
               'README_CUSTOM.md', 'TESTING.md', '.gitignore'}

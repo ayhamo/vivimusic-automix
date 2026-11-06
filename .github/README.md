@@ -1,24 +1,71 @@
-# Vivimusic Web — Firefox fork
+<div align="center">
 
-Private fork of **[Vivimusic Web](https://github.com/Archimetrix/VIVIMUSIC_WEB) by [Archimetrix](https://github.com/Archimetrix)**, the extension that reskins YouTube Music with Apple Music–style Canvas artwork, synced lyrics, an equalizer and crossfade. All credit for the extension itself goes to them, and their code stays under their licence ([LICENSE.txt](../LICENSE.txt)).
+<img src="../icons/icon128.png" alt="Vivimusic Web+" width="96" height="96" />
 
-This fork packages it for Firefox and adds:
+# Vivimusic Web+
 
-- **Firefox that actually works:** background page loading, upstream's own AMO Firefox port merged in, retrying storage reads, a CSP-safe analysis worker
-- **Automix:** on-device Beat This model finds the outgoing song's tempo and downbeats, then blends over 4/8/16 bars starting on a downbeat, with a bass swap
-- **Crossfade fixes:** audio capture without holes, crossfade on manual skip (Next button / Shift+N) without loops or double skips
-- **ListenBrainz** scrobbling, **LyricsPlus / Paxsenix / Genius** lyrics providers, title cleaner
-- Mouse-wheel volume, Apple Music artist colours, Stats for Nerds HUD (Shift+D)
-- No donation links in the popup
+**YouTube Music with Automix: beatmatched blends and loop mixes between songs, on top of Vivimusic Web's synced lyrics, Canvas artwork, crossfade and scrobbling.**
+
+Firefox and Edge / Chrome · Manifest V3 · based on Vivimusic Web 10.2.0
+
+</div>
+
+---
+
+Vivimusic Web is made by **[Archimetrix](https://github.com/Archimetrix/VIVIMUSIC_WEB)**, and most of this code is theirs: the theme, Apple and Spotify Canvas, lyrics, the popup, Last.fm, the playlist transfer and the crossfade core. This fork adds a Firefox port, Automix ported from [BitChord](https://github.com/ayhamo/BitChord), and a set of fixes. Upstream's own README, describing the base features, is [`readme.md`](../readme.md).
+
+## What this fork adds
+
+### Automix (from BitChord)
+- **Whole songs downloaded early.** As soon as a song plays, the current and the next song in the queue are downloaded and analysed in the background: tempo, key, beat grid (Beat This!), intro and outro, and the sung parts.
+- **Blend.** On a phrase before the outro, the next song comes in time-stretched to the current tempo, locked to the beat. The bass swaps at the midpoint, and afterwards the new song glides back to its own tempo.
+- **Loop mix.** When both songs have clean instrumental bars (judged from synced lyrics, or from a vocal model when there are none), the old song loops 4/2/1 bars while the new one enters, and the tempo ramps across.
+- **Filter mix** for pairs that can't be beatmatched, and a plain 12 s crossfade when nothing better is possible.
+- **Analysis cache.** Each song is analysed once. The Audio playback card shows how many are saved and has a **Clear** button.
+- A toast shows each mix (bars, length, BPM) and "Blend finished". A pause, seek, skip or ad during a mix stops it cleanly.
+
+### Firefox and Edge / Chrome
+- Runs in Firefox 142+ (event-page background, Firefox's header handling) and in Edge / Chrome from the same code.
+- Releases come from a daily workflow that merges upstream's GitHub and AMO releases, then builds and lints both zips.
+
+### Fixes and smaller additions
+- Crossfade on manual skip without double skips or replayed audio; full audio capture.
+- ListenBrainz scrobbling actually works, with its own popup card.
+- Lyrics: provider priority honoured, extra providers, a refresh button next to the Lyrics tab, right-to-left layout for Arabic and Hebrew, correct timing after ads.
+- Canvas and artwork: pause with the song, sturdier Apple animated-art lookups, failed lookups no longer cached, a choice of where the Spotify Canvas plays.
+- Spotify Connect and Disconnect fixed (Disconnect no longer logs you out of Spotify).
+- **Prefer music-only version** (off by default): switches music videos to their song version when YouTube Music has one.
+- Title cleaner, mouse-wheel volume, Apple Music artist colours, a Stats for Nerds HUD (Shift+D), and no donation links in the popup.
+- Firefox robustness: storage reads that retry, a CSP-safe analysis worker.
+- Update check points at this fork's releases.
+
+The full list, with the reasons for each change, is in [`README_CUSTOM.md`](../README_CUSTOM.md).
 
 ## Install
 
-1. Download `vivimusic-web-<version>.zip` from this repo's newest **Release**.
-2. Sign it on AMO: [Developer Hub](https://addons.mozilla.org/en-US/developers/addons) → Vivimusic Web → Upload New Version → the zip (unlisted, signed automatically).
-3. Open the signed `.xpi` in Firefox. A newer version installs over the old one and keeps your settings.
+Get the zips from this repo's **Releases**.
+
+**Firefox.** Upload `vivimusic-automix-<version>-firefox.zip` at [addons.mozilla.org → Developer Hub](https://addons.mozilla.org/en-US/developers/addons) → Vivimusic Web+ → Upload New Version (self-distributed). Install the signed `.xpi` it gives back. Firefox keeps your settings across versions because the add-on id stays `vivimusic-web@custom`.
+
+**Edge / Chrome.** Unzip `vivimusic-automix-<version>-edge-chrome.zip`. Open `edge://extensions` (or `chrome://extensions`), turn on Developer mode, then Load unpacked → the folder. To update, replace the folder's contents and press Reload.
+
+Then open the popup → **Audio playback**, turn **Crossfade** on, and turn on Automix.
 
 ## Staying in sync with upstream
 
-`.github/workflows/fork-sync-release.yml` runs daily (and on demand). It merges upstream's newest GitHub release and AMO Firefox build into this fork inside the runner, lints, and publishes the zip as a release. If a merge needs a human, the run fails and nothing is published. Upstream's original Firefox build is kept in `upstream-amo/` for reference.
+`.github/workflows/fork-sync-release.yml` runs daily (and on demand). Inside the runner it merges upstream's newest GitHub release and AMO Firefox build, lints, and publishes both zips as a release. When a merge needs a person, the run fails and nothing is published. Upstream's original Firefox build is kept in `upstream-amo/` for reference.
 
-Everything else — what changed and why, how automix works, the step-by-step update guide, build and debug notes — is in **[README_CUSTOM.md](../README_CUSTOM.md)**.
+## Building
+
+```bash
+python scripts/build_zip.py
+```
+
+This builds `vivimusic-automix-firefox.zip` and `vivimusic-automix-edge-chrome.zip` in the repo root. How upstream is merged, released and signed is in [`README_CUSTOM.md`](../README_CUSTOM.md#how-to-update-read-this-first-when-continuing).
+
+## Credits
+
+- [Archimetrix](https://github.com/Archimetrix/VIVIMUSIC_WEB): Vivimusic Web
+- [BitChord](https://github.com/ayhamo/BitChord): the Automix engine this ports
+- [heydavidf/automix](https://github.com/heydavidf/automix): the earlier automix approach
+- Automix runs on essentia.js, Beat This!, ONNX Runtime Web, the open-unmix vocals model and signalsmith-stretch. The other bundled components are listed in [`THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md).

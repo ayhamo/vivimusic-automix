@@ -101,14 +101,14 @@ jobs:
           jq --arg v "$version" '.version = $v' manifest.json > manifest.tmp && mv manifest.tmp manifest.json
           python scripts/build_zip.py
           mkdir -p out
-          mv vivimusic-firefox-ready-to-sign.zip "out/vivimusic-web-${version}-firefox.zip"
-          mv vivimusic-chromium.zip "out/vivimusic-web-${version}-edge-chrome.zip"
+          mv vivimusic-automix-firefox.zip "out/vivimusic-automix-${version}-firefox.zip"
+          mv vivimusic-automix-edge-chrome.zip "out/vivimusic-automix-${version}-edge-chrome.zip"
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: lint with addons-linter (fails on errors)
         run: |
           set -euo pipefail
-          npx --yes addons-linter "out/vivimusic-web-${{ steps.build.outputs.version }}-firefox.zip" --output json > lint.json || true
+          npx --yes addons-linter "out/vivimusic-automix-${{ steps.build.outputs.version }}-firefox.zip" --output json > lint.json || true
           jq '.summary' lint.json
           test "$(jq '.summary.errors' lint.json)" = "0"
 
@@ -125,15 +125,15 @@ jobs:
             gh release delete "$TAG" -R "$GITHUB_REPOSITORY" --yes --cleanup-tag
           fi
           {
-            echo "Vivimusic Web ${VERSION}: this fork's patches on top of upstream, for Firefox and for Edge / Chrome."
+            echo "Vivimusic Web+ ${VERSION}: this fork's patches on top of upstream, for Firefox and for Edge / Chrome."
             echo
             echo "- Upstream GitHub: ${GH_TAG} (https://github.com/${UPSTREAM_REPO}/releases/tag/${GH_TAG})"
             echo "- Upstream Firefox (AMO): ${AMO_VERSION}"
             echo "- Fork commit: ${GITHUB_SHA}"
             echo
-            echo "- Firefox: vivimusic-web-${VERSION}-firefox.zip. Sign it at https://addons.mozilla.org/en-US/developers/addons -> Vivimusic Web -> Upload New Version."
-            echo "- Edge / Chrome: vivimusic-web-${VERSION}-edge-chrome.zip. Unzip it, open edge://extensions (or chrome://extensions), turn on Developer mode, Load unpacked -> the unzipped folder. To update: replace the folder's contents, then press Reload on the extension."
+            echo "- Firefox: vivimusic-automix-${VERSION}-firefox.zip. Sign it at https://addons.mozilla.org/en-US/developers/addons -> Vivimusic Web+ -> Upload New Version."
+            echo "- Edge / Chrome: vivimusic-automix-${VERSION}-edge-chrome.zip. Unzip it, open edge://extensions (or chrome://extensions), turn on Developer mode, Load unpacked -> the unzipped folder. To update: replace the folder's contents, then press Reload on the extension."
           } > notes.md
-          gh release create "$TAG" "out/vivimusic-web-${VERSION}-firefox.zip" "out/vivimusic-web-${VERSION}-edge-chrome.zip" -R "$GITHUB_REPOSITORY" \
-            --title "Vivimusic Web ${VERSION} (upstream ${GH_TAG}, AMO ${AMO_VERSION})" \
+          gh release create "$TAG" "out/vivimusic-automix-${VERSION}-firefox.zip" "out/vivimusic-automix-${VERSION}-edge-chrome.zip" -R "$GITHUB_REPOSITORY" \
+            --title "Vivimusic Web+ ${VERSION} (upstream ${GH_TAG}, AMO ${AMO_VERSION})" \
             --notes-file notes.md --latest

@@ -74,7 +74,7 @@ async function ensureAmpHeaderSpoofRule() {
 }
 
 // This fork's own releases (the repo is private: an unauthenticated check gets a 404).
-const REPO = 'ayhamo/vivimusic-firefox';
+const REPO = 'ayhamo/vivimusic-automix';
 const RELEASES_API = `https://api.github.com/repos/${REPO}/releases/latest`;
 const RELEASES_PAGE = `https://github.com/${REPO}/releases/latest`;
 const ALARM_NAME = 'vivi-update-check';
@@ -217,7 +217,7 @@ async function checkForUpdate() {
     if (res.status === 404) throw new Error('the fork repo is private, open its releases page while signed in to GitHub');
     if (!res.ok) throw new Error(`GitHub API ${res.status}`);
     const data = await res.json();
-    // Fork release titles read "Vivimusic Web 10.2.0.12 (upstream …)"; the tag
+    // Fork release titles read "Vivimusic Web+ 10.2.0.12 (upstream …)"; the tag
     // (fork-v10.2.0-amo10.2.0-<sha>) carries upstream's version, not ours.
     const latestVersion = (String(data.name || '').match(/\d+(?:\.\d+)+/) || [data.tag_name || ''])[0];
     const updateAvailable = latestVersion ? isNewer(latestVersion, currentVersion) : false;

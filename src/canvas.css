@@ -1454,6 +1454,34 @@ html.vivi-disc-playing .vivi-disc-tonearm .vivi-arm-drift {
   0% { transform: scaleY(0.25); }
   100% { transform: scaleY(1.15); }
 }
+/* The toast's own content: fades up and out when the blend finishes, and the
+   new content fades in from below while the pill resizes (crossfade.js). */
+#vivi-automix-toast {
+  box-sizing: border-box;
+  overflow: hidden;
+  white-space: nowrap;
+}
+#vivi-automix-toast > * {
+  transition: opacity 0.2s ease, transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+#vivi-automix-toast.vivi-automix-swap > * {
+  opacity: 0;
+  transform: translateY(-8px);
+}
+#vivi-automix-toast > .vivi-automix-enter {
+  opacity: 0;
+  transform: translateY(8px);
+}
+#vivi-automix-toast.vivi-automix-done .vivi-automix-icon {
+  animation: vivi-automix-pop 0.55s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+@keyframes vivi-automix-pop {
+  0% { transform: scale(0.3) rotate(-30deg); }
+  100% { transform: scale(1) rotate(0deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  #vivi-automix-toast, #vivi-automix-toast > * { transition-duration: 0.01s; animation: none; }
+}
 
 /* ── Spotify Canvas behind the side panel (placement "lyrics" / "side") ──
    A blurred, darkened copy of the Canvas fills the side panel behind the

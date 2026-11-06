@@ -446,6 +446,52 @@
     chrome.storage.local.set({ automixEnabled: automixToggle.checked });
   });
 
+  const preferMusicOnlyToggle = document.getElementById('preferMusicOnlyToggle');
+  chrome.storage.local.get({ preferMusicOnly: false }, (r) => {
+    if (preferMusicOnlyToggle) preferMusicOnlyToggle.checked = r.preferMusicOnly === true;
+  });
+  preferMusicOnlyToggle?.addEventListener('change', () => {
+    chrome.storage.local.set({ preferMusicOnly: preferMusicOnlyToggle.checked });
+  });
+
+  // Automix's analysis cache (IndexedDB 'vivi-automix', kept by automix/host.js
+  // in the extension's own origin, which this popup shares).
+  const automixCacheCount = document.getElementById('automixCacheCount');
+  const automixCacheClearBtn = document.getElementById('automixCacheClearBtn');
+  const withAnalysisStore = (mode, fn) => new Promise((resolve) => {
+    try {
+      const open = indexedDB.open('vivi-automix', 1);
+      open.onupgradeneeded = () => open.result.createObjectStore('analysis', { keyPath: 'fileKey' });
+      open.onerror = () => resolve(null);
+      open.onsuccess = () => {
+        const db = open.result;
+        try {
+          const tx = db.transaction('analysis', mode);
+          const req = fn(tx.objectStore('analysis'));
+          tx.oncomplete = () => { db.close(); resolve(req ? req.result : true); };
+          tx.onerror = tx.onabort = () => { db.close(); resolve(null); };
+        } catch { db.close(); resolve(null); }
+      };
+    } catch { resolve(null); }
+  });
+  const showAutomixCache = async () => {
+    if (!automixCacheCount) return;
+    const n = await withAnalysisStore('readonly', (s) => s.count());
+    automixCacheCount.textContent = n == null ? '' : `${n} song${n === 1 ? '' : 's'}`;
+    if (automixCacheClearBtn) automixCacheClearBtn.disabled = !n;
+  };
+  showAutomixCache();
+  automixCacheClearBtn?.addEventListener('click', async () => {
+    automixCacheClearBtn.disabled = true;
+    const ok = await withAnalysisStore('readwrite', (s) => { s.clear(); return null; });
+    // The analysis frames in open YouTube Music tabs clear theirs too, in case
+    // the browser keeps a separate copy for a frame inside a site. (A tab keeps
+    // the few songs it holds in memory until it is reloaded.)
+    chrome.storage.local.set({ automixCacheClearedAt: Date.now() });
+    if (automixCacheCount) automixCacheCount.textContent = ok ? 'cleared' : 'could not clear';
+    setTimeout(showAutomixCache, 1500);
+  });
+
   automixBarsSelect?.addEventListener('change', () => {
     const v = automixBarsSelect.value;
     chrome.storage.local.set({ automixBars: v === 'auto' ? 'auto' : (Number(v) || 8) });
@@ -1226,7 +1272,7 @@
       if (!granted) {
         spotifyConnectBtn.disabled = false;
         spotifyConnectBtn.textContent = 'Connect Spotify';
-        spotifyStatus.textContent = 'Spotify access was not allowed. Allow it to connect (about:addons → Vivimusic Web → Permissions).';
+        spotifyStatus.textContent = 'Spotify access was not allowed. Allow it to connect (about:addons → Vivimusic Web+ → Permissions).';
         return;
       }
       connectSpotify();

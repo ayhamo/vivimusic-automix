@@ -1,16 +1,24 @@
 /**
  * VIVIMUSIC WEB — automix.js  (content script, isolated world)
  *
- * Beat-aware transitions for crossfade.js. When a song is about to end
- * naturally, crossfade.js hands us the buffered outro as PCM. We run the
- * Beat This model (ONNX, on-device) over it to find tempo and downbeats, then
- * plan a blend that is a whole number of bars long (4 / 8 / 16) and starts
- * exactly on a downbeat of the outgoing song. crossfade.js does the audio.
+ * BitChord web's automix (web/app/src/playback/automix, itself AutoMix by
+ * David Finnegan), ported to the extension. AGPL-3.0-only, as BitChord's.
  *
- * The next song's audio is not available before it starts playing (YouTube
- * only serves signed stream URLs to its own player), so the incoming song is
- * not tempo-matched; the bar-aligned start and the bass swap are what make
- * the blend sound mixed rather than faded.
+ *   • Analysis (BitChord's analysis/analyzer.ts): the whole playing song and
+ *     the whole next song are downloaded (crossfade-page.js) and analysed one
+ *     at a time: essentia over the song at 44.1 kHz for tempo, key, energy,
+ *     intro and outro, and the Beat This! model over its first and last 59 s
+ *     for the grid it is mixed in on (head) and out on (tail).
+ *   • Planning (BitChord's engine/transition-scheduler.ts): a phrase-aligned
+ *     blend in the outgoing song's outro, the incoming song started on its
+ *     pre-full-energy phrase and time-stretched to the outgoing tempo (pitch
+ *     kept); a filter mix when the pair can't be beatmatched; AutoMix's plain
+ *     12-second crossfade when there is no grid. Times here are song seconds;
+ *     crossfade.js puts them on the audio clock and plays them.
+ *
+ *   • The loop mix (BitChord engine/loopMix.ts), when both songs have
+ *     instrumental bars to loop (the open-unmix vocal mask says where they
+ *     are sung); the planning is here, the stretch decks in crossfade.js.
  *
  * The model runs in a Worker inside a hidden extension frame (host.html):
  * Firefox refuses Workers started from a content script with an extension URL.
@@ -20,9 +28,10 @@
   if (window.__viviAutomix) return;
 
   const log = (...a) => console.log('%c[ViVi automix]', 'color:#ff4b8b', ...a);
-  const ANALYSIS_RATE = 22050;
   const HOST_ORIGIN = new URL(chrome.runtime.getURL('/')).origin;
-  const MAX_MIX_SEC = 30;
+  const ANALYSIS_SR = 44100;          // RhythmExtractor2013 assumes 44.1 kHz
+  const RETRY_FAILED_MS = 60000;      // a failed analysis is asked for again after this long
+  const KEEP_RESULTS = 12;
 
   let enabled = true;
   let barsSetting = 'auto';
@@ -37,6 +46,9 @@
       if ('automixBars' in ch) barsSetting = ch.automixBars.newValue === 'auto' ? 'auto' : (Number(ch.automixBars.newValue) || 8);
     });
   } catch { /* extension context gone */ }
+  // BitChord's AutoDJ.transitionBars (its setting's default is 16); the
+  // scheduler treats it as a maximum and shortens it for weaker grids.
+  const transitionBars = () => (barsSetting === 'auto' ? 16 : barsSetting);
 
   const live = { status: 'idle', bpm: null, conf: null, mix: null, updatedAt: 0 };
   const setStatus = (status, extra = {}) => Object.assign(live, { status, updatedAt: Date.now() }, extra);
@@ -80,125 +92,527 @@
     return frameReady.promise;
   }
 
-  // Mono, resampled to the model's 22.05 kHz.
-  async function toModelPcm(channels, sampleRate) {
-    const len = channels[0].length;
-    const mono = new Float32Array(len);
-    for (const ch of channels) for (let i = 0; i < len; i++) mono[i] += ch[i] / channels.length;
-    if (sampleRate === ANALYSIS_RATE) return mono;
-    const outLen = Math.max(1, Math.round(len * ANALYSIS_RATE / sampleRate));
-    const off = new OfflineAudioContext(1, outLen, ANALYSIS_RATE);
-    const buf = off.createBuffer(1, len, sampleRate);
-    buf.copyToChannel(mono, 0);
-    const src = off.createBufferSource();
-    src.buffer = buf;
-    src.connect(off.destination);
-    src.start();
-    return (await off.startRendering()).getChannelData(0);
-  }
-
-  // channels: Float32Array[] of the outro, starting at song time offsetSec.
-  async function analyzeTail(id, channels, sampleRate, offsetSec) {
-    setStatus('analyzing', { bpm: null, conf: null, mix: null });
-    await ensureFrame();
-    const samples = await toModelPcm(channels, sampleRate);
-    const fileKey = id + ':' + (++seq);
-    const result = await new Promise((resolve, reject) => {
-      pending.set(fileKey, { resolve, reject });
-      setTimeout(() => { if (pending.delete(fileKey)) reject(new Error('analysis timed out')); }, 30000);
-      frame.contentWindow.postMessage({ ch: 'vivi-automix', type: 'analyze', fileKey, samples, sampleRate: ANALYSIS_RATE, offsetSec }, HOST_ORIGIN, [samples.buffer]);
+  // ───────── the downloaded songs (crossfade-page.js) ─────────
+  const byteWaits = new Map();
+  window.addEventListener('message', (e) => {
+    const d = e.data;
+    if (e.source !== window || !d || d.ch !== 'vivi-xfade' || d.dir !== 'out' || d.type !== 'bytes') return;
+    const w = byteWaits.get(d.id);
+    if (!w) return;
+    byteWaits.delete(d.id);
+    if (d.ok && d.bytes) w.resolve({ bytes: d.bytes, musicVideo: !!d.musicVideo });
+    else w.reject(new Error(d.why || 'song not downloaded'));
+  });
+  function songBytes(id) {
+    return new Promise((resolve, reject) => {
+      byteWaits.get(id)?.reject(new Error('asked again'));
+      byteWaits.set(id, { resolve, reject });
+      window.postMessage({ ch: 'vivi-xfade', dir: 'in', type: 'bytes', id }, window.location.origin);
+      setTimeout(() => { if (byteWaits.get(id)?.resolve === resolve) { byteWaits.delete(id); reject(new Error('download timed out')); } }, 120000);
     });
-    const grid = result?.headBeats;
-    const bpm = Number(grid?.bpm || result?.bpm) || 0;
-    const conf = Number(result?.gridConfidence) || 0;
-    setStatus('analyzed', { bpm: bpm || null, conf });
-    return { bpm, conf, downbeats: Array.isArray(grid?.downbeats) ? grid.downbeats : [] };
   }
 
-  // The worker loads essentia and the ONNX model on its first analysis, which
-  // can take ~15 s. Run a throwaway analysis on near-silence mid-song so the real
-  // one near the end only does the work itself.
+  // ───────── analyzer (BitChord analysis/analyzer.ts) ─────────
+  // Sequential queue: one decoded song in memory at a time.
+  const results = new Map();
+  const status = new Map();
+  const failedAt = new Map();
+  let queue = [];
+  let running = false;
+
+  function request(id, urgent = false) {
+    if (!id || !enabled) return;
+    const known = status.get(id);
+    if (known === 'done' || known === 'analyzing') return;
+    if (known === 'error' && Date.now() - (failedAt.get(id) ?? 0) < RETRY_FAILED_MS) return;
+    if (known === 'pending') {
+      if (urgent) {
+        const at = queue.indexOf(id);
+        if (at > 0) queue.unshift(...queue.splice(at, 1));
+      }
+      return;
+    }
+    status.set(id, 'pending');
+    if (urgent) queue.unshift(id); else queue.push(id);
+    void run();
+  }
+
+  async function run() {
+    if (running) return;
+    running = true;
+    while (queue.length) {
+      const id = queue.shift();
+      if (status.get(id) !== 'pending') continue;
+      status.set(id, 'analyzing');
+      const started = performance.now();
+      try {
+        const a = await analyzeOne(id);
+        results.set(id, a);
+        while (results.size > KEEP_RESULTS) {
+          const old = results.keys().next().value;
+          results.delete(old);
+          status.delete(old);
+        }
+        status.set(id, 'done');
+        log(`analysis of ${id}${a.cached ? ' (saved)' : ''}${a.musicVideo ? ' (music video)' : ''}: ${a.bpm?.toFixed(1) ?? '?'} BPM (end ${a.tailGrid?.bpm?.toFixed(1) ?? '?'}), ${a.keyName ?? '?'}, grid ${a.gridConfidence.toFixed(2)} / end ${a.tailGrid?.gridConfidence?.toFixed(2) ?? '-'}, intro ends ${a.introEndSec?.toFixed(1) ?? '-'} s, outro from ${a.outroStartSec?.toFixed(1) ?? '-'} s, in ${Math.round(performance.now() - started)} ms`);
+      } catch (e) {
+        log('analysis of', id, 'failed:', e?.message || e);
+        failedAt.set(id, Date.now());
+        status.set(id, 'error');
+      }
+    }
+    running = false;
+  }
+
+  // A message to the analysis frame, answered by fileKey.
+  function askHost(msg, transfer = [], timeoutMs = 180000) {
+    const fileKey = msg.id + ':' + (++seq);
+    return new Promise((resolve, reject) => {
+      pending.set(fileKey, { resolve, reject });
+      setTimeout(() => { if (pending.delete(fileKey)) reject(new Error('analysis timed out')); }, timeoutMs);
+      frame.contentWindow.postMessage({ ch: 'vivi-automix', ...msg, fileKey }, HOST_ORIGIN, transfer);
+    });
+  }
+
+  // BitChord's analyzeOne. The frame decodes and analyses (off this page's
+  // main thread) and keeps the result; a song it has seen before answers at once.
+  async function analyzeOne(id) {
+    await ensureFrame();
+    const cached = await askHost({ type: 'cached', id }, [], 15000).catch(() => null);
+    if (cached) { cached.cached = true; return cached; }
+    const { bytes, musicVideo } = await songBytes(id);
+    const result = await askHost({ type: 'analyzeSong', id, bytes, musicVideo }, [bytes]);
+    if (!result) throw new Error('analysis failed');
+    return result;
+  }
+
+  // The decoded song for the loop mix (BitChord analyzer.audioBytes): its
+  // bytes again from the page, which keeps the last few downloaded songs.
+  const audioBytes = (id) => songBytes(id).then((r) => r.bytes);
+
+  // ───────── grid (BitChord engine/grid.ts) ─────────
+  const BEATS_PER_BAR = 4;
+  const BEATS_PER_PHRASE = 32;   // 8 bars
+
+  function gridOf(a) {
+    if (!a || !a.bpm || !a.beatIntervalSec || a.firstDownbeatSec == null) return null;
+    const beatSec = a.beatIntervalSec;
+    return { beatSec, barSec: beatSec * BEATS_PER_BAR, phraseSec: beatSec * BEATS_PER_PHRASE, downbeatSec: a.firstDownbeatSec, bpm: a.bpm };
+  }
+  // The analysis as the outgoing side sees it: its grid fields swapped for the tail grid.
+  function asOutgoing(a) {
+    if (a.tailGrid === undefined) return a;
+    const t = a.tailGrid;
+    return t
+      ? { ...a, bpm: t.bpm, beatIntervalSec: t.beatIntervalSec, firstDownbeatSec: t.firstDownbeatSec, gridConfidence: t.gridConfidence }
+      : { ...a, beatIntervalSec: null, firstDownbeatSec: null, gridConfidence: 0 };
+  }
+  const phraseAtOrBefore = (g, t) => g.downbeatSec + Math.floor((t - g.downbeatSec) / g.phraseSec) * g.phraseSec;
+  const phraseAtOrAfter = (g, t) => g.downbeatSec + Math.ceil((t - g.downbeatSec) / g.phraseSec) * g.phraseSec;
+  const downbeatAtOrAfter = (g, t) => g.downbeatSec + Math.ceil((t - g.downbeatSec) / g.barSec) * g.barSec;
+
+  // ───────── transition planner (BitChord engine/transition-scheduler.ts) ─────────
+  const MIN_GRID_CONFIDENCE = 0.2;
+  const KILL_DB = -12;
+  const SHORT_BLEND_KILL_DB = -6;
+  const FULL_SWAP_MIN_BARS = 8;
+  const MAX_SLOW_DOWN = 0.1;
+  const MAX_SPEED_UP = 0.25;
+  const FILTER_MAX_BARS = 8;
+  const FALLBACK_SEC = 12;
+
+  function effectiveBlendBars(requested, fromConf, toConf) {
+    const conf = Math.min(fromConf, toConf);
+    if (conf >= 0.6) return requested;
+    if (conf >= 0.45) return Math.min(requested, 8);
+    return Math.min(requested, 4);
+  }
+  const stretchAllowed = (rate) => (rate >= 1 ? rate - 1 <= MAX_SPEED_UP : 1 - rate <= MAX_SLOW_DOWN);
+  // Fold half/double time so the stretch stays near 1 (64 vs 128 BPM still beat-locks).
+  const foldRate = (raw) => [raw, raw / 2, raw * 2].reduce((best, r) => (Math.abs(r - 1) < Math.abs(best - 1) ? r : best));
+
+  // A song with no analysis: no grid, so the planner takes AutoMix's plain-crossfade fallback.
+  const stub = (id, durationSec) => ({
+    fileKey: id, durationSec, bpm: null, beatIntervalSec: null, firstDownbeatSec: null, gridConfidence: 0,
+    energy: 0.5, energyCurve: [], introEndSec: null, outroStartSec: null, stub: true,
+  });
+
+  /**
+   * The blend from the playing song into the next, in song seconds.
+   *   from, to: analyses (null: not analysed yet; then both are stubs, as BitChord does)
+   *   durationSec: the playing song's length as the player reports it
+   *   pos: where it is now; earliest: the first song time the blend can start
+   * Returns { style, mixOutTrackTime, durationSec, mixInTrackTime, rate, bars,
+   *   swapDb, barSec, bpm, reason, fallback } (durationSec is output seconds;
+   *   the outgoing song always plays at rate 1 here).
+   */
+  function plan({ fromId, toId, from, to, durationSec, pos, earliest }) {
+    const both = !!(from && to);
+    const cur = asOutgoing(both ? { ...from, durationSec } : stub(fromId, durationSec));
+    const next = both ? to : stub(toId, 0);
+    const bars = transitionBars();
+    const fromGrid = gridOf(cur);
+    const toGrid = gridOf(next);
+
+    if (!fromGrid || cur.gridConfidence < MIN_GRID_CONFIDENCE) {
+      return fallback(cur, next, earliest, both ? 'this song has no beat grid at its end' : 'songs not analysed in time');
+    }
+    if (!toGrid || next.gridConfidence < MIN_GRID_CONFIDENCE) return filterMix(cur, next, fromGrid, null, bars, pos, earliest, 'next song has no beat grid');
+
+    const rate = foldRate(fromGrid.bpm / toGrid.bpm);
+    if (!stretchAllowed(rate)) return filterMix(cur, next, fromGrid, toGrid, bars, pos, earliest, `tempos ${Math.round(Math.abs(rate - 1) * 100)}% apart`);
+    const effBars = effectiveBlendBars(bars, cur.gridConfidence, next.gridConfidence);
+    const dur = effBars * BEATS_PER_BAR * (60 / fromGrid.bpm);
+
+    // outgoing mix-out point
+    const outro = cur.outroStartSec ?? cur.durationSec;
+    let mixOut = phraseAtOrBefore(fromGrid, outro - dur);
+    mixOut = Math.min(mixOut, phraseAtOrBefore(fromGrid, cur.durationSec - dur - fromGrid.barSec));
+    if (mixOut < pos) mixOut = phraseAtOrAfter(fromGrid, earliest);   // too late for the natural point: the next phrase
+    if (mixOut < earliest) mixOut = downbeatAtOrAfter(fromGrid, earliest);
+    if (mixOut + dur > cur.durationSec - 0.3) return filterMix(cur, next, fromGrid, toGrid, bars, pos, earliest, 'too close to the end for a blend');
+
+    // incoming mix-in point: so that its pre-full-energy phrase lands at the blend's end
+    const introEnd = next.introEndSec ?? 0;
+    const fullEnergyPhrase = phraseAtOrAfter(toGrid, Math.max(introEnd, toGrid.downbeatSec));
+    let mixIn = fullEnergyPhrase - dur * rate;
+    if (mixIn < toGrid.downbeatSec) mixIn = toGrid.downbeatSec;
+
+    return {
+      style: 'blend', fallback: false, reason: null,
+      mixOutTrackTime: mixOut, durationSec: dur, mixInTrackTime: mixIn, rate,
+      bars: effBars, swapDb: effBars >= FULL_SWAP_MIN_BARS ? KILL_DB : SHORT_BLEND_KILL_DB,
+      barSec: fromGrid.barSec, bpm: fromGrid.bpm, inBpm: toGrid.bpm,
+    };
+  }
+
+  // The phone's DJ_FILTER: incoming on its own downbeat at its own tempo,
+  // low-passed; outgoing drains through a rising high-pass; bass swaps in one bar.
+  function filterMix(cur, next, fromGrid, toGrid, requested, pos, earliest, reason) {
+    let bars = Math.min(requested, FILTER_MAX_BARS);
+    let dur = bars * fromGrid.barSec;
+    const outro = cur.outroStartSec ?? cur.durationSec;
+    let mixOut = phraseAtOrBefore(fromGrid, outro - dur);
+    mixOut = Math.min(mixOut, phraseAtOrBefore(fromGrid, cur.durationSec - dur - fromGrid.barSec));
+    if (mixOut < pos) mixOut = phraseAtOrAfter(fromGrid, earliest);
+    if (mixOut < earliest) mixOut = downbeatAtOrAfter(fromGrid, earliest);
+    // never past the outgoing song's end: shorten to the bars that still fit
+    const room = cur.durationSec - 0.3 - mixOut;
+    if (dur > room) {
+      bars = Math.max(1, Math.floor(room / fromGrid.barSec));
+      dur = bars * fromGrid.barSec;
+    }
+    if (room < fromGrid.barSec) return fallback(cur, next, earliest, reason);
+    const mixIn = toGrid ? toGrid.downbeatSec : Math.min(next.introEndSec ?? 0, 1);
+    return {
+      style: 'filter', fallback: false, reason,
+      mixOutTrackTime: mixOut, durationSec: dur, mixInTrackTime: mixIn, rate: 1,
+      bars, swapDb: KILL_DB, barSec: fromGrid.barSec, bpm: fromGrid.bpm, inBpm: toGrid?.bpm ?? null,
+    };
+  }
+
+  // AutoMix's fallback: a plain 12 s equal-power fade, no beatmatch, no EQ.
+  // BitChord: it lands on the last 12 s before the outro (the end, for a stub).
+  function fallback(cur, next, earliest, reason) {
+    const target = (cur.outroStartSec ?? cur.durationSec) - FALLBACK_SEC;
+    const mixOut = Math.max(earliest, target);
+    const dur = Math.max(0, Math.min(FALLBACK_SEC, cur.durationSec - 0.3 - mixOut));
+    return {
+      style: 'crossfade', fallback: true, reason,
+      mixOutTrackTime: mixOut, durationSec: dur, mixInTrackTime: next.introEndSec ?? 0, rate: 1,
+      bars: 0, swapDb: 0, barSec: 0, bpm: null, inBpm: null,
+    };
+  }
+
+  // ───────── the loop mix (BitChord engine/loopMix.ts) ─────────
+  // The outgoing song hands over to a stretch deck at the start of an
+  // instrumental loop near its end and loops it. The incoming song comes in
+  // on its own instrumental loop, bass cut, at the outgoing tempo. One master
+  // tempo then ramps from the outgoing song's BPM to the incoming one's, both
+  // decks following it beat by beat. The bass swaps, the outgoing loop drains
+  // through a rising high-pass, the incoming loop lets go into the rest of
+  // its song at its own tempo, and its player takes over two bars later.
+  // Where a song is sung comes from its synced lyrics (the lyrics panel's
+  // own lookup), as in BitChord; the vocal mask is the fallback for a song
+  // without them.
+  const LOOP_BARS = 4;
+  const LOOP_LENGTHS = [4, 2, 1];
+  const ENTER_BARS = 4;
+  const SETTLE_BARS = 2;
+  const MAX_BPM_PER_BAR = 2.5;
+  const MIN_RAMP_BARS = 2;
+  const MAX_RAMP_BARS = 24;
+  const VOCAL_ACTIVE = 0.25;
+  const MAX_SUNG_SHARE = 0.03;
+  const MAX_SUNG_RUN_SEC = 0.2;
+  // Clear time before a loop: from lyrics (which time each line's end) a short
+  // guard; from the mask, a whole beat. A synced line is padded at its start
+  // (the breath before it) and its end (the voice's tail and reverb).
+  const LYRIC_GUARD_SEC = 0.3;
+  const LYRIC_LEAD_SEC = 0.15;
+  const LYRIC_TAIL_SEC = 0.35;
+  const LYRICS_WAIT_MS = 8000;
+  const MIN_LOUDNESS = 0.6;
+  const OUT_SEARCH_SEC = 60;
+  const IN_SEARCH_SEC = 45;
+  const OUT_REGION_SEC = OUT_SEARCH_SEC + 5;
+  const IN_REGION_SEC = IN_SEARCH_SEC + 40;
+  const LOOP_PREPARE_SEC = OUT_SEARCH_SEC + 40;   // prepared (bars chosen, decks loaded) from this far before the end
+  const LOOP_SETUP_SEC = 15;                      // the outgoing loop starts at least this far ahead of the playhead
+  const HANDOVER_SEC = 0.025;                     // identical audio crossed this quickly is heard as one
+  const BASS_CUT_DB = -18;
+
+  /**
+   * The bars to loop on each side; null when there is no usable grid or a
+   * music video, and { none: why } when a side has no instrumental bars (a
+   * sung word is never looped). [out] is the outgoing song as asOutgoing() gives it;
+   * [sung] is each song's sung spans from its synced lyrics, when it has them.
+   */
+  function planLoopMix(out, outBuffer, inn, inBuffer, earliestOutSec, sung = {}) {
+    if (!out.beatIntervalSec || out.firstDownbeatSec == null || !out.bpm) return null;
+    if (!inn.beatIntervalSec || inn.firstDownbeatSec == null || !inn.bpm) return null;
+    // A music video's audio rarely matches the song's: nothing vouches for its bars.
+    if (out.musicVideo || inn.musicVideo) return null;
+    const outBar = out.beatIntervalSec * 4;
+    const inBar = inn.beatIntervalSec * 4;
+
+    // outgoing: the latest instrumental loop that ends before the song does
+    const outEnd = Math.min(out.durationSec - 0.5, outBuffer.duration - 0.1);
+    const outFirst = Math.max(earliestOutSec, out.durationSec - OUT_SEARCH_SEC);
+    const outPick = firstClean((bars) => loopsBetween(out.tailBeats, out.firstDownbeatSec, outBar, outFirst, outEnd, bars).reverse(), outBuffer, out.vocals ?? [], sung.out ?? null, out.beatIntervalSec);
+    if (!outPick) return { none: 'no instrumental bars near the end of the playing song' };
+    // incoming: the earliest instrumental loop in its opening
+    const inEnd = Math.min(IN_SEARCH_SEC + LOOP_BARS * inBar, inBuffer.duration - 20);
+    const inPick = firstClean((bars) => loopsBetween(inn.headBeats, inn.firstDownbeatSec, inBar, 0, inEnd, bars), inBuffer, inn.vocals ?? [], sung.in ?? null, inn.beatIntervalSec);
+    if (!inPick) return { none: 'no instrumental bars in the opening of the next song' };
+    // a loop's own length is its tempo: its beats exactly, bar line to bar line
+    const outBeat = (outPick.end - outPick.start) / (outPick.bars * 4);
+    const inBeat = (inPick.end - inPick.start) / (inPick.bars * 4);
+    const outBpm = 60 / outBeat;
+    const inBpm = 60 / inBeat;
+    const fold = [1, 2, 0.5].reduce((best, f) => (Math.abs(Math.log(inBpm / f / outBpm)) < Math.abs(Math.log(inBpm / best / outBpm)) ? f : best));
+    const target = inBpm / fold;
+    const rampBars = Math.min(MAX_RAMP_BARS, Math.max(MIN_RAMP_BARS, Math.ceil(Math.abs(target - outBpm) / MAX_BPM_PER_BAR)));
+    // the incoming loop lets go only at its own loop boundary: whole incoming loops
+    const inLoopOutBars = inPick.bars / fold;
+    const totalBars = Math.ceil((ENTER_BARS + rampBars + 2) / inLoopOutBars) * inLoopOutBars;
+    const pick = (key, p, beatSec, bpm) => ({ key, loop: [p.start, p.end], bars: p.bars, beatSec, bpm, vocal: p.vocal, checkedBy: p.checkedBy });
+    return {
+      out: pick(out.fileKey, outPick, outBeat, outBpm),
+      in: pick(inn.fileKey, inPick, inBeat, inBpm),
+      fold, enterBars: ENTER_BARS, rampBars, exitBars: totalBars - ENTER_BARS - rampBars, totalBars,
+    };
+  }
+
+  // [bars]-bar loops in [from, to]: on the model's own downbeats where it has
+  // them (the seam is the music's bar line), else AutoMix's constant grid.
+  function loopsBetween(side, anchor, bar, from, to, bars) {
+    const loops = [];
+    if (side && side.downbeats.length >= bars + 1) {
+      const beat = 60 / side.bpm;
+      const downs = side.downbeats;
+      for (const start of downs) {
+        if (start < from) continue;
+        const target = start + bars * 4 * beat;
+        const end = downs.reduce((best, d) => (Math.abs(d - target) < Math.abs(best - target) ? d : best), downs[0]);
+        if (Math.abs(end - target) > beat / 4 || end > to) continue;   // a missed or doubled downbeat in between
+        loops.push({ start, end });
+      }
+      if (loops.length) return loops;
+    }
+    if (to < from) return loops;
+    const len = bars * bar;
+    for (let t = anchor + Math.ceil((from - anchor) / bar) * bar; t + len <= to; t += bar) loops.push({ start: t, end: t + len });
+    return loops;
+  }
+
+  // The first loop (in the order given) that grooves and is instrumental:
+  // with synced lyrics, no sung line overlaps it or the guard before it;
+  // without them, the vocal mask covers it and finds almost nothing sung in
+  // it or the beat before it.
+  function firstClean(candidates, buffer, vocals, sung, beatSec) {
+    for (const bars of LOOP_LENGTHS) {
+      const loops = candidates(bars);
+      if (!loops.length) continue;
+      // loudness of the quietest bar against the stretch's own: no fade-out tail, no breakdown
+      const barLoud = (l) => Math.min(...Array.from({ length: bars }, (_, b) => rms(buffer, l.start + (b * (l.end - l.start)) / bars, l.start + ((b + 1) * (l.end - l.start)) / bars)));
+      const louds = loops.map(barLoud);
+      const typical = [...louds].sort((a, b) => a - b)[Math.floor(louds.length * 0.6)] ?? 0;
+      for (let i = 0; i < loops.length; i++) {
+        const l = loops[i];
+        if (louds[i] < typical * MIN_LOUDNESS || louds[i] <= 0.01) continue;
+        if (sung) {
+          const from = l.start - LYRIC_GUARD_SEC;
+          if (sung.some(([a, b]) => a < l.end && b > from)) continue;
+          return { ...l, bars, vocal: 0, checkedBy: 'lyrics' };
+        }
+        const m = maskStats(vocals, l.start - beatSec, l.end);
+        if (!m || m.share > MAX_SUNG_SHARE || m.longestRunSec > MAX_SUNG_RUN_SEC) continue;
+        return { ...l, bars, vocal: m.share, checkedBy: 'mask' };
+      }
+    }
+    return null;
+  }
+
+  // How much of [from, to) the vocal mask calls sung, and its longest sung run; null when it covers under 80%.
+  function maskStats(windows, from, to) {
+    let sung = 0, n = 0, covered = 0, run = 0, longest = 0, fps = 1;
+    for (const w of windows) {
+      const a = Math.max(0, Math.ceil((from - w.startSec) * w.fps));
+      const b = Math.min(w.curve.length, Math.floor((to - w.startSec) * w.fps));
+      for (let i = a; i < b; i++) {
+        n++;
+        if (w.curve[i] > VOCAL_ACTIVE) { sung++; run++; longest = Math.max(longest, run); } else run = 0;
+      }
+      if (b > a) { covered += (b - a) / w.fps; fps = w.fps; }
+    }
+    return n && covered >= (to - from) * 0.8 ? { share: sung / n, longestRunSec: longest / fps } : null;
+  }
+
+  // BitChord sungSpansFromLines: each sung line, padded; a line with no known
+  // end (plain line sync times only its start) lasts to the next, 10 s at most.
+  function sungSpansFromLines(lines) {
+    const spans = [];
+    const sorted = [...lines].filter((l) => Number.isFinite(l?.start)).sort((a, b) => a.start - b.start);
+    sorted.forEach((l, i) => {
+      const words = Array.isArray(l.words) ? l.words.filter((w) => Number.isFinite(w?.end)) : [];
+      if (!String(l.text ?? '').trim() && !words.length) return;   // a gap line
+      const start = l.start / 1000;
+      const next = sorted.slice(i + 1).find((n) => n.start > l.start)?.start;
+      const end = words.length
+        ? Math.max(...words.map((w) => w.end)) / 1000
+        : Math.min(start + 10, (Number.isFinite(l.end) && l.end > l.start ? l.end : next ?? l.start + 10000) / 1000);
+      spans.push([start - LYRIC_LEAD_SEC, Math.max(end, start) + LYRIC_TAIL_SEC]);
+    });
+    return spans;
+  }
+
+  // Song details from YouTube Music's queue (crossfade-page.js), for the lyrics lookup.
+  const metaWaits = new Map();
+  window.addEventListener('message', (e) => {
+    const d = e.data;
+    if (e.source !== window || !d || d.ch !== 'vivi-xfade' || d.dir !== 'out' || d.type !== 'meta') return;
+    const w = metaWaits.get(d.id);
+    if (!w) return;
+    metaWaits.delete(d.id);
+    w(d.meta || null);
+  });
+  function songMeta(id) {
+    return new Promise((resolve) => {
+      metaWaits.get(id)?.(null);
+      metaWaits.set(id, resolve);
+      window.postMessage({ ch: 'vivi-xfade', dir: 'in', type: 'meta', id }, window.location.origin);
+      setTimeout(() => { if (metaWaits.get(id) === resolve) { metaWaits.delete(id); resolve(null); } }, 3000);
+    });
+  }
+
+  // BitChord state/player.ts sungSpans: where [id] is sung, from its synced
+  // lyrics (the lyrics panel's lookup and cache); null when it has none, or
+  // they don't come in time: the loop mix then goes by the vocal mask.
+  async function sungSpans(id) {
+    try {
+      const L = window.__viviLyrics;
+      if (!L?.fetchBestLyrics) return null;
+      const meta = await songMeta(id);
+      if (!meta?.song) return null;
+      const track = { song: meta.song, artist: meta.artist || '', album: meta.album || '', duration: meta.duration || null, videoId: id };
+      // the providers the listener turned away from for this song stay out, as in the lyrics panel
+      const excludeKeys = await window.__viviLyricsUI?.loadExcludedProviders?.(track).catch?.(() => []) ?? [];
+      const found = await Promise.race([
+        L.fetchBestLyrics(track, { excludeKeys }).catch(() => null),
+        new Promise((r) => setTimeout(() => r(null), LYRICS_WAIT_MS)),
+      ]);
+      if (!found || found.mode === 'plain' || !Array.isArray(found.lines) || !found.lines.length) return null;
+      const spans = sungSpansFromLines(found.lines);
+      return spans.length ? spans : null;
+    } catch { return null; }
+  }
+
+  function rms(buffer, from, to) {
+    const data = buffer.getChannelData(0);
+    const a = Math.max(0, Math.floor(from * buffer.sampleRate));
+    const b = Math.min(data.length, Math.floor(to * buffer.sampleRate));
+    let ss = 0, n = 0;
+    for (let i = a; i < b; i += 16) { ss += data[i] * data[i]; n++; }
+    return n ? Math.sqrt(ss / n) : 0;
+  }
+
+  /**
+   * The whole mix on one beat clock from [t0] (the audio time the outgoing
+   * song reaches its loop start): every deck change, and the times the
+   * player needs (scheduleLoopMix, without the decks: crossfade.js posts them).
+   */
+  function loopSchedule(plan, t0) {
+    const { out, in: inn, fold } = plan;
+    const beats = plan.totalBars * 4;
+    const settleBeats = Math.round((SETTLE_BARS * 4) / fold);
+    const rampFrom = plan.enterBars * 4;
+    const rampTo = (plan.enterBars + plan.rampBars) * 4;
+    const target = inn.bpm / fold;
+    const tempo = (k) => (k < rampFrom ? out.bpm : k >= rampTo ? target : out.bpm + ((target - out.bpm) * (k - rampFrom + 0.5)) / (rampTo - rampFrom));
+    const beatTimes = [t0];
+    for (let k = 0; k < beats + settleBeats; k++) beatTimes.push(beatTimes[k] + 60 / tempo(k));
+    const outLoopBeats = out.bars * 4;
+    const inLoopBeats = inn.bars * 4;
+    const inPerBeat = fold * inn.beatSec;   // incoming track seconds per outgoing beat
+    const outChanges = [], inChanges = [];
+    for (let k = 0; k < beats; k++) {
+      const t = beatTimes[k], T = tempo(k);
+      outChanges.push({ output: t, input: out.loop[0] + (k % outLoopBeats) * out.beatSec, rate: (T * out.beatSec) / 60, active: true, loop: out.loop });
+      inChanges.push({ output: t, input: inn.loop[0] + ((k * fold) % inLoopBeats) * inn.beatSec, rate: (T * inPerBeat) / 60, active: true, loop: inn.loop });
+    }
+    const releaseAt = beatTimes[beats];
+    outChanges.push({ output: releaseAt + 0.05, input: out.loop[0], rate: 1, active: false, loop: null });
+    inChanges.push({ output: releaseAt, input: inn.loop[1], rate: 1, active: true, loop: null });
+    const elementAt = beatTimes[beats + settleBeats];
+    const elementTrackTime = inn.loop[1] + (elementAt - releaseAt);
+    inChanges.push({ output: elementAt + 0.1, input: elementTrackTime + 0.1, rate: 1, active: false, loop: null });
+    const midBeat = Math.round((rampFrom + rampTo) / 2);
+    return {
+      t0, beatTimes, outChanges, inChanges, releaseAt, elementAt, elementTrackTime,
+      enterEnd: beatTimes[rampFrom], rampEnd: beatTimes[rampTo],
+      mid: beatTimes[midBeat], bar: 4 * (60 / tempo(midBeat)),
+      handoffAt: beatTimes[midBeat],
+      HANDOVER_SEC, BASS_CUT_DB,
+    };
+  }
+
+  // The model loads on the first analysis (~1-15 s); run a throwaway one
+  // early so the first real song only does its own work.
   let warm = null;
   function warmup() {
     if (warm || !enabled || frameDead) return;
     warm = (async () => {
       const t0 = performance.now();
       await ensureFrame();
-      // Faint noise rather than digital silence, so no analysis step divides by zero.
-      const samples = new Float32Array(ANALYSIS_RATE * 4);
+      const samples = new Float32Array(ANALYSIS_SR * 4);
       for (let i = 0; i < samples.length; i++) samples[i] = (Math.random() - 0.5) * 1e-3;
       const fileKey = 'warmup:' + (++seq);
       await new Promise((resolve) => {
         pending.set(fileKey, { resolve, reject: resolve });
         setTimeout(() => { if (pending.delete(fileKey)) resolve(); }, 60000);
-        frame.contentWindow.postMessage({ ch: 'vivi-automix', type: 'analyze', fileKey, samples, sampleRate: ANALYSIS_RATE, offsetSec: 0 }, HOST_ORIGIN, [samples.buffer]);
+        frame.contentWindow.postMessage({ ch: 'vivi-automix', type: 'analyze', fileKey, samples, sampleRate: ANALYSIS_SR, offsetSec: 0 }, HOST_ORIGIN, [samples.buffer]);
       });
       log('analysis model loaded in', Math.round(performance.now() - t0), 'ms');
     })().catch((e) => { warm = null; log('warm-up failed:', e?.message || e); });
   }
 
-  /**
-   * Pick bar count and the downbeat the blend starts on.
-   * songEnd: song duration (s). earliest: first song time we could still start at.
-   * Returns { bars, mixSec, startAt, bpm, conf } or null (use a plain crossfade).
-   */
-  function planMix(analysis, songEnd, earliest) {
-    const { bpm, conf, downbeats } = analysis || {};
-    if (!bpm || bpm < 40 || bpm > 240 || conf < 0.2 || !downbeats.length) {
-      setStatus('fallback', { mix: null, reason: 'weak beat grid' });
-      return null;
-    }
-    // Beat trackers often lock onto half (or double) time on dance music:
-    // a 128 BPM track reads as 64. Fold the tempo into 90–180 BPM. At half
-    // time each detected "bar" spans two real bars, so the missing downbeats
-    // are filled in between the detected ones.
-    let tempo = bpm, split = 1;
-    while (tempo < 90) { tempo *= 2; split *= 2; }
-    while (tempo > 180) tempo /= 2;
-    const barSec = 240 / tempo;
-    let detected = [...downbeats].sort((x, y) => x - y);
-    if (tempo < bpm) detected = detected.filter((_, i) => i % 2 === 0);   // double time: every other one
-    const grid = [];
-    detected.forEach((t, i) => {
-      grid.push(t);
-      const next = detected[i + 1];
-      if (next != null && split > 1) for (let k = 1; k < split; k++) grid.push(t + (next - t) * k / split);
-    });
-    // ...and continued on the bar grid to the end of the song.
-    for (let t = grid[grid.length - 1] + barSec; t < songEnd; t += barSec) grid.push(t);
-
-    let bars = barsSetting === 'auto' ? (conf >= 0.7 ? 16 : conf >= 0.45 ? 8 : 4) : barsSetting;
-    if (conf < 0.45) bars = Math.min(bars, 4);
-    else if (conf < 0.6) bars = Math.min(bars, 8);
-    while (bars > 4 && bars * barSec > MAX_MIX_SEC) bars /= 2;
-
-    // Latest downbeat that still lets the whole blend finish before the end;
-    // if the chosen length does not fit any more, try shorter ones.
-    let startAt = null, mixSec = 0;
-    for (; bars >= 4; bars /= 2) {
-      mixSec = bars * barSec;
-      const latest = songEnd - mixSec - 0.3;
-      startAt = grid.filter((t) => t >= earliest && t <= latest).pop() ?? null;
-      if (startAt != null) break;
-    }
-    if (startAt == null) {
-      setStatus('fallback', { mix: null, reason: 'no downbeat left before the end' });
-      return null;
-    }
-    const mix = { bars, mixSec, startAt, bpm: tempo, conf };
-    setStatus('ready', { mix });
-    log(`planned ${bars} bars (${mixSec.toFixed(1)} s) at ${tempo.toFixed(1)} BPM${tempo !== bpm ? ` (detected ${bpm.toFixed(1)})` : ''}, starting on the downbeat at ${startAt.toFixed(2)} s (grid confidence ${conf.toFixed(2)})`);
-    return mix;
-  }
-
   window.__viviAutomix = {
     isEnabled: () => enabled,
     getBars: () => barsSetting,
-    analyzeTail,
-    planMix,
+    request,
+    get: (id) => results.get(id) ?? null,
+    statusOf: (id) => status.get(id) ?? null,
+    plan,
+    asOutgoing,
+    gridOk: (a) => !!gridOf(a) && a.gridConfidence >= MIN_GRID_CONFIDENCE,
+    audioBytes,
+    planLoopMix,
+    sungSpans,
+    loopSchedule,
+    LOOP: { OUT_REGION_SEC, IN_REGION_SEC, LOOP_PREPARE_SEC, LOOP_SETUP_SEC },
     warmup,
     setStatus,
     getLiveState: () => ({ ...live }),
-    MAX_MIX_SEC,
   };
 })();

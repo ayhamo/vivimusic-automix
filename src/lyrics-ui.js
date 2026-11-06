@@ -1760,5 +1760,5 @@
   document.addEventListener('timeupdate', requestLyricsTick, true);
   document.addEventListener('visibilitychange', requestLyricsTick);
 
-  window.__viviLyricsUI = { handleTrack, setSponsorOffset };
+  window.__viviLyricsUI = { handleTrack, setSponsorOffset, loadExcludedProviders };
 })();

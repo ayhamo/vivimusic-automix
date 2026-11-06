@@ -4,7 +4,7 @@
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <link rel="stylesheet" href="lyrics-fonts.css">
-  <title>Vivimusic Web</title>
+  <title>Vivimusic Web+</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -1132,10 +1132,10 @@
   <!-- Header -->
   <div class="header">
     <div class="logo-wrap">
-      <img src="../icons/icon128.png" alt="Vivimusic Web" />
+      <img src="../icons/icon128.png" alt="Vivimusic Web+" />
     </div>
     <div class="brand">
-      <h1>Vivimusic Web</h1>
+      <h1>Vivimusic Web+</h1>
       <p>The most powerful &amp; feature rich extension ever created for YouTube Music.</p>
     </div>
     <button class="announcement-button" type="button" aria-label="Announcements" title="Announcements">
@@ -1295,7 +1295,7 @@
           <span class="slider"></span>
         </label>
       </div>
-      <p class="theme-sub" style="margin-top:2px;">Needs Crossfade on. When a song ends on its own, the on-device Beat This model finds the tempo and downbeats of its outro, and the blend starts on a downbeat and lasts a whole number of bars (up to 30 s), with a bass swap halfway. If the beat grid is unclear it uses the normal crossfade length.</p>
+      <p class="theme-sub" style="margin-top:2px;">Needs Crossfade on. BitChord's automix: the playing and the next song are downloaded and analysed on your device (tempo, downbeats, intro, outro, where it is sung). When a song ends on its own it loops an instrumental bar into the next song, or blends on a phrase with the next song matched to its tempo, or uses a filter mix or a 12 s crossfade when the pair can't be beatmatched.</p>
       <div class="kawarp-slider-row" id="automixBarsRow" style="margin-top:4px;">
         <div class="kw-label-row"><span>Automix transition bars</span><span class="kw-val" id="automixBarsVal">Auto adaptive</span></div>
         <select id="automixBarsSelect" style="width:100%;background:rgba(255,255,255,0.06);color:var(--text-1);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:5px 8px;font-size:12.5px;margin-top:4px;">
@@ -1303,8 +1303,22 @@
           <option value="4">4 bars (Quick blend)</option>
           <option value="8">8 bars (Standard phrase)</option>
           <option value="16">16 bars (Extended club mix)</option>
+          <option value="32">32 bars (Long blend)</option>
         </select>
       </div>
+      <div class="row" style="margin-top:6px;">
+        <span class="row-label">Prefer music-only version</span>
+        <label class="switch">
+          <input type="checkbox" id="preferMusicOnlyToggle"/>
+          <span class="slider"></span>
+        </label>
+      </div>
+      <p class="theme-sub" style="margin-top:2px;">Music videos play as their song: YouTube Music's Song / Video switch is set to Song whenever it shows Video. Switch a video back by hand and it stays a video.</p>
+      <div class="row" style="margin-top:6px;">
+        <span class="row-label">Saved song analyses <span class="kw-val" id="automixCacheCount" style="margin-left:4px;"></span></span>
+        <button type="button" id="automixCacheClearBtn" class="clear-btn">Clear</button>
+      </div>
+      <p class="theme-sub" style="margin-top:2px;">Each analysed song is kept on your device so it is never analysed twice. Clearing frees that space; songs are analysed again as they play.</p>
       <div class="row" style="margin-top:6px; padding-top:6px; border-top:1px solid rgba(255,255,255,0.08);">
         <span class="row-label">Stats for Nerds Overlay <span class="beta-tag" style="background:rgba(255,255,255,0.15);color:#fff;">HUD</span></span>
         <label class="switch">

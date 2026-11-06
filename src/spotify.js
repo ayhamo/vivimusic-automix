@@ -591,7 +591,7 @@ async function spotifyConnectFromBrowser() {
     const allowed = await chrome.permissions.contains({ origins: ['https://open.spotify.com/*'] });
     if (!allowed) {
       console.warn('[Vivi Spotify] no host permission for open.spotify.com');
-      return spotifyJsonError('Vivimusic Web is not allowed to access Spotify. Allow it in about:addons → Vivimusic Web → Permissions, then press Connect again.');
+      return spotifyJsonError('Vivimusic Web is not allowed to access Spotify. Allow it in about:addons → Vivimusic Web+ → Permissions, then press Connect again.');
     }
   } catch {}
   // 1. First, check if sp_dc is ALREADY available right now in browser cookies!

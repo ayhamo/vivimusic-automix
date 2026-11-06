@@ -11,6 +11,12 @@
  *      and posts it to crossfade.js (the isolated-world half).
  *   3. Reports a little player state (video id, ad flag, repeat mode) and
  *      can press "next".
+ *   4. For automix, downloads the whole current and next song through an app
+ *      client (VISIONOS, with fallbacks; the web player only gets ~50 s ahead,
+ *      often too late for the outro), as BitChord does. The current song's
+ *      outro is decoded from that copy, and both files go to automix for
+ *      BitChord's analysis. It also reports which song the queue plays next
+ *      and can seek, pause and resume the player for the blend.
  *
  * Talking to crossfade.js happens over window.postMessage on one channel.
  */
@@ -142,6 +148,275 @@
 
   function dropAll() {
     for (const s of sinks) { s.parts = []; s.bytes = 0; }
+    files.clear();
+  }
+
+  // ───────────────────────── whole-song prefetch ─────────────────────────
+  // The web player is only ever sent ~50 s beyond what has played, so the
+  // outro automix needs is often not there in time. Asked as one of YouTube's
+  // app clients instead, it returns a plain stream URL (no attestation),
+  // which we download in full right after the song starts, like BitChord.
+  // Same-origin call from the page: an extension Origin gets a 403 here.
+  //
+  // Measured 6 Nov 2026: VISIONOS URLs serve the whole file, any range.
+  // ANDROID_VR URLs serve ranges of at most 512 KB and refuse every byte
+  // past the first ~1 MB; it stays last in case that cap is lifted. IOS and
+  // ANDROID only answer with SABR now, the music/creator apps want a login.
+  //
+  // Fallbacks, in order: each client in turn; for each, the Opus file then
+  // the AAC one; every URL is probed at its end first (where a capped URL
+  // refuses), so a dead client costs one small request; a URL refused
+  // mid-download is resolved once more; network errors are retried with a
+  // backoff; the file must decode before it counts. crossfade.js asks once
+  // more later in the song if all of that failed, and the web player's own
+  // buffer stays the last resort when automix asks for the outro.
+  const VISION = {
+    clientName: 'VISIONOS',
+    deviceMake: 'Apple',
+    deviceModel: 'RealityDevice14,1',
+    osName: 'visionOS',
+    osVersion: '1.3.21O771',
+    userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15',
+  };
+  const CLIENTS = [
+    { name: 'VISIONOS 0.1', range: 2 * 1024 * 1024, client: { ...VISION, clientVersion: '0.1' } },
+    { name: 'VISIONOS 1.02', range: 2 * 1024 * 1024, client: { ...VISION, clientVersion: '1.02' } },
+    {
+      name: 'ANDROID_VR',
+      range: 512 * 1024,
+      client: {
+        clientName: 'ANDROID_VR',
+        clientVersion: '1.65.10',
+        deviceMake: 'Oculus',
+        deviceModel: 'Quest 3',
+        androidSdkVersion: 32,
+        osName: 'Android',
+        osVersion: '12L',
+        userAgent: 'com.google.android.apps.youtube.vr.oculus/1.65.10 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip',
+      },
+    },
+  ];
+  const PROBE_BYTES = 64 * 1024;
+  // id -> { id, state: loading|ready|failed, file, init, segs, why, done }:
+  // the playing song and the next one (BitChord keeps a few around too).
+  const files = new Map();
+  const MAX_FILES = 3;
+  let visitorFromReply = '';            // when the page has no visitor id of its own
+
+  const cfg = (k) => { try { return window.ytcfg?.get?.(k); } catch { return undefined; } };
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const refused = (msg) => Object.assign(new Error(msg), { refused: true });
+
+  async function callPlayer(id, client, visitor) {
+    const res = await fetch('/youtubei/v1/player?prettyPrint=false', {
+      method: 'POST',
+      credentials: 'omit',   // the app clients don't take the web session
+      headers: { 'Content-Type': 'application/json', ...(visitor ? { 'X-Goog-Visitor-Id': visitor } : {}) },
+      body: JSON.stringify({
+        context: { client: { ...client, hl: cfg('HL') || 'en', gl: cfg('GL') || 'US', ...(visitor ? { visitorData: visitor } : {}) } },
+        videoId: id,
+        contentCheckOk: true,
+        racyCheckOk: true,
+      }),
+    });
+    if (!res.ok) throw new Error('player HTTP ' + res.status);
+    return res.json();
+  }
+
+  // Plain audio formats for `id` as `client` sees it: the best Opus, then the best AAC.
+  async function resolveFormats(id, client) {
+    const visitor = cfg('VISITOR_DATA') || visitorFromReply;
+    let j = await callPlayer(id, client, visitor);
+    const fresh = decodeURIComponent(j.responseContext?.visitorData || '');
+    if (fresh && !visitorFromReply) visitorFromReply = fresh;
+    // Without a visitor id the app clients are asked to "confirm you're not a
+    // bot"; the refusal itself hands out one, so ask again with it.
+    if (j.playabilityStatus?.status !== 'OK' && !visitor && fresh) j = await callPlayer(id, client, fresh);
+    const ps = j.playabilityStatus || {};
+    if (ps.status !== 'OK') throw new Error('player ' + ps.status + (ps.reason ? ' (' + ps.reason + ')' : ''));
+    const audio = (j.streamingData?.adaptiveFormats || [])
+      .filter((f) => f.url && /^audio\//.test(f.mimeType || '') && Number(f.contentLength) > 0)
+      .sort((a, b) => (Number(b.bitrate) || 0) - (Number(a.bitrate) || 0));
+    const picks = [audio.find((f) => /webm/.test(f.mimeType)), audio.find((f) => /mp4/.test(f.mimeType))].filter(Boolean);
+    if (!picks.length) throw new Error('no plain audio URL');
+    // BitChord's rule: a picture wider than 1.2:1 is a music video; a square
+    // one is YouTube's art track for the song. The loop mix leaves videos alone.
+    const pictures = (j.streamingData?.adaptiveFormats || []).filter((f) => f.width && f.height);
+    const widest = pictures.sort((a, b) => b.width * b.height - a.width * a.height)[0];
+    const musicVideo = !!widest && widest.width / widest.height >= 1.2;
+    return picks.map((f) => ({ url: f.url, size: Number(f.contentLength), initEnd: Number(f.initRange?.end) || 0, itag: f.itag, musicVideo }));
+  }
+
+  // Bytes a..b of `url`; null when the song changed meanwhile. A refusal
+  // (403/404/410) throws at once with .refused; anything else is retried.
+  async function fetchRange(url, a, b, wanted) {
+    let last = '';
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if (attempt) await sleep(600 * 2 ** attempt);
+      if (!wanted()) return null;
+      try {
+        const res = await fetch(url + '&range=' + a + '-' + b, { credentials: 'omit' });
+        if (!wanted()) return null;
+        if (res.status === 403 || res.status === 404 || res.status === 410) throw refused('HTTP ' + res.status + ' at ' + Math.round(a / 1024) + ' KB');
+        if (!res.ok) { last = 'HTTP ' + res.status; continue; }
+        const u = new Uint8Array(await res.arrayBuffer());
+        if (u.byteLength === b - a + 1) return u;
+        last = 'short read at ' + Math.round(a / 1024) + ' KB';
+      } catch (e) {
+        if (e.refused) throw e;
+        last = String(e?.message || e);
+      }
+    }
+    throw new Error(last || 'network error');
+  }
+
+  async function download(f, step, wanted) {
+    const file = new Uint8Array(f.size);
+    for (let at = 0; at < f.size; at += step) {
+      const end = Math.min(f.size, at + step) - 1;
+      const r = await fetchRange(f.url, at, end, wanted);
+      if (!r) return null;
+      file.set(r, at);
+    }
+    return file;
+  }
+
+  // Index the file and make sure its outro actually decodes here.
+  async function prepareFile(file, initEnd) {
+    const init = initEnd + 1;
+    const webm = isWebm(file);
+    const tick = timescaleOf(file.subarray(0, init));
+    const segs = webm ? webmClusters(file, init) : mp4Fragments(file, init, tick);
+    if (!segs.length || !tick) throw new Error('could not index the file');
+    const p = { file, init, webm, tick, segs };
+    const { decoded } = await tailFromFile(p, segs[segs.length - 1].t - 1, 48000);
+    if (!(decoded.duration > 1)) throw new Error('outro decodes to nothing');
+    return p;
+  }
+
+  // One client: Opus then AAC. Each URL is probed at its end, then
+  // downloaded; one that passed the probe and is refused partway was likely
+  // stood down mid-download, so it gets one fresh URL for the same file.
+  async function tryClient(id, c, wanted) {
+    const formats = await resolveFormats(id, c.client);
+    let lastErr = null;
+    for (let f of formats) {
+      for (let pass = 0; pass < 2; pass++) {
+        let probed = false;
+        try {
+          if (!(await fetchRange(f.url, Math.max(0, f.size - PROBE_BYTES), f.size - 1, wanted))) return null;
+          probed = true;
+          const file = await download(f, c.range, wanted);
+          if (!file) return null;
+          return { ...(await prepareFile(file, f.initEnd)), itag: f.itag, size: f.size, musicVideo: f.musicVideo };
+        } catch (e) {
+          lastErr = e;
+          if (!wanted()) return null;
+          if (!e.refused || !probed || pass === 1) break;
+          const again = (await resolveFormats(id, c.client)).find((x) => x.itag === f.itag);
+          if (!again || again.size !== f.size) break;
+          f = again;
+        }
+      }
+    }
+    throw lastErr || new Error('no usable file');
+  }
+
+  async function prefetchSong(id, retry = false) {
+    if (!id) return;
+    const old = files.get(id);
+    if (old && !(retry && old.state === 'failed')) return;
+    const me = { id, state: 'loading' };
+    files.delete(id);
+    files.set(id, me);
+    while (files.size > MAX_FILES) files.delete(files.keys().next().value);
+    const t0 = performance.now();
+    const wanted = () => files.get(id) === me;
+    me.done = (async () => {
+      const errors = [];
+      for (const c of CLIENTS) {
+        try {
+          const got = await tryClient(id, c, wanted);
+          if (!got) return;   // the song changed
+          Object.assign(me, got, { state: 'ready', client: c.name });
+          log('prefetch: whole song', id, 'downloaded via', c.name, '| itag', got.itag, '|', (got.size / 1048576).toFixed(1), 'MB in', Math.round(performance.now() - t0), 'ms |', got.segs.length, 'segments' + (errors.length ? ' | after: ' + errors.join('; ') : ''));
+          break;
+        } catch (e) {
+          if (!wanted()) return;
+          errors.push(c.name + ': ' + (e?.message || e));
+        }
+      }
+      if (me.state !== 'ready') {
+        me.state = 'failed';
+        me.why = errors.join('; ');
+        log('prefetch failed' + (retry ? ' again' : '') + ':', me.why);
+      }
+      if (wanted()) say({ type: 'prefetch', id, state: me.state, why: me.why || '', client: me.client || '' });
+    })();
+  }
+
+  // EBML variable-length size at u[i]: { len, value } (value -1 = unknown size).
+  function vint(u, i) {
+    let len = 1, mask = 0x80;
+    while (len <= 8 && !(u[i] & mask)) { len++; mask >>= 1; }
+    if (len > 8) return null;
+    let v = u[i] & (mask - 1), allOnes = v === mask - 1;
+    for (let k = 1; k < len; k++) { v = v * 256 + u[i + k]; if (u[i + k] !== 0xff) allOnes = false; }
+    return { len, value: allOnes ? -1 : v };
+  }
+
+  // Byte ranges and start times of every Cluster in a whole WebM file.
+  function webmClusters(u, from) {
+    const segs = [];
+    let i = findTag(u, '\x1f\x43\xb6\x75', from);
+    const tick = timescaleOf(u.subarray(0, from));
+    while (i >= 0 && i + 12 < u.length) {
+      if (!(u[i] === 0x1f && u[i + 1] === 0x43 && u[i + 2] === 0xb6 && u[i + 3] === 0x75)) break;
+      const sz = vint(u, i + 4);
+      if (!sz || sz.value < 0) break;
+      const end = Math.min(u.length, i + 4 + sz.len + sz.value);
+      const t = segmentStart(u.subarray(i, Math.min(end, i + 64)), true, tick);
+      if (t == null) break;
+      segs.push({ t, start: i, end });
+      i = end;
+    }
+    return segs;
+  }
+
+  // Byte ranges (moof + its mdat) and start times of every fragment in a whole MP4 file.
+  function mp4Fragments(u, from, tick) {
+    const segs = [];
+    let i = from;
+    while (i + 8 <= u.length) {
+      let size = rd32(u, i);
+      const type = String.fromCharCode(u[i + 4], u[i + 5], u[i + 6], u[i + 7]);
+      if (size === 1) size = rd32(u, i + 8) * 4294967296 + rd32(u, i + 12);
+      else if (size === 0) size = u.length - i;
+      if (size < 8) break;
+      if (type === 'moof') {
+        const t = segmentStart(u.subarray(i, Math.min(u.length, i + size)), false, tick);
+        if (t != null) segs.push({ t, start: i, end: i + size });
+      } else if (type === 'mdat' && segs.length) {
+        segs[segs.length - 1].end = Math.min(u.length, i + size);
+      }
+      i += size;
+    }
+    return segs;
+  }
+
+  // Init segment + every cluster/fragment from the one covering song time
+  // `fromSec` to the end of the file, decoded. Times are song time.
+  async function tailFromFile(p, fromSec, sampleRate) {
+    let first = 0;
+    for (let i = 0; i < p.segs.length; i++) { if (p.segs[i].t <= fromSec) first = i; else break; }
+    const seg = p.segs[first];
+    const lastEnd = p.segs[p.segs.length - 1].end;
+    const blob = new Uint8Array(p.init + (lastEnd - seg.start));
+    blob.set(p.file.subarray(0, p.init), 0);
+    blob.set(p.file.subarray(seg.start, lastEnd), p.init);
+    const offline = new OfflineAudioContext(2, 1, sampleRate);
+    const decoded = await offline.decodeAudioData(blob.buffer);
+    return { decoded, start: seg.t };
   }
 
   // ───────────────────────── player access ─────────────────────────
@@ -166,7 +441,63 @@
       off: v.currentTime - pos,           // element timeline minus track timeline
       ad: p.classList.contains('ad-showing'),
       rep: document.querySelector('ytmusic-player-bar')?.repeatMode === 'ONE',
+      next: nextQueued(id),
     };
+  }
+
+  // The song the queue plays after `current` on its own: the next queue item,
+  // else the first autoplay suggestion, else (repeat all) the first item.
+  // Read from YouTube Music's own store; '' when there is none.
+  function nextQueued(current) {
+    try {
+      const q = document.querySelector('ytmusic-player-queue')?.getState?.().queue;
+      if (!q || !Array.isArray(q.items)) return '';
+      const variants = (it) => {
+        const w = it?.playlistPanelVideoWrapperRenderer;
+        const main = it?.playlistPanelVideoRenderer || w?.primaryRenderer?.playlistPanelVideoRenderer;
+        const other = w?.counterpart?.[0]?.counterpartRenderer?.playlistPanelVideoRenderer;
+        return [main?.videoId || '', other?.videoId || ''];
+      };
+      let at = q.items.findIndex((it) => variants(it).includes(current));
+      if (at < 0) at = Number(q.selectedItemIndex);
+      if (!(at >= 0)) return '';
+      // a song/video pair: the next one plays in the variant this one is in
+      const side = variants(q.items[at])[1] === current ? 1 : 0;
+      const pick = (it) => { const v = variants(it); return v[side] || v[0]; };
+      if (at + 1 < q.items.length) return pick(q.items[at + 1]);
+      if (q.repeatMode === 'ALL') return pick(q.items[0]);
+      if (q.autoplay && q.automixItems?.length) return pick(q.automixItems[0]);
+      return '';
+    } catch { return ''; }
+  }
+
+  // A queued song's title, artist, album and length (for automix's lyrics
+  // lookup), from YouTube Music's queue store; the player for the playing song.
+  function songMeta(id) {
+    const text = (x) => (x?.runs || []).map((r) => r.text).join('').trim();
+    const pageType = (r) => r?.navigationEndpoint?.browseEndpoint?.browseEndpointContextSupportedConfigs?.browseEndpointContextMusicConfig?.pageType || '';
+    const seconds = (t) => String(t || '').split(':').reduce((acc, n) => acc * 60 + (Number(n) || 0), 0) || null;
+    try {
+      const q = document.querySelector('ytmusic-player-queue')?.getState?.().queue;
+      const items = [...(q?.items || []), ...(q?.automixItems || [])];
+      for (const it of items) {
+        const w = it?.playlistPanelVideoWrapperRenderer;
+        const all = [it?.playlistPanelVideoRenderer, w?.primaryRenderer?.playlistPanelVideoRenderer, w?.counterpart?.[0]?.counterpartRenderer?.playlistPanelVideoRenderer];
+        const r = all.find((x) => x?.videoId === id);
+        if (!r) continue;
+        const by = r.longBylineText?.runs || r.shortBylineText?.runs || [];
+        const artists = by.filter((x) => pageType(x) === 'MUSIC_PAGE_TYPE_ARTIST').map((x) => x.text);
+        return {
+          song: text(r.title),
+          artist: artists.join(', ') || r.shortBylineText?.runs?.[0]?.text || '',
+          album: by.find((x) => pageType(x) === 'MUSIC_PAGE_TYPE_ALBUM')?.text || '',
+          duration: seconds(text(r.lengthText)),
+        };
+      }
+      const p = moviePlayer(), v = p?.getVideoData?.();
+      if (v && v.video_id === id) return { song: v.title || '', artist: v.author || '', album: '', duration: Number(p.getDuration?.()) || null };
+    } catch { /* store changed shape */ }
+    return null;
   }
 
   setInterval(() => {
@@ -179,6 +510,29 @@
   async function buildTail(req) {
     const snap = snapshot();
     if (!snap || snap.id !== req.id) return { ok: false, why: 'track-changed', automix: !!req.automix, manualSkip: !!req.manualSkip };
+
+    // The whole song, when the prefetch has it: the outro is there however
+    // little the web player has buffered. Automix waits a little for a
+    // download still in flight; anything else uses it only when it's done.
+    const p0 = files.get(req.id);
+    if (!req.manualSkip && p0) {
+      if (p0.state === 'loading' && req.automix) await Promise.race([p0.done, new Promise((r) => setTimeout(r, 10000))]);
+      const p = files.get(req.id);
+      if (p && p.state === 'ready') {
+        try {
+          const { decoded, start } = await tailFromFile(p, req.needFrom - snap.off, req.sampleRate);
+          const again = snapshot();
+          if (!again || again.id !== req.id) return { ok: false, why: 'track-changed', automix: !!req.automix };
+          const channels = [];
+          for (let c = 0; c < Math.min(2, decoded.numberOfChannels); c++) channels.push(decoded.getChannelData(c).slice());
+          log('tail from the prefetched song:', (decoded.duration).toFixed(1), 's from', start.toFixed(1), 's');
+          return { ok: true, sampleRate: decoded.sampleRate, start: snap.off + start, channels, automix: !!req.automix, manualSkip: false, source: 'prefetch' };
+        } catch (e) {
+          log('prefetched song could not be decoded, using the player buffer:', e?.message || e);
+        }
+      }
+    }
+
     const sink = liveSink();
     if (!sink || !sink.parts.length) return { ok: false, why: 'no-data', automix: !!req.automix, manualSkip: !!req.manualSkip };
 
@@ -312,6 +666,27 @@
       const out = await buildTail(d);
       if (!out.ok) log('buildTail failed:', out.why, '| sinks:', sinks.length, '| parts:', sinks.map((s) => s.parts.length));
       say({ type: 'tail', id: d.id, ...out });
+    } else if (d.type === 'prefetch') {
+      if (capturing) prefetchSong(String(d.id || ''), !!d.retry);
+    } else if (d.type === 'bytes') {
+      // A downloaded song for automix's analysis, waited for if still loading.
+      const id = String(d.id || '');
+      let f = files.get(id);
+      if (f?.state === 'loading') { await f.done; f = files.get(id); }
+      if (f?.state === 'ready') {
+        const bytes = f.file.slice().buffer;
+        window.postMessage({ ch: CHANNEL, dir: 'out', type: 'bytes', id, ok: true, bytes, musicVideo: !!f.musicVideo }, window.location.origin, [bytes]);
+      } else say({ type: 'bytes', id, ok: false, why: f ? f.why || f.state : 'not downloaded' });
+    } else if (d.type === 'meta') {
+      const id = String(d.id || '');
+      say({ type: 'meta', id, meta: songMeta(id) });
+    } else if (d.type === 'seek') {
+      // song time, through the player so its own state follows
+      try { moviePlayer()?.seekTo?.(Number(d.t) || 0, true); } catch { /* ignore */ }
+    } else if (d.type === 'pause') {
+      try { moviePlayer()?.pauseVideo?.(); } catch { /* ignore */ }
+    } else if (d.type === 'play') {
+      try { moviePlayer()?.playVideo?.(); } catch { /* ignore */ }
     } else if (d.type === 'next') {
       pressNext();
     } else if (d.type === 'set-volume') {

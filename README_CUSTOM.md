@@ -1,22 +1,25 @@
-# ViViMusic Web — Custom Firefox Fork
+# Vivimusic Web+ — maintainer notes
 
-> **Credits.** Vivimusic Web is created by **[Archimetrix](https://github.com/Archimetrix)**, and the large majority of this code is theirs: the theme, Canvas / Apple artwork, lyrics, Kawarp, Spotify, Last.fm, the popup and the crossfade core. Huge thanks to them for building it. This fork adds Firefox fixes, Automix, crossfade fixes, ListenBrainz and extra lyrics providers on top. Upstream's code stays under upstream's licence ([LICENSE.txt](LICENSE.txt)); it is not relicensed by this fork.
+> **Credits.** Vivimusic Web is created by **[Archimetrix](https://github.com/Archimetrix)**, and the large majority of this code is theirs: the theme, Canvas / Apple artwork, lyrics, Kawarp, Spotify, Last.fm, the popup and the crossfade core. Huge thanks to them for building it. This fork adds a Firefox port, an Edge / Chrome build, Automix (from BitChord), crossfade fixes, ListenBrainz and extra lyrics providers on top. Upstream's code stays under upstream's licence ([LICENSE.txt](LICENSE.txt)); it is not relicensed by this fork.
 
-Fork of [Archimetrix/VIVIMUSIC_WEB](https://github.com/Archimetrix/VIVIMUSIC_WEB) v10.1.1, packaged for Firefox (142+), with extra features ported from [BitChord](https://github.com/ayhamo/BitChord) and [heydavidf/automix](https://github.com/heydavidf/automix).
+The landing page for the repo is [`.github/README.md`](.github/README.md); these are the notes for maintaining it. Fork of [Archimetrix/VIVIMUSIC_WEB](https://github.com/Archimetrix/VIVIMUSIC_WEB) v10.2.0 (GitHub and AMO), built for Firefox (142+) and Edge / Chrome, with extra features ported from [BitChord](https://github.com/ayhamo/BitChord) and [heydavidf/automix](https://github.com/heydavidf/automix).
 
-- Manifest V3, version `10.1.7`, gecko id `vivimusic-web@custom`
+- Name **Vivimusic Web+** (renamed from "Vivimusic Web" on 7 Nov 2026, so it can't be mistaken for upstream), repo `ayhamo/vivimusic-automix` (renamed from `vivimusic-firefox` the same day)
+- Manifest V3, version `10.2.0`, gecko id `vivimusic-web@custom` (never change it: Firefox and AMO treat a new id as a different add-on, and its settings would be lost)
 - Firefox port pieces are taken from upstream's own AMO build (`vivimusicweb-10.1.1.xpi`), which is a separate port of the same version; the GitHub repo only holds the Chrome source.
 
 ---
 
-## Status (verified 2026-11-03 in Firefox 159 with the extension loaded on music.youtube.com)
+## Status (Firefox 159 checked on 2026-11-03, Edge on 2026-11-07)
 
 | Feature | State |
 |---|---|
 | Background page, fetch relay, SponsorBlock, lyrics, theme, popup | Working |
 | Crossfade on natural song end | Working (alignment 1.000, 6 s mix) |
 | Crossfade on manual skip (Next button / Shift+N) | Working (alignment 1.000 on click and Shift+N, no double skip); falls back to a plain skip when alignment is weak or the tail is not ready in 1.5 s |
-| Automix (beat-aligned blend) | Working (detected 114 BPM on a 113 BPM song, 8 bars / 16.8 s, started on a downbeat) |
+| Automix blend | Working in Edge: 16-bar blends with the next song time-stretched, beat lock within 1-3 ms; finished on every pair tested (7 Nov) |
+| Automix loop mix | Working in Edge: Levels → One More Time with the synced-lyrics check (4-bar loops, 126→123 BPM, 19.3 s), YouTube's player took over on time. In Firefox it is planned the same way, but the automated test browser's player stalls before the hand-over |
+| Analysis cache and Clear button | Working (Edge: 17 songs → 0) |
 | Spotify Canvas | Lookup verified with a real account (connect, token, Canvas URL for Midnight Sun); needs "Connect" in the popup once, and Canvas priority set to Spotify to prefer it over Apple |
 | Last.fm, ListenBrainz | Code paths fixed but not tested (need your accounts) |
 
@@ -53,8 +56,8 @@ Fork of [Archimetrix/VIVIMUSIC_WEB](https://github.com/Archimetrix/VIVIMUSIC_WEB
 24. **UI text in a serif font on Windows.** The theme forced `"Inter","PingFangSC-Regular","Apple SD Gothic Neo"` (none bundled, none on Windows) onto all UI text, so Firefox fell back to Times New Roman. `--font-family` in theme.css is now YouTube Music's own stack (YouTube Sans, Roboto, …). Lyrics keep their own font setting.
 25. **First song after a page reload opened on Up next, not Lyrics.** After a reload YT Music can open the player with an empty tab bar and fill in the tabs seconds later; the auto-switch gave up after 3 s. It now waits up to 15 s for the Lyrics tab, and stops as soon as the user picks a tab themselves (`clickLyricsTabWithRetry` in lyrics-ui.js).
 26. **YouTube ads were taken for music videos.** An ad before a song is a 16:9 video, so the song was judged a "real music video": no lyrics ("Lyrics are off for video songs") and no Canvas. `isRealMusicVideo()` now answers "no" while the player has `ad-showing` / `ad-interrupting`.
-27. **New: Edge / Chrome build.** `scripts/build_zip.py` builds two zips from the same code: `vivimusic-firefox-ready-to-sign.zip` and `vivimusic-chromium.zip` (Edge and Chrome; one build for both, MV3). The Chromium manifest is derived from manifest.json at build time: service worker only, `declarativeNetRequestWithHostAccess` instead of blocking `webRequest`, no Firefox settings, no upstream `key` (so the ID never clashes with upstream's store add-on). In Chrome the background loads `fx-headers.js` too (keep-alive and the `VIVI_FETCH` proxy; its Firefox-only header rewrite skips itself) and registers session rules for Apple's and Spotify's Origin/Referer (only for the extension's own requests). Releases carry both zips (`-firefox.zip`, `-edge-chrome.zip`). Install in Edge/Chrome: unzip, Developer mode, Load unpacked; to update, replace the folder's contents and press Reload.
-28. **Update check points to this fork.** `REPO` in background.js is `ayhamo/vivimusic-firefox`. The version is read from the release title ("Vivimusic Web 10.2.0.12 (…)"), because the fork's tags carry upstream's version. While the repo is private, GitHub answers the unauthenticated check with 404; the popup then says so and links to the Releases page.
+27. **New: Edge / Chrome build.** `scripts/build_zip.py` builds two zips from the same code: `vivimusic-automix-firefox.zip` and `vivimusic-automix-edge-chrome.zip` (Edge and Chrome; one build for both, MV3). The Chromium manifest is derived from manifest.json at build time: service worker only, `declarativeNetRequestWithHostAccess` instead of blocking `webRequest`, no Firefox settings, no upstream `key` (so the ID never clashes with upstream's store add-on). In Chrome the background loads `fx-headers.js` too (keep-alive and the `VIVI_FETCH` proxy; its Firefox-only header rewrite skips itself) and registers session rules for Apple's and Spotify's Origin/Referer (only for the extension's own requests). Releases carry both zips (`-firefox.zip`, `-edge-chrome.zip`). Install in Edge/Chrome: unzip, Developer mode, Load unpacked; to update, replace the folder's contents and press Reload.
+28. **Update check points to this fork.** `REPO` in background.js is `ayhamo/vivimusic-automix`. The version is read from the release title ("Vivimusic Web+ 10.2.0.12 (…)"), because the fork's tags carry upstream's version. While the repo is private, GitHub answers the unauthenticated check with 404; the popup then says so and links to the Releases page.
 29. **New: refresh button in the tab bar.** A circular-arrow button sits above the "i" next to the Lyrics tab and runs "Refetch from other providers" without opening the info panel (spins while working, flashes red if no other provider has lyrics). The panel's button has the same icon.
 30. **Normal songs got plain or wrong lyrics.** The song length used by the lyrics timing check was read from `<video>` the moment the title changed: during an ad that is the ad's length, right after a song change it can still be the previous song's. Correct synced lyrics were then rejected as "implausible" and a plain result won. `resolveSongDuration()` in lyrics-ui.js now waits until no ad is showing and the video length agrees with the player bar's (`#progress-bar` aria-valuemax), and refetch re-reads it.
 31. **First song from a library playlist: blank tab bar, no lyrics (Firefox).** Started from a playlist row, YT Music can draw the player tabs with empty labels and fill the names in later. The tab-icon CSS hid the (empty) labels and no icon was added, so the bar looked blank, and the Lyrics auto-switch could not find a tab named "Lyrics". Now the label is hidden only on tabs that already have their icon, the icon observer also reacts to text filled in place (`characterData`), and `findTabByLabel('lyrics')` falls back to the 2nd tab while all labels are empty.
@@ -66,20 +69,22 @@ Fork of [Archimetrix/VIVIMUSIC_WEB](https://github.com/Archimetrix/VIVIMUSIC_WEB
 
 ## Automix: how it works now
 
-Files: `src/automix/automix.js` (planner), `src/automix/host.html` + `host.js` (hidden extension iframe that runs the worker), `src/vendor/automix/*` (worker, ONNX runtime WASM, Beat This model), `src/crossfade.js` (audio), `src/crossfade-page.js` (MSE capture).
+A port of **BitChord web's** automix (`web/app/src/playback/automix`, itself AutoMix by heydavidf; AGPL-3.0-only).
+
+Files: `src/automix/automix.js` (BitChord's analyzer queue + transition planner), `src/automix/host.html` + `host.js` (hidden extension iframe that runs the worker), `src/vendor/automix/*` (BitChord's analysis worker: essentia + Beat This, ONNX runtime WASM, model), `src/crossfade.js` (the blend and the incoming deck), `src/crossfade-page.js` (downloads, queue, player control), `src/equalizer.js` (the player path's automix filters).
 
 1. Needs **Crossfade on** and the Automix toggle on (Audio playback card).
-2. ~50 s before a song ends on its own, crossfade.js asks the page world for the buffered outro; it retries until YouTube has buffered to the end (it buffers ~30–40 s ahead).
-3. The outro (mono, 22.05 kHz) goes to the Beat This model in the hidden extension frame. Firefox refuses Workers started from a content script with an extension URL, hence the frame.
-4. `planMix` folds the detected tempo into 90–180 BPM (half/double time), picks 4/8/16 bars (auto: by grid confidence, capped at 30 s) and the latest downbeat that lets the whole blend finish before the song ends, trying shorter blends if the longer one no longer fits.
-5. At that downbeat (minus the learned next-song start delay) the normal crossfade hand-over runs with the longer length, plus a bass swap at the midpoint (outgoing low-shelf cut, incoming restored within one beat). The toast shows bars, length and BPM.
-6. If anything fails (weak grid, analysis too slow, missed downbeat), that song gets the normal crossfade instead.
+2. As soon as a song plays, the page world downloads the **whole current song and the whole next song** (the next one read from YouTube Music's queue store, autoplay and repeat-all included) through an app client, like BitChord: VISIONOS (two versions), then ANDROID_VR; Opus then AAC; each URL probed at its end first; one retry later if all fail.
+3. Each downloaded song is analysed in full, one at a time, as BitChord's `analyzer.ts` does: essentia over the song at 44.1 kHz (tempo, key, energy, intro end, outro start) and Beat This over its first and last 59 s (the grid it is mixed in on, and the one it is mixed out on). ~18-25 s per song, in the background.
+4. BitChord's `scheduleTransition`, in song time: a **blend** on a phrase before the outgoing song's outro, its length the bar setting (auto = 16) shortened for weaker grids; the incoming song starts so that its pre-full-energy phrase lands at the blend's end, **time-stretched to the outgoing tempo** (pitch kept; at most 10% slower or 25% faster). A pair it can't beatmatch gets the **filter mix** (incoming low-passed on its own downbeat, outgoing through a rising high-pass, up to 8 bars). No grid, or the songs not analysed in time: AutoMix's plain **12 s crossfade** at the end (before the outro).
+5. 4 s before the blend, the old song moves to its decoded copy (aligned to what is playing by cross-correlation) and Next is pressed. YouTube's player becomes BitChord's incoming deck: it is seeked (or held paused and started on time) to the planned point, and a servo keeps it on the audio clock by nudging its pitch-preserving `playbackRate` (≤3%, ≤10% while still quiet; a seek past 0.25 s off). Equal-power cross; blend: bass swap over one bar at the midpoint (−12 dB on 8+ bars, −6 dB shorter) and a −8 dB high-shelf cross; after the blend the new song glides back to its own tempo in eight steps over 24 s.
+6. The toast slides up when the blend starts (bars, length, BPM, stretch) and turns into "Blend finished" when it ends, then slides down.
+7. If the outro can't be had in time, the user's plain crossfade runs instead. A pause, a seek, a skip or an ad during the blend drops it; the song plays on at rate 1. Pausing while YouTube's player is held for the mix (play/pause button in either layout, Space or K) drops the mix and leaves the song paused.
+8. **Loop mix** (BitChord's `loopMix.ts` / `loopDeck.ts`): from 100 s before the end (or before the blend is settled, if earlier) both songs are decoded and the bars to loop are picked: the latest instrumental 4/2/1-bar loop in the outgoing song's last 60 s and the earliest one in the incoming song's first 45 s. "Instrumental" is judged as in BitChord: from the song's **synced lyrics** first (the extension's own lyrics providers, the ones turned off in the popup skipped; each line padded 0.15 s before and 0.35 s after, a line with no end lasting to the next line or 10 s at most; a loop must end 0.3 s before the next line; up to 8 s is waited for the lyrics), and only for a song with no synced lyrics from the open-unmix vocal mask (`vocals_umxhq_int8.onnx`, run in the analysis): at most 3% sung and no sung run over 0.2 s. When both are found, the loop mix replaces the blend: the old song crosses onto a **signalsmith-stretch** deck at its loop start and loops; the incoming loop enters bass-cut at the outgoing tempo, one master tempo ramps to the new song's (≤2.5 BPM per bar), the bass swaps mid-ramp, the outgoing loop drains through a rising high-pass, the incoming loop lets go into the rest of its song and YouTube's player (held silent on the clock) takes over two bars later. Music videos never get a loop mix (their audio rarely matches the song), as in BitChord. Most pop pairs still get the blend: a 4-bar loop needs bars with no lyric line near the end of one song and the start of the other.
+9. **Analysis cache**: every result is kept in IndexedDB (`vivi-automix` in the extension frame, keyed by video id, versioned), like BitChord's `db.ts`: a song is analysed once (a cached one loads in <0.1 s). The Audio playback card shows how many songs are saved, with a **Clear** button that empties the cache (the popup and the frame share the extension's origin). Decoding for analysis happens in the extension frame, not on YouTube Music's page (the skip stall in Firefox).
+10. **Prefer music-only version** (popup, off by default; `src/music-only.js`): flips YouTube Music's own Song/Video switch to Song whenever it shows Video; clicking Video by hand keeps that song a video. It helps only where YouTube Music pairs the video with an album version: a video opened directly by its link (no pair in the queue) just loses its picture, the audio is still the video's.
 
-The next song's tempo is **not** matched: its audio is not available before YouTube's own player starts it.
-
-First analysis after page load takes ~15–20 s (model load); there is enough lead time for that.
-
-**"Outro was not buffered in time" (checked 2026-11-06).** Automix can only analyse what YouTube lets the browser download. The web player fetches audio as byte ranges (`videoplayback?…&range=…`, POST, UMP), and the server refuses ranges more than about 1 MB (~50 s) past what has played (it answers with a "stream protection" part instead of audio), so the outro can't be fetched any earlier than the player buffers it. BitChord gets a separate copy by asking InnerTube for the stream as a phone/VR app client; doing that from the extension would be impersonating another client to get around YouTube's protections, so it is deliberately not done. Note for testing: a signed-out automated Firefox gets no attestation and playback stalls at ~0:50, so automix endings can only be tested signed in.
+Measured in Edge, 6 Nov 2026: Despacito → LALA (blend, 16 bars, next song ×0.962) and LALA → Gata Only (blend, 16 bars, ×0.914): beat lock within 1-3 ms through the blend after the first second. Edge, same day: Levels → LoopeDe loop mix (4-bar loops, 131→126 BPM, 12 bars, 26.2 s; vocal-mask limits loosened in the test copy so a pair qualified): the new song's player took over at 11.4 s (planned 11.47 s), no abort. Edge, 7 Nov 2026, synced-lyrics check (normal limits): Levels → One More Time loop mix (4-bar loops at 182.87 s and 1.38 s, "no lyric line" on both sides, 126→123 BPM, 8 bars, 19.3 s): YouTube's player was held and took over, no abort. Seven other radio pairs (Levitating, Moves Like Jagger, Don't Call Me Up, Levels → others) had lyric lines in the way and got the blend, which finished each time. Lyrics for one side and the mask for the other also worked (Levels → a song without synced lyrics). An ad mid-mix and a pause during the hold both dropped the mix cleanly; the Clear button emptied the cache (17 songs → 0). Firefox: downloads, analysis and planning checked; the handover can't be reached there in the signed-out automated browser (YouTube's player stalls at ~0:45-0:50, also without the extension).
 
 ---
 
@@ -89,7 +94,7 @@ First analysis after page load takes ~15–20 s (model load); there is enough le
 
 | What | Where |
 |---|---|
-| This fork | private repo `ayhamo/vivimusic-firefox` (remote `origin`) |
+| This fork | private repo `ayhamo/vivimusic-automix` (remote `origin`; was `vivimusic-firefox`, GitHub redirects the old name) |
 | Upstream Chrome source | GitHub `Archimetrix/VIVIMUSIC_WEB`, tagged `vX.Y.Z` (remote `upstream`) |
 | Upstream Firefox port | AMO `vivimusicweb` (https://addons.mozilla.org/firefox/addon/vivimusicweb/). A separate port of each version, **never pushed to GitHub** |
 | Copy of upstream's Firefox build | `upstream-amo/vivimusicweb-<version>.xpi` (the original AMO file, for reference; open it as a zip) |
@@ -135,7 +140,7 @@ Last synced: GitHub v10.1.1 + AMO 10.1.1 (2026-11-03).
 ### B. The daily workflow (`.github/workflows/fork-sync-release.yml`)
 
 - Runs every day at 05:23 UTC, or by hand: Actions → "Fork sync and release" → Run workflow (`force` rebuilds and replaces the release even if nothing changed).
-- It checks upstream's latest GitHub release, upstream's AMO version and this repo's `main`. When any of them is new, it does part A in the runner (nothing is pushed back), lints, and publishes a **GitHub release** (repo page → Releases) with `vivimusic-web-<version>.zip` attached. Release tag: `fork-<upstream tag>-amo<AMO version>-<fork commit>`.
+- It checks upstream's latest GitHub release, upstream's AMO version and this repo's `main`. When any of them is new, it does part A in the runner (nothing is pushed back), lints, and publishes a **GitHub release** (repo page → Releases) with `vivimusic-automix-<version>-firefox.zip` and `vivimusic-automix-<version>-edge-chrome.zip` attached. Release tag: `fork-<upstream tag>-amo<AMO version>-<fork commit>`.
 - A red run means upstream changed something that needs a human (a conflict or new AMO manifest changes) or the linter found errors. Nothing is published; do part A locally to see and fix it.
 - A green run after an upstream update only built a release: still do part A locally and push, so `main` has the merge.
 - Release version is `<manifest version>.<run number>` (e.g. `10.1.7.3`). AMO refuses a version it has seen before, and the run number makes every build higher. Keep `manifest.json` at three parts.
@@ -144,8 +149,8 @@ Last synced: GitHub v10.1.1 + AMO 10.1.1 (2026-11-03).
 
 The add-on is already on your AMO account (https://addons.mozilla.org/en-US/developers/addons, uploaded as unlisted).
 
-1. Download `vivimusic-web-<version>.zip` from the newest release.
-2. AMO Developer Hub → Vivimusic Web → **Upload New Version** → the zip → follow the steps. Unlisted versions are signed automatically, usually within minutes.
+1. Download `vivimusic-automix-<version>-firefox.zip` from the newest release.
+2. AMO Developer Hub → Vivimusic Web+ (still listed as "Vivimusic Web" until the first upload with the new name) → **Upload New Version** → the zip → follow the steps. Unlisted versions are signed automatically, usually within minutes.
 3. Download the signed `.xpi` AMO gives back and open it in Firefox (any edition). Same add-on id and a higher version, so it updates in place and keeps your settings.
 
 Unlisted add-ons do not auto-update in Firefox (that needs an `update_url` Firefox can fetch without logging in), so repeat steps 1–3 for each new release.
@@ -158,7 +163,7 @@ Without signing (Developer Edition / Nightly only): `about:config` → `xpinstal
 python scripts/build_zip.py
 ```
 ```bash
-npx addons-linter vivimusic-firefox-ready-to-sign.zip
+npx addons-linter vivimusic-automix-firefox.zip
 ```
 Last result: 0 errors, 20 warnings (upstream `innerHTML` uses, one vendor dynamic import, and the Chrome-only `background.service_worker` key that Firefox ignores).
 

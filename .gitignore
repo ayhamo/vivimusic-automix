@@ -1,6 +1,6 @@
 # build output (rebuild with scripts/build_zip.py)
-vivimusic-firefox-ready-to-sign.zip
-vivimusic-chromium.zip
+vivimusic-automix-firefox.zip
+vivimusic-automix-edge-chrome.zip
 dist/
 *.tmp
 __pycache__/
