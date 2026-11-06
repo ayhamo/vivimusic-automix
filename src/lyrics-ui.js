@@ -918,6 +918,13 @@
   // Thai …) would lose their shaping, so those words keep the plain sweep.
   const FLOW_SAFE = /^[\p{Script=Latin}\p{Script=Cyrillic}\p{Script=Greek}\p{Script=Hangul}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Han}\p{N}\p{P}\p{S}\p{Zs}\p{M}]+$/u;
 
+  // Right-to-left lines (Arabic, Hebrew …): decided by the first letter, the
+  // way the browser's dir="auto" does it. Their fill runs right to left, so the
+  // sung/unsung background positions are swapped (see .vivi-lyrics-rtl in CSS).
+  const RTL_SCRIPT = /[\p{Script=Arabic}\p{Script=Hebrew}\p{Script=Syriac}\p{Script=Thaana}\p{Script=Nko}]/u;
+  const isRtlText = (t) => { const m = String(t || '').match(/\p{L}/u); return !!m && RTL_SCRIPT.test(m[0]); };
+  const fillPos = (w, sung) => ((w.closest('.vivi-lyrics-rtl') ? !sung : sung) ? '0% 0' : '100% 0');
+
   function canFlow(w) {
     if (w.querySelector('.vivi-fl-ch')) return true;
     if (w.childElementCount) return false;
@@ -1186,6 +1193,10 @@
     const romanText = rl && !rl.pending ? (rl.online || rl.text) : null;
     const romanOnly = mode === 'only' && !!romanText;
     const hasWords = (result.mode === 'word' || result.mode === 'syllable') && Array.isArray(line.words) && line.words.length;
+    const shownText = romanOnly ? romanText : (line.text || (hasWords ? line.words.map((w) => w.text).join(' ') : ''));
+    const rtl = isRtlText(shownText);
+    lineEl.classList.toggle('vivi-lyrics-rtl', rtl);
+    if (rtl) lineEl.dir = 'rtl'; else lineEl.removeAttribute('dir');
 
     const makeUnit = (u, extra, text) => {
       const span = document.createElement('span');
@@ -1235,6 +1246,7 @@
     if (mode === 'both' && romanText) {
       const sub = document.createElement('span');
       sub.className = 'vivi-lyrics-roman';
+      sub.dir = 'ltr';   // Latin letters, even under an Arabic/Hebrew line
       sub.textContent = romanText;
       lineEl.appendChild(sub);
     }
@@ -1406,7 +1418,7 @@
         w.classList.add('vivi-lyrics-word-sung');
         w.classList.remove('vivi-lyrics-word-glowing', 'vivi-lyrics-word-bouncing', 'vivi-lyrics-syl-swell');
         w.style.transitionDuration = '0s';
-        w.style.backgroundPosition = '0% 0';
+        w.style.backgroundPosition = fillPos(w, true);
       });
       activeLineEl?.querySelectorAll('.vivi-lyrics-wordgroup').forEach((g) => {
         g.dataset.gState = 'sung';
@@ -1492,21 +1504,21 @@
           // Snap straight to fully filled (covers seeks/skips landing past
           // the word's end without ever passing through 'active').
           w.style.transitionDuration = '0s';
-          w.style.backgroundPosition = '0% 0';
+          w.style.backgroundPosition = fillPos(w, true);
         } else if (state === 'active') {
           // Reset to unfilled, force a reflow, then animate the fill sweep
           // across exactly this word's spoken duration so it lands right
           // as the word finishes — a smooth "karaoke" fill instead of a glow.
           w.style.transitionDuration = '0s';
-          w.style.backgroundPosition = '100% 0';
+          w.style.backgroundPosition = fillPos(w, false);
           void w.offsetWidth;
           const dur = Math.max(0, we - ws);
           w.style.transitionDuration = dur + 'ms';
           w.style.transitionTimingFunction = 'linear';
-          w.style.backgroundPosition = '0% 0';
+          w.style.backgroundPosition = fillPos(w, true);
         } else {
           w.style.transitionDuration = '0s';
-          w.style.backgroundPosition = '100% 0';
+          w.style.backgroundPosition = fillPos(w, false);
         }
       });
 

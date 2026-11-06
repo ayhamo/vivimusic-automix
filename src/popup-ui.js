@@ -47,7 +47,7 @@
     const [title, description, feature, motion = 'animated'] = meta[key] || [key, 'Feature settings', 'updates'];
     const card = document.createElement('button');
     card.type = 'button'; card.className = 'home-card'; card.dataset.feature = feature;
-    const staticIcon = feature === 'listenbrainz' ? '../icons/popup/lastfm-static.png' : `../icons/popup/${feature}-static.png`;
+    const staticIcon = `../icons/popup/${feature}-static.png`;
     const animatedIcon = motion === 'static' ? '' : `../icons/popup/${feature}-animated.png`;
     card.innerHTML = `<span class="home-card-top"><span class="home-card-title">${title}</span><span class="home-card-icon"><img class="card-icon-static" src="${staticIcon}" alt=""><img class="card-icon-animated" alt=""></span></span><span class="home-card-description">${description}</span>`;
     const animatedImage = card.querySelector('.card-icon-animated');

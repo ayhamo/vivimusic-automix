@@ -186,7 +186,7 @@ ytmusic-player .vivi-canvas-slot {
 
 .vivi-lyrics-word {
   display: inline-block;
-  margin-right: 0.28em;
+  margin-inline-end: 0.28em;
   white-space: pre-wrap;
   background-image: linear-gradient(
     90deg,
@@ -204,7 +204,7 @@ ytmusic-player .vivi-canvas-slot {
 }
 
 .vivi-lyrics-word:last-child {
-  margin-right: 0;
+  margin-inline-end: 0;
 }
 
 /* ── Syllable-level sync ───────────────────────────────────────────────────
@@ -213,18 +213,18 @@ ytmusic-player .vivi-canvas-slot {
    bounce logic animates per syllable with no extra code paths. */
 .vivi-lyrics-wordgroup {
   display: inline-block;
-  margin-right: 0.28em;
+  margin-inline-end: 0.28em;
   white-space: pre;
   transition: transform 0.4s cubic-bezier(0.22, 0.8, 0.24, 1), filter 0.4s ease;
 }
 .vivi-lyrics-wordgroup:last-child,
-.vivi-lyrics-wordgroup.vivi-lyrics-wordgroup-joined { margin-right: 0; }
+.vivi-lyrics-wordgroup.vivi-lyrics-wordgroup-joined { margin-inline-end: 0; }
 
 /* Syllables sit flush inside their word. */
-.vivi-lyrics-word.vivi-lyrics-syl { margin-right: 0; white-space: pre; }
+.vivi-lyrics-word.vivi-lyrics-syl { margin-inline-end: 0; white-space: pre; }
 
 /* CJK / glued tokens: no gap after the unit. */
-.vivi-lyrics-word.vivi-lyrics-word-joined { margin-right: 0; }
+.vivi-lyrics-word.vivi-lyrics-word-joined { margin-inline-end: 0; }
 
 /* Soft-edged karaoke sweep: the fill edge is feathered over half a syllable
    (250%-wide gradient; position 100% = unsung, 0% = fully sung). */
@@ -1323,13 +1323,13 @@ html.vivi-disc-playing .vivi-disc-tonearm .vivi-arm-drift {
   padding: var(--vivi-ink-y) var(--vivi-ink-x);
   margin-top: calc(-1 * var(--vivi-ink-y));
   margin-bottom: calc(-1 * var(--vivi-ink-y));
-  margin-left: calc(-1 * var(--vivi-ink-x));
-  margin-right: calc(0.28em - var(--vivi-ink-x));
+  margin-inline-start: calc(-1 * var(--vivi-ink-x));
+  margin-inline-end: calc(0.28em - var(--vivi-ink-x));
 }
 .vivi-lyrics-list .vivi-lyrics-word:last-child,
 .vivi-lyrics-list .vivi-lyrics-word.vivi-lyrics-word-joined,
 .vivi-lyrics-list .vivi-lyrics-word.vivi-lyrics-syl {
-  margin-right: calc(-1 * var(--vivi-ink-x));
+  margin-inline-end: calc(-1 * var(--vivi-ink-x));
 }
 
 
@@ -1345,6 +1345,45 @@ html.vivi-disc-playing .vivi-disc-tonearm .vivi-arm-drift {
   -webkit-text-fill-color: currentColor;
   pointer-events: none;
 }
+
+/* ── Right-to-left lines (Arabic, Hebrew …) ────────────────────────────────
+   lyrics-ui.js marks a line .vivi-lyrics-rtl (dir="rtl") when its first letter
+   is from a right-to-left script. "Left" alignment means "where the line
+   starts", so those lines sit on the right (also in Smooth zoom and Apple
+   Music, which are always start-aligned) and "right" puts them on the left.
+   Their karaoke fill runs right to left: the gradient is mirrored and JS swaps
+   the positions (0% = unsung, 100% = sung). */
+.vivi-lyrics-list.vivi-lyrics-align-left .vivi-lyrics-line.vivi-lyrics-rtl {
+  align-self: flex-end;
+  text-align: right;
+  transform-origin: right center;
+}
+.vivi-lyrics-list.vivi-lyrics-align-right .vivi-lyrics-line.vivi-lyrics-rtl {
+  align-self: flex-start;
+  text-align: left;
+  transform-origin: left center;
+}
+.vivi-lyrics-list:not(.vivi-lyrics-anim-glow):not(.vivi-lyrics-anim-bounce) .vivi-lyrics-line.vivi-lyrics-rtl .vivi-lyrics-word {
+  background-image: linear-gradient(
+    270deg,
+    var(--text-primary, #fff) 50%,
+    var(--text-secondary, rgba(255,255,255,0.45)) 50%
+  );
+}
+.vivi-lyrics-list:not(.vivi-lyrics-anim-glow):not(.vivi-lyrics-anim-bounce) .vivi-lyrics-line.vivi-lyrics-rtl .vivi-lyrics-word.vivi-lyrics-syl {
+  background-image: linear-gradient(
+    270deg,
+    var(--text-primary, #fff) 0%,
+    var(--text-primary, #fff) 40%,
+    var(--text-secondary, rgba(255,255,255,0.45)) 60%,
+    var(--text-secondary, rgba(255,255,255,0.45)) 100%
+  );
+}
+.vivi-lyrics-rtl .vivi-lyrics-word { background-position: 0% 0; }
+.vivi-lyrics-line.vivi-lyrics-active.vivi-lyrics-rtl .vivi-lyrics-word { background-position: 0% 0; }
+.vivi-lyrics-line.vivi-lyrics-active.vivi-lyrics-rtl .vivi-lyrics-word-sung { background-position: 100% 0; }
+/* The romanization under an RTL line is Latin text: keep it left-to-right. */
+.vivi-lyrics-line.vivi-lyrics-rtl .vivi-lyrics-roman { direction: ltr; unicode-bidi: isolate; }
 
 /* ─── ViVi Automix On-Screen HUD / Toast ─── */
 #vivi-automix-toast {
