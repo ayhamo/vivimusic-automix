@@ -3004,7 +3004,7 @@
         automixEl.style.color = '#90caf9';
       } else {
         const m = xf.automix?.mix;
-        const state = xf.automix?.state || 'idle';
+        const state = xf.automix?.state === 'idle' && m ? 'planned' : xf.automix?.state || 'idle';
         let text = `Automix · ${state}`;
         if (engine.bpm) text += ` · ${engine.bpm.toFixed(1)} BPM (grid ${(engine.conf || 0).toFixed(2)})`;
         if (m) text += ` · ${m.style || 'blend'}${m.bars ? ` ${m.bars} bars` : ''} / ${m.mixSec.toFixed(1)} s from ${fmt(m.startAt)}${m.rate && Math.abs(m.rate - 1) > 0.002 ? ` · next ×${m.rate.toFixed(3)}` : ''}`;

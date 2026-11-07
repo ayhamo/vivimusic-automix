@@ -1005,6 +1005,33 @@
   let toastTimers = [];
   const clearToastTimers = () => { toastTimers.forEach(clearTimeout); toastTimers = []; };
 
+  // "Automix in 4 s" for the last COUNTDOWN_SEC before a planned mix. Each
+  // tick refreshes it; when the ticks stop (pause, seek away, skip, the mix
+  // starting and taking the toast over) it slides away by itself.
+  const COUNTDOWN_SEC = 5;
+  let cdAt = 0, cdMix = null;   // when the counted-down mix starts (performance.now ms), and which mix
+  function countdown(left, m) {
+    if (!(left > 0 && left <= COUNTDOWN_SEC)) return;
+    cdAt = performance.now() + left * 1000;
+    cdMix = m;
+    try {
+      const what = m.style === 'loop' ? `loop mix · ${m.bars} bars`
+        : m.style === 'crossfade' ? `crossfade${m.reason ? ' · ' + m.reason : ''}`
+        : `${m.style === 'filter' ? 'filter mix' : 'blend'} · ${m.bars} bars · ${Math.round(m.bpm)} BPM`;
+      const title = `Automix in ${Math.ceil(left)} s`;
+      const toast = toastEl();
+      if (toast?.dataset.countdown === '1' && toast.classList.contains('vivi-automix-visible')) {
+        toast.querySelector('.vivi-automix-title').textContent = title;
+        toast.querySelector('.vivi-automix-subtitle').textContent = what;
+        clearToastTimers();
+      } else {
+        showAutomixNotification(title, what);
+        toastEl().dataset.countdown = '1';
+      }
+      toastTimers.push(setTimeout(hideAutomixNotification, TICK_MS * 4));
+    } catch { /* cosmetic */ }
+  }
+
   function showAutomixNotification(title, subtitle) {
     try {
       clearToastTimers();
@@ -1014,6 +1041,7 @@
         toast.id = 'vivi-automix-toast';
         document.body.appendChild(toast);
       }
+      delete toast.dataset.countdown;
       toast.classList.remove('vivi-automix-done', 'vivi-automix-swap');
       toast.style.width = '';
       toast.replaceChildren(...toastBody('🎧', title, subtitle, true));
@@ -1064,7 +1092,12 @@
   setInterval(() => {
     const g = graph();
     const v = g?.video;
-    if (live) { if (g) driveLive(g, v); else live = null; return; }
+    if (live) {
+      if (g) driveLive(g, v); else live = null;
+      // the hand-over runs a few seconds ahead of the mix: keep counting down to it
+      if (live?.mix && live.mix === cdMix) countdown((cdAt - performance.now()) / 1000, cdMix);
+      return;
+    }
     if (skip) return;   // a manual skip is being prepared
 
     const N = seconds();
@@ -1145,8 +1178,15 @@
             post({ type: 'prepare', id: st.id, sampleRate: g.ctx.sampleRate, needFrom, cover: p.durationSec + HAND_LEAD + 3, automix: true });
           }
         }
-        A.setStatus(amx.state === 'fallback' ? 'fallback' : 'planned', { bpm: p.bpm, conf: from ? (from.tailGrid?.gridConfidence ?? from.gridConfidence) : null, mix: p });
+        // Still downloading or analysing: the plain crossfade is only a placeholder
+        // until the analyses land (it is replanned every tick), not a verdict.
+        const busy = (id) => songs.get(id)?.state === 'loading' || ['pending', 'analyzing'].includes(A.statusOf(id));
+        const analysing = !from && busy(st.id) ? 'this song' : st.next && !to && busy(st.next) ? 'the next song' : '';
+        const shown = amx.state === 'idle' && p.fallback && analysing ? { ...p, reason: `analysing ${analysing}…` } : p;
+        if (amx.state === 'idle') amx.plan = shown;
+        A.setStatus(amx.state === 'fallback' ? 'fallback' : 'planned', { bpm: p.bpm, conf: from ? (from.tailGrid?.gridConfidence ?? from.gridConfidence) : null, mix: shown });
       }
+      if (amx.plan && amx.state !== 'fallback') countdown(amx.plan.mixOutTrackTime - pos, amx.plan);
       if (amx.state === 'ready' && plan && plan.id === st.id && tap) {
         const handAt = amx.plan.mixOutTrackTime - HAND_LEAD;
         if (pos > handAt + 1) { amx.state = 'idle'; return; }   // seeked past it: plan again from here
