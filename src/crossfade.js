@@ -1009,10 +1009,9 @@
   // tick refreshes it; when the ticks stop (pause, seek away, skip, the mix
   // starting and taking the toast over) it slides away by itself.
   const COUNTDOWN_SEC = 5;
-  let cdAt = 0, cdMix = null;   // when the counted-down mix starts (performance.now ms), and which mix
+  let cdMix = null;   // the mix being counted down to
   function countdown(left, m) {
     if (!(left > 0 && left <= COUNTDOWN_SEC)) return;
-    cdAt = performance.now() + left * 1000;
     cdMix = m;
     try {
       const what = m.style === 'loop' ? `loop mix · ${m.bars} bars`
@@ -1028,6 +1027,7 @@
         showAutomixNotification(title, what);
         toastEl().dataset.countdown = '1';
       }
+      toastEl().dataset.at = String(performance.now());
       toastTimers.push(setTimeout(hideAutomixNotification, TICK_MS * 4));
     } catch { /* cosmetic */ }
   }
@@ -1042,13 +1042,17 @@
         document.body.appendChild(toast);
       }
       delete toast.dataset.countdown;
+      toast.dataset.at = String(performance.now());
       toast.classList.remove('vivi-automix-done', 'vivi-automix-swap');
       toast.style.width = '';
       toast.replaceChildren(...toastBody('🎧', title, subtitle, true));
       // Let the hidden state render first, or a toast made just now would
-      // appear in place instead of sliding up.
+      // appear in place instead of sliding up. A background tab runs no
+      // animation frames: there it is shown at once (a frame queued then
+      // would only run when the tab is back, after the mix it announces).
       void toast.offsetWidth;
-      requestAnimationFrame(() => toast.classList.add('vivi-automix-visible'));
+      if (document.hidden) toast.classList.add('vivi-automix-visible');
+      else requestAnimationFrame(() => toast.classList.add('vivi-automix-visible'));
     } catch (e) {
       console.warn('[Vivi Crossfade] Toast error:', e);
     }
@@ -1059,6 +1063,7 @@
       const toast = toastEl();
       if (!toast || !toast.classList.contains('vivi-automix-visible')) return;
       clearToastTimers();
+      toast.dataset.at = String(performance.now());
       const from = toast.getBoundingClientRect().width;
       toast.style.width = from + 'px';
       toast.classList.add('vivi-automix-swap');   // old content fades up and out
@@ -1080,6 +1085,23 @@
     } catch { /* cosmetic */ }
   }
 
+  // The toast's timers can be lost (a background tab, a timer cleared by the
+  // next toast), so the main tick also checks it against what is playing and
+  // takes away one that outlived its mix: a countdown not refreshed for 1.5 s,
+  // "Blend finished" after 3.5 s, a mix toast 2 s after the mix ended.
+  let lastLiveAt = 0;
+  function toastWatch() {
+    const now = performance.now();
+    if (live) { lastLiveAt = now; return; }
+    const t = toastEl();
+    if (!t || !t.classList.contains('vivi-automix-visible')) return;
+    const age = now - (Number(t.dataset.at) || 0);
+    const stale = t.dataset.countdown === '1' ? age > 1500
+      : t.classList.contains('vivi-automix-done') || t.classList.contains('vivi-automix-swap') ? age > 3500
+      : now - lastLiveAt > 2000 && age > 2000;
+    if (stale) hideAutomixNotification();
+  }
+
   function hideAutomixNotification() {
     const toast = toastEl();
     if (!toast) return;
@@ -1092,10 +1114,13 @@
   setInterval(() => {
     const g = graph();
     const v = g?.video;
+    toastWatch();
     if (live) {
       if (g) driveLive(g, v); else live = null;
       // the hand-over runs a few seconds ahead of the mix: keep counting down to it
-      if (live?.mix && live.mix === cdMix) countdown((cdAt - performance.now()) / 1000, cdMix);
+      // (on the audio clock the mix starts by; never over the mix's own toast)
+      if (g && live?.mix && live.mix === cdMix && live.t0 != null && g.ctx.currentTime < live.t0 - 0.1
+          && toastEl()?.dataset.countdown === '1') countdown(live.t0 - g.ctx.currentTime, cdMix);
       return;
     }
     if (skip) return;   // a manual skip is being prepared
@@ -1186,6 +1211,7 @@
         if (amx.state === 'idle') amx.plan = shown;
         A.setStatus(amx.state === 'fallback' ? 'fallback' : 'planned', { bpm: p.bpm, conf: from ? (from.tailGrid?.gridConfidence ?? from.gridConfidence) : null, mix: shown });
       }
+      // (amxGiveUp just above may have dropped the plan: the plain crossfade has no countdown)
       if (amx.plan && amx.state !== 'fallback') countdown(amx.plan.mixOutTrackTime - pos, amx.plan);
       if (amx.state === 'ready' && plan && plan.id === st.id && tap) {
         const handAt = amx.plan.mixOutTrackTime - HAND_LEAD;
