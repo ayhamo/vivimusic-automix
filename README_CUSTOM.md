@@ -5,7 +5,7 @@
 The landing page for the repo is [`.github/README.md`](.github/README.md); these are the notes for maintaining it. Fork of [Archimetrix/VIVIMUSIC_WEB](https://github.com/Archimetrix/VIVIMUSIC_WEB) v10.2.0 (GitHub and AMO), built for Firefox (142+) and Edge / Chrome, with extra features ported from [BitChord](https://github.com/ayhamo/BitChord) and [heydavidf/automix](https://github.com/heydavidf/automix).
 
 - Name **Vivimusic Web+** (renamed from "Vivimusic Web" on 7 Nov 2026, so it can't be mistaken for upstream), repo `ayhamo/vivimusic-automix` (renamed from `vivimusic-firefox` the same day)
-- Manifest V3, version `10.2.0`, gecko id `vivimusic-web@custom` (never change it: Firefox and AMO treat a new id as a different add-on, and its settings would be lost)
+- Manifest V3, version `10.2.0`, gecko id `vivimusic-automix@ayhamo` (was `vivimusic-web@custom` until 7 Nov 2026, when the add-on was re-created on AMO under the new name). Don't change it again: Firefox and AMO treat a new id as a different add-on, and its settings would be lost
 - Firefox port pieces are taken from upstream's own AMO build (`vivimusicweb-10.1.1.xpi`), which is a separate port of the same version; the GitHub repo only holds the Chrome source.
 
 ---
@@ -128,7 +128,7 @@ If it prints new `manifest.json` changes, copy them into our `manifest.json` by 
 ```bash
 python scripts/sync_upstream_firefox.py --accept-manifest
 ```
-When editing the manifest, keep: gecko id `vivimusic-web@custom`, `data_collection_permissions: none`, `fx-storage.js` first in both isolated content-script groups, `net.js` before `fx-compat.js`, the automix entries and the `'wasm-unsafe-eval'` CSP. `src/background.js` always keeps our side where it conflicts with AMO (upstream's Firefox build deletes the `VIVI_NET_FETCH` relay that `net.js` needs); the script does that automatically.
+When editing the manifest, keep: gecko id `vivimusic-automix@ayhamo`, `data_collection_permissions: none`, `fx-storage.js` first in both isolated content-script groups, `net.js` before `fx-compat.js`, the automix entries and the `'wasm-unsafe-eval'` CSP. `src/background.js` always keeps our side where it conflicts with AMO (upstream's Firefox build deletes the `VIVI_NET_FETCH` relay that `net.js` needs); the script does that automatically.
 
 Then test in Firefox (crossfade, manual skip, automix, lyrics), bump `version` in `manifest.json` (keep three parts, e.g. `10.1.8`), commit and push:
 ```bash
@@ -150,7 +150,7 @@ Last synced: GitHub v10.1.1 + AMO 10.1.1 (2026-11-03).
 The add-on is already on your AMO account (https://addons.mozilla.org/en-US/developers/addons, uploaded as unlisted).
 
 1. Download `vivimusic-automix-<version>-firefox.zip` from the newest release.
-2. AMO Developer Hub → Vivimusic Web+ (still listed as "Vivimusic Web" until the first upload with the new name) → **Upload New Version** → the zip → follow the steps. Unlisted versions are signed automatically, usually within minutes.
+2. AMO Developer Hub → the add-on → **Upload New Version** (AMO keeps its own listing name and summary, not the manifest's: they were changed by hand under Edit Product Page → Describe Add-on) → the zip → follow the steps. Unlisted versions are signed automatically, usually within minutes.
 3. Download the signed `.xpi` AMO gives back and open it in Firefox (any edition). Same add-on id and a higher version, so it updates in place and keeps your settings.
 
 Unlisted add-ons do not auto-update in Firefox (that needs an `update_url` Firefox can fetch without logging in), so repeat steps 1–3 for each new release.

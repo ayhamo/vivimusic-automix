@@ -45,7 +45,7 @@ The full list, with the reasons for each change, is in [`README_CUSTOM.md`](../R
 
 Get the zips from this repo's **Releases**.
 
-**Firefox.** Upload `vivimusic-automix-<version>-firefox.zip` at [addons.mozilla.org → Developer Hub](https://addons.mozilla.org/en-US/developers/addons) → Vivimusic Web+ → Upload New Version (self-distributed). Install the signed `.xpi` it gives back. Firefox keeps your settings across versions because the add-on id stays `vivimusic-web@custom`.
+**Firefox.** Upload `vivimusic-automix-<version>-firefox.zip` at [addons.mozilla.org → Developer Hub](https://addons.mozilla.org/en-US/developers/addons) → Vivimusic Web+ → Upload New Version (self-distributed). Install the signed `.xpi` it gives back. Firefox keeps your settings across versions because the add-on id stays `vivimusic-automix@ayhamo`.
 
 **Edge / Chrome.** Unzip `vivimusic-automix-<version>-edge-chrome.zip`. Open `edge://extensions` (or `chrome://extensions`), turn on Developer mode, then Load unpacked → the folder. To update, replace the folder's contents and press Reload.
 
