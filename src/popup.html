@@ -1297,14 +1297,15 @@
       </div>
       <p class="theme-sub" style="margin-top:2px;">Needs Crossfade on. BitChord's automix: the playing and the next song are downloaded and analysed on your device (tempo, downbeats, intro, outro, where it is sung). When a song ends on its own it loops an instrumental bar into the next song, or blends on a phrase with the next song matched to its tempo, or uses a filter mix or a 12 s crossfade when the pair can't be beatmatched.</p>
       <div class="kawarp-slider-row" id="automixBarsRow" style="margin-top:4px;">
-        <div class="kw-label-row"><span>Automix transition bars</span><span class="kw-val" id="automixBarsVal">Auto adaptive</span></div>
+        <div class="kw-label-row"><span>Blend length</span><span class="kw-val" id="automixBarsVal">Auto</span></div>
         <select id="automixBarsSelect" style="width:100%;background:rgba(255,255,255,0.06);color:var(--text-1);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:5px 8px;font-size:12.5px;margin-top:4px;">
-          <option value="auto" selected>Auto (Smart adaptive)</option>
-          <option value="4">4 bars (Quick blend)</option>
-          <option value="8">8 bars (Standard phrase)</option>
-          <option value="16">16 bars (Extended club mix)</option>
-          <option value="32">32 bars (Long blend)</option>
+          <option value="auto" selected>Auto (picks per song, like BitChord phone)</option>
+          <option value="4">Up to 4 bars</option>
+          <option value="8">Up to 8 bars</option>
+          <option value="16">Up to 16 bars (BitChord web default)</option>
+          <option value="32">Up to 32 bars</option>
         </select>
+        <p class="theme-sub" style="margin-top:4px;">Auto follows the BitChord phone: usually 4 bars, 8 when both songs are calm there, never over 12–16 s. Each blend ends a bar before the song does. Up to N bars is BitChord web's setting; a weak beat grid or a filter mix shortens it.</p>
       </div>
       <div class="row" style="margin-top:6px;">
         <span class="row-label">Prefer music-only version</span>

@@ -46,9 +46,10 @@
       if ('automixBars' in ch) barsSetting = ch.automixBars.newValue === 'auto' ? 'auto' : (Number(ch.automixBars.newValue) || 8);
     });
   } catch { /* extension context gone */ }
-  // BitChord's AutoDJ.transitionBars (its setting's default is 16); the
-  // scheduler treats it as a maximum and shortens it for weaker grids.
-  const transitionBars = () => (barsSetting === 'auto' ? 16 : barsSetting);
+  // barsSetting: a number is BitChord web's AutoDJ.transitionBars ("Up to N
+  // bars"), which the scheduler treats as a maximum and shortens for weaker
+  // grids; 'auto' picks the length per pair the way the BitChord phone does
+  // (autoBars below).
 
   const live = { status: 'idle', bpm: null, conf: null, mix: null, updatedAt: 0 };
   const setStatus = (status, extra = {}) => Object.assign(live, { status, updatedAt: Date.now() }, extra);
@@ -207,9 +208,61 @@
       ? { ...a, bpm: t.bpm, beatIntervalSec: t.beatIntervalSec, firstDownbeatSec: t.firstDownbeatSec, gridConfidence: t.gridConfidence }
       : { ...a, beatIntervalSec: null, firstDownbeatSec: null, gridConfidence: 0 };
   }
-  const phraseAtOrBefore = (g, t) => g.downbeatSec + Math.floor((t - g.downbeatSec) / g.phraseSec) * g.phraseSec;
   const phraseAtOrAfter = (g, t) => g.downbeatSec + Math.ceil((t - g.downbeatSec) / g.phraseSec) * g.phraseSec;
   const downbeatAtOrAfter = (g, t) => g.downbeatSec + Math.ceil((t - g.downbeatSec) / g.barSec) * g.barSec;
+  const downbeatAtOrBefore = (g, t) => g.downbeatSec + Math.floor((t - g.downbeatSec) / g.barSec) * g.barSec;
+
+  // Where the blend starts. BitChord web ends it where the outro begins,
+  // rounded back to a whole phrase, which on a short song left a third of it
+  // unplayed. Here, as on the BitChord phone (TransitionPlanner.kt: the exit
+  // at the content end, pulled back onto a downbeat; never more than 12 s of
+  // music skipped), it plays over the outro and ends on the downbeat a bar
+  // before the song does.
+  const naturalMixOut = (g, cur, dur) => downbeatAtOrBefore(g, cur.durationSec - g.barSec - dur);
+
+  // ───────── Auto blend length (BitChord phone, TransitionPlanner.kt) ─────────
+  // Advanced Automix's adaptiveOverlap/mixPlan: 16 beats, doubled when both
+  // sides of the join are calm (under 0.7 of their song's mean energy); at most
+  // 12 s (16 s calm; a filter ride 8 s) and 40% of the next song. The phone
+  // rounds to whole bars; here the result is the largest of 32/16/8/4 bars that
+  // fits, and never under 4.
+  const AUTO_BAR_CHOICES = [32, 16, 8, 4];
+  const AUTO_BEATS = 16;
+  const AUTO_MAX_SEC = 12;
+  const AUTO_CALM_MAX_SEC = 16;
+  const AUTO_FILTER_MAX_SEC = 8;
+  const CALM_ENERGY = 0.7;
+  const ENERGY_WINDOW_BEATS = 8;
+  const MAX_NEXT_SHARE = 0.4;
+
+  // The song's energy over [from, to] as a share of its mean (null: no curve).
+  function energyShare(a, from, to) {
+    const c = a?.energyCurve;
+    if (!c?.length || !(a.durationSec > 0) || !(a.energy > 0)) return null;
+    const w = a.durationSec / c.length;
+    const i0 = Math.max(0, Math.min(c.length - 1, Math.floor(from / w)));
+    const i1 = Math.max(i0, Math.min(c.length - 1, Math.floor(Math.max(from, to - 1e-6) / w)));
+    let sum = 0;
+    for (let i = i0; i <= i1; i++) sum += c[i];
+    return sum / (i1 - i0 + 1) / a.energy;
+  }
+
+  function autoBars(cur, next, g, entrySec, filter) {
+    const window = ENERGY_WINDOW_BEATS * g.beatSec;
+    const exit = cur.durationSec - g.barSec;
+    const out = energyShare(cur, exit - window, exit);
+    const into = energyShare(next, entrySec, entrySec + window);
+    const calm = out != null && into != null && out < CALM_ENERGY && into < CALM_ENERGY;
+    const beats = AUTO_BEATS * (calm ? 2 : 1);
+    const cap = Math.min(
+      beats * g.beatSec,
+      filter ? AUTO_FILTER_MAX_SEC : calm ? AUTO_CALM_MAX_SEC : AUTO_MAX_SEC,
+      next.durationSec > 0 ? next.durationSec * MAX_NEXT_SHARE : Infinity,
+    );
+    return AUTO_BAR_CHOICES.find((b) => b * g.barSec <= cap + 1e-6) ?? AUTO_BAR_CHOICES[AUTO_BAR_CHOICES.length - 1];
+  }
+  // The bars asked for: the "Up to N bars" setting, or the Auto pick for this pair.
+  const requestedBars = (cur, next, g, entrySec, filter) => (barsSetting === 'auto' ? autoBars(cur, next, g, entrySec, filter) : barsSetting);
 
   // ───────── transition planner (BitChord engine/transition-scheduler.ts) ─────────
   const MIN_GRID_CONFIDENCE = 0.2;
@@ -250,24 +303,22 @@
     const both = !!(from && to);
     const cur = asOutgoing(both ? { ...from, durationSec } : stub(fromId, durationSec));
     const next = both ? to : stub(toId, 0);
-    const bars = transitionBars();
     const fromGrid = gridOf(cur);
     const toGrid = gridOf(next);
 
     if (!fromGrid || cur.gridConfidence < MIN_GRID_CONFIDENCE) {
       return fallback(cur, next, earliest, both ? 'this song has no beat grid at its end' : 'songs not analysed in time');
     }
-    if (!toGrid || next.gridConfidence < MIN_GRID_CONFIDENCE) return filterMix(cur, next, fromGrid, null, bars, pos, earliest, 'next song has no beat grid');
+    if (!toGrid || next.gridConfidence < MIN_GRID_CONFIDENCE) return filterMix(cur, next, fromGrid, null, requestedBars(cur, next, fromGrid, 0, true), pos, earliest, 'next song has no beat grid');
 
     const rate = foldRate(fromGrid.bpm / toGrid.bpm);
-    if (!stretchAllowed(rate)) return filterMix(cur, next, fromGrid, toGrid, bars, pos, earliest, `tempos ${Math.round(Math.abs(rate - 1) * 100)}% apart`);
+    if (!stretchAllowed(rate)) return filterMix(cur, next, fromGrid, toGrid, requestedBars(cur, next, fromGrid, toGrid.downbeatSec, true), pos, earliest, `tempos ${Math.round(Math.abs(rate - 1) * 100)}% apart`);
+    const bars = requestedBars(cur, next, fromGrid, toGrid.downbeatSec, false);
     const effBars = effectiveBlendBars(bars, cur.gridConfidence, next.gridConfidence);
     const dur = effBars * BEATS_PER_BAR * (60 / fromGrid.bpm);
 
-    // outgoing mix-out point
-    const outro = cur.outroStartSec ?? cur.durationSec;
-    let mixOut = phraseAtOrBefore(fromGrid, outro - dur);
-    mixOut = Math.min(mixOut, phraseAtOrBefore(fromGrid, cur.durationSec - dur - fromGrid.barSec));
+    // outgoing mix-out point (naturalMixOut: at the song's end)
+    let mixOut = naturalMixOut(fromGrid, cur, dur);
     if (mixOut < pos) mixOut = phraseAtOrAfter(fromGrid, earliest);   // too late for the natural point: the next phrase
     if (mixOut < earliest) mixOut = downbeatAtOrAfter(fromGrid, earliest);
     if (mixOut + dur > cur.durationSec - 0.3) return filterMix(cur, next, fromGrid, toGrid, bars, pos, earliest, 'too close to the end for a blend');
@@ -291,9 +342,7 @@
   function filterMix(cur, next, fromGrid, toGrid, requested, pos, earliest, reason) {
     let bars = Math.min(requested, FILTER_MAX_BARS);
     let dur = bars * fromGrid.barSec;
-    const outro = cur.outroStartSec ?? cur.durationSec;
-    let mixOut = phraseAtOrBefore(fromGrid, outro - dur);
-    mixOut = Math.min(mixOut, phraseAtOrBefore(fromGrid, cur.durationSec - dur - fromGrid.barSec));
+    let mixOut = naturalMixOut(fromGrid, cur, dur);
     if (mixOut < pos) mixOut = phraseAtOrAfter(fromGrid, earliest);
     if (mixOut < earliest) mixOut = downbeatAtOrAfter(fromGrid, earliest);
     // never past the outgoing song's end: shorten to the bars that still fit
@@ -312,9 +361,10 @@
   }
 
   // AutoMix's fallback: a plain 12 s equal-power fade, no beatmatch, no EQ.
-  // BitChord: it lands on the last 12 s before the outro (the end, for a stub).
+  // BitChord web put it on the last 12 s before the outro; here, like the
+  // blend, it ends with the song.
   function fallback(cur, next, earliest, reason) {
-    const target = (cur.outroStartSec ?? cur.durationSec) - FALLBACK_SEC;
+    const target = cur.durationSec - 0.3 - FALLBACK_SEC;
     const mixOut = Math.max(earliest, target);
     const dur = Math.max(0, Math.min(FALLBACK_SEC, cur.durationSec - 0.3 - mixOut));
     return {

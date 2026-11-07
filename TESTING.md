@@ -82,7 +82,7 @@ Automix on, bars **Auto**. Use dance/pop tracks; seek to ~70 s before the end so
 - [ ] 7.1 HUD: `Automix · waiting/analyzing` → `ready · 128 BPM … 8 bars / 15.0 s from 3:12` (numbers vary). Console: `planned 8 bars … starting on the downbeat`.
 - [ ] 7.2 At the planned time: toast **Automix · 8 bars · 15.0 s · 128 BPM**, the blend starts on a beat and lasts the shown time; halfway the bass of the old song drops out and the new song's comes in.
 - [ ] 7.3 Half-time songs (e.g. Zeddy Will – Bow Bow Bow, Stereo Love): HUD shows ~130 BPM (not 65) and the console says `(detected 65.x)`; it mixes instead of `fallback`.
-- [ ] 7.4 Bars set to 4 / 8 / 16: the planned length changes (16 bars is capped at 30 s).
+- [ ] 7.4 Blend length Up to 4 / 8 / 16 / 32 bars: the planned length changes; Auto plans 4 bars (8 for a calm join). Every blend ends a bar or two before the song does.
 - [ ] 7.5 A song with no clear beat (ballad, spoken intro): HUD `fallback` with a reason, then a normal 6 s crossfade still happens.
 - [ ] 7.6 Lyrics during an automix blend: the old song's lyrics keep going until halfway, then the new song's lyrics take over.
 - [ ] 7.7 First analysis after opening the page can take ~15 s; later ones are faster. If the HUD says `analysis too slow`, note the song.

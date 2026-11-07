@@ -438,7 +438,7 @@
     if (automixToggle) automixToggle.checked = r.automixEnabled !== false;
     if (automixBarsSelect) {
       automixBarsSelect.value = String(r.automixBars || 'auto');
-      if (automixBarsVal) automixBarsVal.textContent = automixBarsSelect.value === 'auto' ? 'Auto adaptive' : automixBarsSelect.value + ' bars';
+      if (automixBarsVal) automixBarsVal.textContent = automixBarsSelect.value === 'auto' ? 'Auto' : 'Up to ' + automixBarsSelect.value + ' bars';
     }
   });
 
@@ -495,7 +495,7 @@
   automixBarsSelect?.addEventListener('change', () => {
     const v = automixBarsSelect.value;
     chrome.storage.local.set({ automixBars: v === 'auto' ? 'auto' : (Number(v) || 8) });
-    if (automixBarsVal) automixBarsVal.textContent = v === 'auto' ? 'Auto adaptive' : v + ' bars';
+    if (automixBarsVal) automixBarsVal.textContent = v === 'auto' ? 'Auto' : 'Up to ' + v + ' bars';
   });
 
   const nerdStatsToggle = document.getElementById('nerdStatsToggle');

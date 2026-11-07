@@ -18,9 +18,10 @@ Vivimusic Web is made by **[Archimetrix](https://github.com/Archimetrix/VIVIMUSI
 
 ### Automix (from BitChord)
 - **Whole songs downloaded early.** As soon as a song plays, the current and the next song in the queue are downloaded and analysed in the background: tempo, key, beat grid (Beat This!), intro and outro, and the sung parts.
-- **Blend.** On a phrase before the outro, the next song comes in time-stretched to the current tempo, locked to the beat. The bass swaps at the midpoint, and afterwards the new song glides back to its own tempo.
+- **Blend.** Over the end of the song, finishing a bar before it ends, the next song comes in time-stretched to the current tempo, locked to the beat. The bass swaps at the midpoint, and afterwards the new song glides back to its own tempo.
 - **Loop mix.** When both songs have clean instrumental bars (judged from synced lyrics, or from a vocal model when there are none), the old song loops 4/2/1 bars while the new one enters, and the tempo ramps across.
 - **Filter mix** for pairs that can't be beatmatched, and a plain 12 s crossfade when nothing better is possible.
+- **Blend length.** Auto picks 4 or 8 bars per pair by the BitChord phone's rules (8 only when both sides are calm, never over 12-16 s); or "Up to 4 / 8 / 16 / 32 bars", BitChord web's setting.
 - **Analysis cache.** Each song is analysed once. The Audio playback card shows how many are saved and has a **Clear** button.
 - A toast shows each mix (bars, length, BPM) and "Blend finished". A pause, seek, skip or ad during a mix stops it cleanly.
 
