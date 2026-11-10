@@ -1,5 +1,5 @@
 /**
- * VIVIMUSIC WEB — popup-info.js
+ * VIVIMUSIC XTEN — popup-info.js
  *
  * Keeps the settings pages compact: every long description (".theme-sub") is
  * folded away behind a small "i" button next to the setting it explains.

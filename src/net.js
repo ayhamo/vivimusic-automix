@@ -1,4 +1,4 @@
-/* VIVIMUSIC WEB — net.js  (content script, isolated world)
+/* VIVIMUSIC XTEN — net.js  (content script, isolated world)
  * Content scripts run "as" music.youtube.com, so the browser treats calls to
  * lyrics / SponsorBlock / iTunes servers as cross-origin and rejects them
  * ("Unsafe attempt to load URL … Domains, protocols and ports must match").

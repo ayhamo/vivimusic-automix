@@ -1,5 +1,5 @@
 /**
- * VIVIMUSIC WEB — lyrics-ui.js
+ * VIVIMUSIC XTEN — lyrics-ui.js
  */
 
 (() => {
@@ -86,7 +86,7 @@
       applyLyricsStyleClasses();
     } catch (e) {
       loadedLyricsFonts.delete(key);
-      console.debug('[Vivimusic] lyrics font failed to load:', key, e);
+      console.debug('[ViviMusic Xten] lyrics font failed to load:', key, e);
     }
   }
 
@@ -157,9 +157,13 @@
   const TAB_POSITION = { lyrics: 1 };
   function findTabByLabel(label) {
     const tabs = [...document.querySelectorAll('ytmusic-player-page tp-yt-paper-tab, ytmusic-player-page yt-tab-shape')];
+    const T = window.__viviTabs;
     for (const tab of tabs) {
-      const text = (tab.textContent || '').trim().toLowerCase();
-      if (text === label) return tab;
+      if (T) {
+        if (T.kindOf(tab, Array.from(tabs)) === label) return tab;
+      } else if ((tab.textContent || '').trim().toLowerCase() === label) {
+        return tab;
+      }
     }
     // Starting the first song from a playlist, YT Music can draw the tab bar
     // with every label still empty and fill the names in only later (seen in
@@ -1736,12 +1740,14 @@
     enableLyricsTabIfDisabled();
     const host = findTabContentHost();
     if (host) {
-      const label = (tab.textContent || '').trim().toLowerCase();
+      const label = window.__viviTabs
+        ? (window.__viviTabs.kindOf(tab) || '')
+        : (tab.textContent || '').trim().toLowerCase();
       // Capture phase: YTM hasn't switched yet, so this is the tab we're leaving.
       const leavingLyrics = isLyricsTabActive();
       if (leavingLyrics && (label === 'comments' || label === 'related')) {
         markStaleNative(host);
-      } else if (label === 'lyrics' || label === 'up next') {
+      } else if (label === 'lyrics' || label === 'up next' || label === 'next') {
         clearStaleNative(host);
       }
       reconcileStale();
@@ -1755,6 +1761,11 @@
   }, true);
 
   watchTabHost();
+  document.addEventListener('vivi-localization-changed', () => {
+    enableLyricsTabIfDisabled();
+    scheduleSync();
+    if (currentTrack && settings.autoSwitchLyrics) clickLyricsTabWithRetry();
+  });
   document.addEventListener('play', requestLyricsTick, true);
   document.addEventListener('playing', requestLyricsTick, true);
   document.addEventListener('timeupdate', requestLyricsTick, true);

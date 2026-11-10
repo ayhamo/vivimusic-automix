@@ -43,7 +43,7 @@
     const top = document.createElement('div'); top.className = 'top';
     const dot = document.createElement('span'); dot.className = 'dot';
     const eyebrow = document.createElement('span'); eyebrow.className = 'eyebrow';
-    eyebrow.textContent = items.length === 1 ? 'Vivimusic · Announcement' : `${items.length} new announcements`;
+    eyebrow.textContent = items.length === 1 ? 'ViviMusic Xten · Announcement' : `${items.length} new announcements`;
     const close = document.createElement('button'); close.className = 'close'; close.type = 'button'; close.setAttribute('aria-label', 'Dismiss announcement'); close.textContent = '×';
     close.addEventListener('click', () => host.remove());
     top.append(dot, eyebrow, close);

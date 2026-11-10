@@ -770,17 +770,30 @@ ytmusic-player #song-media-window.vivi-canvas-main-active .vivi-canvas-native-hi
    a descendant, however large, can ever escape it to beat a
    position:fixed sibling of <body> like the Canvas. So the header itself
    is included here too. */
-tp-yt-paper-dialog,
-tp-yt-iron-dropdown,
-ytmusic-popup-container,
-ytmusic-multi-select-menu,
-ytmusic-add-to-playlist-renderer,
-ytmusic-app-layer,
 ytmusic-nav-bar,
 ytmusic-search-box[opened],
 ytmusic-search-box[opened] .search-container,
 ytmusic-search-box #suggestion-list {
   z-index: 2147483000 !important;
+}
+
+/* Popups (3-dot menu, "Save to playlist", "Share", ...) must sit strictly
+   ABOVE everything else we elevate (nav bar, player bar, app layer). When they
+   shared the same z-index, DOM order decided and a later full-size layer
+   painted over / intercepted clicks on the dialog opened from the menu.
+   Dialogs are one step above dropdowns so a dialog opened from a menu is
+   always the top-most thing and receives hover/clicks. */
+ytmusic-popup-container {
+  z-index: 2147483646 !important;
+}
+tp-yt-iron-dropdown,
+ytmusic-multi-select-menu {
+  z-index: 2147483646 !important;
+}
+tp-yt-paper-dialog,
+ytmusic-add-to-playlist-renderer {
+  z-index: 2147483647 !important;
+  pointer-events: auto !important;
 }
 
 /* Frosted-glass backing for the search-suggestions dropdown. Its native
@@ -1385,6 +1398,68 @@ html.vivi-disc-playing .vivi-disc-tonearm .vivi-arm-drift {
 /* The romanization under an RTL line is Latin text: keep it left-to-right. */
 .vivi-lyrics-line.vivi-lyrics-rtl .vivi-lyrics-roman { direction: ltr; unicode-bidi: isolate; }
 
+/* ─── Automix on the player bar (BitChord web's seek-bar pulse) ───
+   crossfade.js drawMixUi: the coming mix's stretch is lit; during the mix the
+   fill covers the bar and breathes on the beat, the times fade into "Mixing". */
+ytmusic-player-bar #progress-bar #progressContainer .vivi-mix-fill,
+ytmusic-player-bar #progress-bar #progressContainer .vivi-mix-window {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  pointer-events: none;
+}
+ytmusic-player-bar #progress-bar #progressContainer .vivi-mix-fill {
+  width: 0;
+  opacity: 0;
+  background: #fff;
+  border-radius: inherit;
+}
+ytmusic-player-bar #progress-bar #progressContainer .vivi-mix-window {
+  background: rgba(255, 255, 255, 0.45);
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 30%, #000 70%, transparent);
+  mask-image: linear-gradient(to right, transparent, #000 30%, #000 70%, transparent);
+  opacity: 0;
+  transition: opacity 0.5s ease;
+}
+ytmusic-player-bar #progress-bar #progressContainer .vivi-mix-window.vivi-on { opacity: 1; }
+ytmusic-player-bar .vivi-mix-label {
+  position: absolute;
+  opacity: 0;
+  text-align: center;
+  white-space: nowrap;
+  pointer-events: none;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  color: rgba(255, 255, 255, 0.9);
+}
+/* while a mix runs the bar only flashes: the song position (fill, buffered
+   part, knob) isn't what plays, so it waits until the new song plays alone */
+ytmusic-player-bar #progress-bar #primaryProgress,
+ytmusic-player-bar #progress-bar #secondaryProgress,
+ytmusic-player-bar #progress-bar #sliderKnobContainer { transition: opacity 0.4s ease; }
+ytmusic-player-bar.vivi-mixing #progress-bar #primaryProgress,
+ytmusic-player-bar.vivi-mixing #progress-bar #secondaryProgress,
+ytmusic-player-bar.vivi-mixing #progress-bar #sliderKnobContainer { opacity: 0 !important; }
+/* a loop mix holds YouTube's player paused: the music plays on, so show "pause" */
+ytmusic-player-bar.vivi-mix-hold #play-pause-button #button { position: relative; }
+ytmusic-player-bar.vivi-mix-hold #play-pause-button yt-icon { opacity: 0 !important; }
+ytmusic-player-bar.vivi-mix-hold #play-pause-button #button::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 40px;
+  height: 40px;
+  background: #fff;
+  /* YouTube Music's own pause icon */
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M6.5 3A1.5 1.5 0 005 4.5v15A1.5 1.5 0 006.5 21h2a1.5 1.5 0 001.5-1.5v-15A1.5 1.5 0 008.5 3h-2Zm9 0A1.5 1.5 0 0014 4.5v15a1.5 1.5 0 001.5 1.5h2a1.5 1.5 0 001.5-1.5v-15A1.5 1.5 0 0017.5 3h-2Z'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M6.5 3A1.5 1.5 0 005 4.5v15A1.5 1.5 0 006.5 21h2a1.5 1.5 0 001.5-1.5v-15A1.5 1.5 0 008.5 3h-2Zm9 0A1.5 1.5 0 0014 4.5v15a1.5 1.5 0 001.5 1.5h2a1.5 1.5 0 001.5-1.5v-15A1.5 1.5 0 0017.5 3h-2Z'/%3E%3C/svg%3E") center / contain no-repeat;
+  pointer-events: none;
+}
+
 /* ─── ViVi Automix On-Screen HUD / Toast ─── */
 #vivi-automix-toast {
   position: fixed;
@@ -1578,6 +1653,9 @@ html.vivi-pill-player ytmusic-player-bar::after {
    bottom edge, clear of both the rim and the artist line. */
 html.vivi-pill-player ytmusic-player-bar #progress-bar.ytmusic-player-bar {
   top: calc(100% - 28px) !important;
+  /* YouTube Music now centres it with translateY(-50%), which lifts it 16px
+     into the artist line */
+  transform: none !important;
   left: 50% !important;
   right: auto !important;
   width: min(320px, 34%) !important;

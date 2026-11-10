@@ -1,5 +1,5 @@
 
-/* VIVIMUSIC WEB — Spotify Canvas integration.
+/* VIVIMUSIC XTEN — Spotify Canvas integration.
  * Uses the user's own Spotify web-player session locally.
  * Canvas endpoint is undocumented and can change without notice.
  */

@@ -1,5 +1,5 @@
 /**
- * VIVIMUSIC WEB — lrcred.js (background / service worker)
+ * VIVIMUSIC XTEN — lrcred.js (background / service worker)
  *
  * lrc.red is keyed by ISRC:
  *   https://lrc.red/s/<ISRC>.ttml   word-synced (TTML)

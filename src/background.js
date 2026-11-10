@@ -1,5 +1,5 @@
 /**
- * VIVIMUSIC WEB — background.js
+ * VIVIMUSIC XTEN — background.js
  */
 
 'use strict';

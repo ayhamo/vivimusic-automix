@@ -815,7 +815,7 @@ class Kawarp {
     }
 }
 
-// Exposed as a global for Vivimusic's classic (non-module) content scripts.
+// Exposed as a global for ViviMusic Xten's classic (non-module) content scripts.
 if (typeof window !== 'undefined') {
   window.Kawarp = Kawarp;
 }

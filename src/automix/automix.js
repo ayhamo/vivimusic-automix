@@ -271,6 +271,9 @@
   const FULL_SWAP_MIN_BARS = 8;
   const MAX_SLOW_DOWN = 0.1;
   const MAX_SPEED_UP = 0.25;
+  // BitChord's Advanced Automix (CrossfadeController.rampOutgoing): a song is
+  // brought to a faster tempo one 0.75% step per beat.
+  const TEMPO_STEP_PER_BEAT = 0.0075;
   const FILTER_MAX_BARS = 8;
   const FALLBACK_SEC = 12;
 
@@ -311,17 +314,28 @@
     }
     if (!toGrid || next.gridConfidence < MIN_GRID_CONFIDENCE) return filterMix(cur, next, fromGrid, null, requestedBars(cur, next, fromGrid, 0, true), pos, earliest, 'next song has no beat grid');
 
-    const rate = foldRate(fromGrid.bpm / toGrid.bpm);
-    if (!stretchAllowed(rate)) return filterMix(cur, next, fromGrid, toGrid, requestedBars(cur, next, fromGrid, toGrid.downbeatSec, true), pos, earliest, `tempos ${Math.round(Math.abs(rate - 1) * 100)}% apart`);
+    const ratio = foldRate(fromGrid.bpm / toGrid.bpm);
+    if (!stretchAllowed(ratio)) return filterMix(cur, next, fromGrid, toGrid, requestedBars(cur, next, fromGrid, toGrid.downbeatSec, true), pos, earliest, `tempos ${Math.round(Math.abs(ratio - 1) * 100)}% apart`);
+    // Tempo only ever moves up (BitChord's Advanced Automix): slowing a song
+    // with its pitch kept repeats slivers of it, which smears piano and voices,
+    // while speeding one up stays clean. The next song faster: the playing one
+    // is brought up to its tempo over its last beats before the blend and the
+    // next song plays at its own speed. The next song slower: it is sped up.
+    const rate = ratio < 1 ? 1 : ratio;               // the next song's
+    const outRate = ratio < 1 ? 1 / ratio : 1;        // the playing song's, from the blend on
+    const rampBeats = outRate > 1.0001 ? Math.ceil((outRate - 1) / TEMPO_STEP_PER_BEAT) : 0;
+    const rampSongSec = rampBeats * fromGrid.beatSec;  // song time the ramp covers, ending at the mix-out
     const bars = requestedBars(cur, next, fromGrid, toGrid.downbeatSec, false);
     const effBars = effectiveBlendBars(bars, cur.gridConfidence, next.gridConfidence);
-    const dur = effBars * BEATS_PER_BAR * (60 / fromGrid.bpm);
+    const outSpan = effBars * fromGrid.barSec;        // the playing song's seconds the blend covers
+    const dur = outSpan / outRate;                    // output seconds
 
-    // outgoing mix-out point (naturalMixOut: at the song's end)
-    let mixOut = naturalMixOut(fromGrid, cur, dur);
-    if (mixOut < pos) mixOut = phraseAtOrAfter(fromGrid, earliest);   // too late for the natural point: the next phrase
-    if (mixOut < earliest) mixOut = downbeatAtOrAfter(fromGrid, earliest);
-    if (mixOut + dur > cur.durationSec - 0.3) return filterMix(cur, next, fromGrid, toGrid, bars, pos, earliest, 'too close to the end for a blend');
+    // outgoing mix-out point (naturalMixOut: at the song's end); the ramp before it has to fit too
+    const first = earliest + rampSongSec;
+    let mixOut = naturalMixOut(fromGrid, cur, outSpan);
+    if (mixOut < pos + rampSongSec) mixOut = phraseAtOrAfter(fromGrid, first);   // too late for the natural point: the next phrase
+    if (mixOut < first) mixOut = downbeatAtOrAfter(fromGrid, first);
+    if (mixOut + outSpan > cur.durationSec - 0.3) return filterMix(cur, next, fromGrid, toGrid, bars, pos, earliest, 'too close to the end for a blend');
 
     // incoming mix-in point: so that its pre-full-energy phrase lands at the blend's end
     const introEnd = next.introEndSec ?? 0;
@@ -332,8 +346,9 @@
     return {
       style: 'blend', fallback: false, reason: null,
       mixOutTrackTime: mixOut, durationSec: dur, mixInTrackTime: mixIn, rate,
+      outRate, rampBeats, rampSongSec, beatSec: fromGrid.beatSec,
       bars: effBars, swapDb: effBars >= FULL_SWAP_MIN_BARS ? KILL_DB : SHORT_BLEND_KILL_DB,
-      barSec: fromGrid.barSec, bpm: fromGrid.bpm, inBpm: toGrid.bpm,
+      barSec: fromGrid.barSec / outRate, bpm: fromGrid.bpm * outRate, outBpm: fromGrid.bpm, inBpm: toGrid.bpm,
     };
   }
 
@@ -407,7 +422,7 @@
   const IN_SEARCH_SEC = 45;
   const OUT_REGION_SEC = OUT_SEARCH_SEC + 5;
   const IN_REGION_SEC = IN_SEARCH_SEC + 40;
-  const LOOP_PREPARE_SEC = OUT_SEARCH_SEC + 40;   // prepared (bars chosen, decks loaded) from this far before the end
+
   const LOOP_SETUP_SEC = 15;                      // the outgoing loop starts at least this far ahead of the playhead
   const HANDOVER_SEC = 0.025;                     // identical audio crossed this quickly is heard as one
   const BASS_CUT_DB = -18;
@@ -660,7 +675,7 @@
     planLoopMix,
     sungSpans,
     loopSchedule,
-    LOOP: { OUT_REGION_SEC, IN_REGION_SEC, LOOP_PREPARE_SEC, LOOP_SETUP_SEC },
+    LOOP: { OUT_REGION_SEC, IN_REGION_SEC, LOOP_SETUP_SEC },
     warmup,
     setStatus,
     getLiveState: () => ({ ...live }),

@@ -158,7 +158,7 @@ async function transferOne(sel,si,n,lockedKey){
   if(cur.account.key!==lockedKey)throw fatal(`YouTube Music account changed to ${acctName(cur.account)}. Stopped so nothing is added to the wrong account.`);
   setRow(sel.id,'active','Creating playlist…',100);setOverall(si,0.88,n);
   writeLog(`Creating “${sel.name}”…`);
-  const cr=await ytm({type:'VIVI_YTM_TRANSFER_CREATE',title:sel.name,description:`Transferred from Spotify with VIVIMUSIC on ${new Date().toLocaleDateString()}`});
+  const cr=await ytm({type:'VIVI_YTM_TRANSFER_CREATE',title:sel.name,description:`Transferred from Spotify with ViviMusic Xten on ${new Date().toLocaleDateString()}`});
   const ids=found.map(x=>x.videoId);
   let added=0;
   for(let i=0;i<ids.length;i+=50){

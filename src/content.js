@@ -1,5 +1,5 @@
 /**
- * VIVIMUSIC WEB — content.js
+ * VIVIMUSIC XTEN — content.js
  */
 
 (() => {
@@ -226,6 +226,7 @@
         '.image-wrapper img, ytmusic-thumbnail img, #thumbnail img, .thumbnail-image-wrapper img'
       );
       if (thumb?.src) url = thumb.src;
+      if (!url && !bar) url = window.__viviLayoutCompat?.fallbackArtworkUrl() || null;
     }
     if (!url) url = imageUrl;
     if (url) {
@@ -478,6 +479,63 @@
     return type !== 'MUSIC_VIDEO_TYPE_ATV';
   }
 
+
+  // ── "Is this really a song yet?" gate ──────────────────────────────────
+  // On a slow network YT Music first lays out its 16:9 video surface (the
+  // black rectangle) and only switches to square art-track presentation once
+  // the new media has loaded. isRealMusicVideo() deliberately answers "no"
+  // while nothing is known yet, so Canvas used to pop up on top of that black
+  // video surface. This stricter check requires positive evidence that the
+  // CURRENT track is an art-track song (square media, or API says ATV for the
+  // current videoId) before Canvas is allowed to become visible. If YT never
+  // gives us a signal we still reveal after a grace period so Canvas can
+  // never be blocked forever.
+  const SONG_CONFIRM_GRACE_MS = 1200;
+  let songConfirmKey = null;
+  let songConfirmSince = 0;
+  let songConfirmRetryTimer = null;
+
+  function isSongSurfaceConfirmed() {
+    try {
+      if (nativeVideoIsWidescreen() === false) return true;
+      const player = document.querySelector('#movie_player') || document.querySelector('ytmusic-player');
+      const resp = typeof player?.getPlayerResponse === 'function' ? player.getPlayerResponse() : null;
+      const apiType = resp?.videoDetails?.musicVideoType || null;
+      const apiId = resp?.videoDetails?.videoId || null;
+      let curId = null;
+      try { curId = getRobustVideoId(); } catch { /* no-op */ }
+      const apiIsCurrent = !apiId || !curId || apiId === curId; // ignore the previous track's response
+      if (apiType === 'MUSIC_VIDEO_TYPE_ATV' && apiIsCurrent) return true;
+    } catch { /* fall through to grace period */ }
+    if (songConfirmKey !== currentTrackKey) {
+      songConfirmKey = currentTrackKey;
+      songConfirmSince = Date.now();
+    }
+    const elapsed = Date.now() - songConfirmSince;
+    // Fast path: the page API is often unreadable from a content script, so also
+    // accept the player bar once it has rendered a normal (non-video) byline.
+    if (elapsed > 350 && document.querySelector('.ytmusic-player-bar .byline, .ytmusic-player-bar yt-formatted-string.byline') && !playerBarLooksLikeRealVideo()) return true;
+    return elapsed > SONG_CONFIRM_GRACE_MS;
+  }
+
+  function scheduleSongConfirmRetry() {
+    if (songConfirmRetryTimer) return;
+    songConfirmRetryTimer = setTimeout(() => {
+      songConfirmRetryTimer = null;
+      try { syncMainCanvasToRoute(); } catch { /* no-op */ }
+    }, 150);
+  }
+
+  // Re-evaluate the moment the new media's metadata arrives (media events
+  // don't bubble, so listen in the capture phase on the document).
+  ['loadedmetadata', 'loadeddata', 'emptied'].forEach((evt) => {
+    document.addEventListener(evt, (e) => {
+      if (e.target && e.target.tagName === 'VIDEO') {
+        try { syncMainCanvasToRoute(); } catch { /* no-op */ }
+      }
+    }, true);
+  });
+
   // Shared with lyrics-ui.js (loaded earlier in the content-script bundle,
   // but it only calls this lazily on track changes — by then this IIFE has
   // long since run and set it) so both the Canvas overlay and the lyrics
@@ -496,6 +554,10 @@
   // under one key while playback looked the other key up, so Alt+C showed
   // "Not cached" for the track that was, in fact, already cached (just
   // under a sibling key). Both call sites now go through this one function.
+  function getBarEl() {
+    return document.querySelector('ytmusic-player-bar') || window.__viviLayoutCompat?.getMiniplayer() || null;
+  }
+
   function bylineArtistText(bylineEl) {
     if (!bylineEl) return null;
     const text = bylineEl.textContent?.trim()?.split('•')[0]?.trim();
@@ -508,6 +570,8 @@
       '.ytmusic-player-bar yt-formatted-string.byline, .ytmusic-player-bar .byline'
     );
     if (!titleEl || !bylineEl) {
+      const ms = window.__viviLayoutCompat?.mediaSessionTrack();
+      if (ms) return { song: ms.song, artist: ms.artist, videoId: getRobustVideoId(), album: ms.album, year: null, duration: getCurrentDuration() };
       const parts = document.title.replace(' - YouTube Music', '').split(' · ');
       if (parts.length >= 2) return { song: parts[0].trim(), artist: parts[1].trim() };
       return null;
@@ -532,7 +596,7 @@
     const byline = document.querySelector(
       '.ytmusic-player-bar yt-formatted-string.byline, .ytmusic-player-bar .byline'
     );
-    if (!byline) return null;
+    if (!byline) return window.__viviLayoutCompat?.mediaSessionTrack()?.album || null;
     const links = byline.querySelectorAll('a');
     if (links.length < 2) return null;
     const album = links[links.length - 1].textContent?.trim();
@@ -1434,6 +1498,13 @@
     // Canvas can be shown as soon as the full-player route is active and its
     // own media is ready.
     if (!player || !isMainPlayerPageActive() || document.hidden) return false;
+    if (!isSongSurfaceConfirmed()) {
+      player.style.visibility = 'hidden';
+      player.style.opacity = '0';
+      player.dataset.viviCanvasRouteHidden = '1';
+      scheduleSongConfirmRetry();
+      return false;
+    }
     const media = player.querySelector('.vivi-canvas-player-media');
     const ready = !!media && (
       media.dataset.viviCanvasReady === '1' ||
@@ -1536,6 +1607,12 @@
         // actual full-player route and the Canvas media itself.
         if (!isMainPlayerPageActive() || document.hidden) return;
         if (canvasExpandRevealPending) return;
+        // Still unsure whether YT is showing a song or its black video surface:
+        // keep the Canvas hidden; the retry re-runs the route sync, which reveals it.
+        if (!isSongSurfaceConfirmed()) {
+          scheduleSongConfirmRetry();
+          return;
+        }
 
         hideNativeArtwork();
         document.documentElement.classList.add('vivi-canvas-large', 'vivi-canvas-portrait');
@@ -2128,6 +2205,7 @@
   function isMainPlayerPageActive() {
     const path = window.location.pathname || '';
     if (path !== '/watch' && !path.startsWith('/watch/')) return false;
+    { const c = window.__viviLayoutCompat?.playerPageActive(); if (c !== undefined) return c; }
 
     // The /watch route stays active even after the player is minimized to
     // the mini-player bar (YT Music doesn't navigate away on minimize), so
@@ -2177,6 +2255,7 @@
   };
 
   function playerTabIconKind(tab) {
+    if (window.__viviTabs) return window.__viviTabs.kindOf(tab);
     const label = `${tab.getAttribute('aria-label') || ''} ${tab.querySelector('.tab-content')?.textContent || ''}`
       .toLowerCase().replace(/\s+/g, ' ').trim();
     if (label.includes('up next') || label.includes('queue')) return 'next';
@@ -2239,6 +2318,14 @@
       tab.dataset.viviPlayerTabIcon = kind;
     });
   }
+
+  // Language localization toggled (or the tab strip is otherwise re-read):
+  // drop existing decorations and re-evaluate every tab with the new rules.
+  document.addEventListener('vivi-localization-changed', () => {
+    document.querySelectorAll('.vivi-player-tab-icon').forEach((icon) => icon.remove());
+    document.querySelectorAll('[data-vivi-player-tab-icon]').forEach((tab) => delete tab.dataset.viviPlayerTabIcon);
+    if (playerTabIconsEnabled) decoratePlayerTabIcons();
+  });
 
   function applyPillPlayer(enabled) {
     document.documentElement.classList.toggle('vivi-pill-player', enabled !== false);
@@ -2679,6 +2766,14 @@
       // 1-second settle period even when its media is already cached/ready.
       if (canvasExpandRevealPending) {
         hideMainCanvasPlayer({ restoreArtwork: true });
+        return;
+      }
+
+      // Don't draw over YT Music's black video surface while it is still
+      // working out whether this track is a song or a video (slow networks).
+      if (!isSongSurfaceConfirmed()) {
+        hideMainCanvasPlayer({ restoreArtwork: true });
+        scheduleSongConfirmRetry();
         return;
       }
 
@@ -3380,7 +3475,7 @@
       }
     }
     if (!playerBarTextObserver) {
-      const bar = document.querySelector('ytmusic-player-bar');
+      const bar = getBarEl();
       if (bar) {
         playerBarTextObserver = new MutationObserver(schedulePoll);
         playerBarTextObserver.observe(bar, { characterData: true, childList: true, subtree: true });
@@ -3565,11 +3660,11 @@
     // The polling loop drives lyrics/last.fm/track-change detection as well as both
     // artwork sources, so it always starts — the two canvas toggles only gate which
     // artwork source(s) handleTrackChange is allowed to use, not the loop itself.
-    if (document.querySelector('ytmusic-player-bar')) {
+    if (getBarEl()) {
       startPolling();
     } else {
       const obs = new MutationObserver(() => {
-        if (document.querySelector('ytmusic-player-bar')) { obs.disconnect(); startPolling(); }
+        if (getBarEl()) { obs.disconnect(); startPolling(); }
       });
       obs.observe(document.documentElement, { childList: true, subtree: true });
     }
@@ -3856,6 +3951,7 @@
       }
       if ('playerTabIcons' in msg) applyPlayerTabIcons(msg.playerTabIcons);
       if ('pillPlayerEnabled' in msg) applyPillPlayer(msg.pillPlayerEnabled);
+      if ('layoutCompatEnabled' in msg) reCheckCanvas = true;
       if ('spotifyCanvasEnabled' in msg) {
         spotifyCanvasEnabled = msg.spotifyCanvasEnabled !== false && !discStyleEnabled;
         reCheckCanvas = true;

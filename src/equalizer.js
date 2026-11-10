@@ -1,4 +1,4 @@
-/* VIVIMUSIC WEB — equalizer.js
+/* VIVIMUSIC XTEN — equalizer.js
  * A lightweight 3-band EQ (Low / Mid / High) + a synthetic "Room" reverb
  * send, wired onto YouTube Music's own <video> element via the Web Audio
  * API. Ships with a few one-click presets (Bass Boost, Clear Vocals,

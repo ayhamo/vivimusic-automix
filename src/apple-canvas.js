@@ -1,5 +1,5 @@
 /**
- * VIVIMUSIC WEB — apple-canvas.js
+ * VIVIMUSIC XTEN — apple-canvas.js
  *
  * Fetches Apple Music's animated "motion artwork" (Canvas) directly from
  * Apple's own private catalog API, the same way the official web player

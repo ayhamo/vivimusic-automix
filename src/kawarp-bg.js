@@ -1,4 +1,4 @@
-/* VIVIMUSIC WEB — kawarp-bg.js
+/* VIVIMUSIC XTEN — kawarp-bg.js
  *
  * Wires @kawarp/core (src/kawarp.js, loaded as a global `Kawarp` before this
  * script) into the ambient full-page background layer that content.js
@@ -331,7 +331,8 @@
 
   function readBarThumbUrl() {
     const bar = document.querySelector('ytmusic-player-bar');
-    const img = bar?.querySelector(BAR_IMG_SELECTOR);
+    let img = bar?.querySelector(BAR_IMG_SELECTOR);
+    if (!bar) img = window.__viviLayoutCompat?.coverImg() || img;
     const src = img?.currentSrc || img?.src || '';
     // Ignore empty / inline placeholders YouTube Music shows while loading.
     if (!src || src.startsWith('data:') || src.startsWith('blob:') || src === location.href || src === location.origin + '/') return null;
@@ -341,6 +342,7 @@
   function syncFromBar() {
     barSyncScheduled = false;
     const url = readBarThumbUrl();
+    if (url && window.__viviLayoutCompat && !window.__viviLayoutCompat.shouldApplyCover(artKey(url))) return;
     if (url && artKey(url) !== lastUrl) applyArtwork(url);
   }
 
@@ -351,7 +353,7 @@
   }
 
   function watchBarThumb() {
-    const bar = document.querySelector('ytmusic-player-bar');
+    const bar = document.querySelector('ytmusic-player-bar') || window.__viviLayoutCompat?.coverWatchEl() || null;
     if (!bar) { setTimeout(watchBarThumb, 500); return; }
     if (barObserver) return;
     barObserver = new MutationObserver(scheduleBarSync);

@@ -1,5 +1,5 @@
 /**
- * VIVIMUSIC WEB — sponsorblock.js
+ * VIVIMUSIC XTEN — sponsorblock.js
  *
  * Fetches SponsorBlock "Non-Music Section" segments for the current video
  * (talking/intro/outro/skit parts of a music video that aren't the song
@@ -7,7 +7,7 @@
  * exposes them so content.js can auto-skip through them.
  *
  * ATTRIBUTION / LICENSING
- *   This file is original Vivimusic Web code. It only calls SponsorBlock's
+ *   This file is original ViviMusic Xten code. It only calls SponsorBlock's
  *   public HTTP API; it contains no code from the SponsorBlock browser
  *   extension (GPL-3.0).
  *   Segment data comes from SponsorBlock (https://sponsor.ajay.app/) by

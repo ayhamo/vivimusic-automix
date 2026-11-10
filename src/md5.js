@@ -1,5 +1,5 @@
 /**
- * VIVIMUSIC WEB — md5.js
+ * VIVIMUSIC XTEN — md5.js
  */
 'use strict';
 

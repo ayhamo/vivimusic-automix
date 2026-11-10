@@ -1,0 +1,98 @@
+/* Styles for YouTube Music's layout A/B test (new miniplayer instead of the
+   classic player bar). Every rule is scoped to html.vivi-layout-compat, which
+   layout-compat.js sets automatically only when that layout is detected. */
+
+/* The new miniplayer sits above our Canvas (z-index 9999) but BELOW YouTube's
+   dialogs/menus (the main CSS puts those at 2147483000), so a popup can never
+   be covered by it. No pointer-events override: YouTube controls that. */
+html.vivi-layout-compat ytmusic-miniplayer {
+  z-index: 100000 !important;
+}
+
+/* Theme: same tint as the classic bar */
+html.vivi-layout-compat.vivi-theme-on ytmusic-miniplayer {
+  background: var(--ui-color);
+}
+html.vivi-layout-compat #layout[player-ui-state="PLAYER_PAGE_OPEN"] ytmusic-miniplayer {
+  background: transparent !important;
+}
+
+/* Floating pill for the new miniplayer (only if the classic bar is absent) */
+html.vivi-layout-compat.vivi-pill-player #layout:not(:has(ytmusic-player-bar)) ytmusic-miniplayer:not([hidden]) {
+  position: fixed !important;
+  left: 0 !important;
+  right: 0 !important;
+  bottom: 14px !important;
+  width: min(1120px, calc(100vw - 32px)) !important;
+  height: 72px !important;
+  margin-inline: auto !important;
+  padding-inline: 20px !important;
+  box-sizing: border-box !important;
+  border: 0 !important;
+  border-radius: 999px !important;
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.20) 0%, rgba(255,255,255,0.07) 50%, rgba(255,255,255,0.11) 100%),
+    rgba(255,255,255,0.07) !important;
+  -webkit-backdrop-filter: blur(32px) saturate(1.7) brightness(1.08) !important;
+  backdrop-filter: blur(32px) saturate(1.7) brightness(1.08) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.50),
+    inset 0 -1px 0 rgba(255,255,255,0.10),
+    0 12px 32px rgba(0,0,0,0.38),
+    0 2px 8px rgba(0,0,0,0.25) !important;
+}
+html.vivi-layout-compat.vivi-pill-player #layout:not(:has(ytmusic-player-bar)) ytmusic-miniplayer:not([hidden]) .ytMusicMiniPlayerLeftSection,
+html.vivi-layout-compat.vivi-pill-player #layout:not(:has(ytmusic-player-bar)) ytmusic-miniplayer:not([hidden]) .ytMusicMiniPlayerRightSection {
+  min-width: 0 !important;
+}
+html.vivi-layout-compat.vivi-pill-player #layout:not(:has(ytmusic-player-bar)) ytmusic-miniplayer:not([hidden]) .ytMusicMiniPlayerProgressBarWrapper {
+  top: auto !important;
+  bottom: 8px !important;
+  left: 50% !important;
+  right: auto !important;
+  width: min(320px, 34%) !important;
+  transform: translateX(-50%) !important;
+}
+/* Let the page scroll UNDER the floating pill instead of stopping 72-100px
+   above the bottom (that dead strip looked like a bar). Only on normal pages;
+   the full player keeps YouTube's own spacing. */
+html.vivi-layout-compat.vivi-pill-player #layout:not(:has(ytmusic-player-bar)):not([player-page-open]) {
+  --ytmusic-player-bar-height: 0px;
+}
+html.vivi-layout-compat.vivi-pill-player #layout:not(:has(ytmusic-player-bar)):not([player-page-open]) > #content {
+  box-sizing: border-box !important;
+  padding-bottom: 104px !important;
+}
+@media (max-width: 720px) {
+  html.vivi-layout-compat.vivi-pill-player #layout:not(:has(ytmusic-player-bar)) ytmusic-miniplayer:not([hidden]) {
+    width: calc(100vw - 16px) !important;
+    padding-inline: 12px !important;
+  }
+}
+@media (prefers-reduced-transparency: reduce) {
+  html.vivi-layout-compat.vivi-pill-player #layout:not(:has(ytmusic-player-bar)) ytmusic-miniplayer:not([hidden]) {
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+    background: rgba(28,28,32,0.92) !important;
+  }
+}
+
+/* The full-width bar behind the pill: hide it so the page shows through and
+   the miniplayer really floats (same as the classic pill does) */
+html.vivi-layout-compat.vivi-pill-player #layout:not(:has(ytmusic-player-bar)) #player-bar-background {
+  display: none !important;
+}
+
+/* Elapsed / total time label injected by layout-compat.js when YouTube's own
+   time display is hidden or empty in the new miniplayer */
+html.vivi-layout-compat .vivi-compat-time {
+  flex: none;
+  align-self: center;
+  margin-right: 10px;
+  font-size: 12px;
+  line-height: 1;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  color: rgba(255,255,255,0.78);
+  pointer-events: none;
+}

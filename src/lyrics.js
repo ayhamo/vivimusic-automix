@@ -1,5 +1,5 @@
 /**
- * VIVIMUSIC WEB — lyrics.js
+ * VIVIMUSIC XTEN — lyrics.js
  */
 
 (() => {

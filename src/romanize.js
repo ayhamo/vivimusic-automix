@@ -1,5 +1,5 @@
 /**
- * VIVIMUSIC WEB — romanize.js
+ * VIVIMUSIC XTEN — romanize.js
  *
  * Offline romanization for lyrics:
  *   Korean (Revised Romanization, with the usual sound changes)

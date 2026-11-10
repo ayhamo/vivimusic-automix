@@ -1,20 +1,20 @@
 <div align="center">
 
-<img src="icons/icon128.png" alt="Vivimusic Web" width="96" height="96" />
+<img src="icons/icon128.png" alt="ViviMusic Xten" width="96" height="96" />
 
-# Vivimusic Web
+# ViviMusic Xten
 
 **Apple Music–style Canvas artwork, Spotify Canvas, synced lyrics with romanization, a built-in equalizer, crossfade between songs, Last.fm scrobbling, Spotify → YouTube Music playlist transfer tool for YouTube Music and many more.**
 
 [![Manifest](https://img.shields.io/badge/Manifest-V3-ff6b6b?style=flat-square)](#)
-[![Version](https://img.shields.io/badge/Version-10.2.0-4ecdc4?style=flat-square)](#)
+[![Version](https://img.shields.io/badge/Version-11.1-4ecdc4?style=flat-square)](#)
 [![Browsers](https://img.shields.io/badge/Chrome%20%7CFirefox%20%7C%20All%20Firefox%20Based%20Browsers%20%7cAll%20Chromium%20Browsers-supported-6c5ce7?style=flat-square)](#)
 [![Copyright](https://img.shields.io/badge/Copyright-%C2%A9%202026%20Archimetrix.%20All%20rights%20reserved-f39c12?style=flat-square)](LICENSE)
 </div>
 
 ---
 
-Vivimusic Web is a browser extension that reskins **[music.youtube.com](https://music.youtube.com)** with animated Canvas-style backgrounds (like Apple Music/Spotify Canvas), word-synced lyrics, an audio equalizer with crossfade between songs, SponsorBlock skipping, Last.fm scrobbling, and a dark, glassy theme — without needing a separate desktop app .
+ViviMusic Xten is a browser extension that reskins **[music.youtube.com](https://music.youtube.com)** with animated Canvas-style backgrounds (like Apple Music/Spotify Canvas), word-synced lyrics, an audio equalizer with crossfade between songs, SponsorBlock skipping, Last.fm scrobbling, and a dark, glassy theme — without needing a separate desktop app .
 
 This extension is **not published on the Chrome Web Store**. It's distributed as source from this repository and loaded manually as an "unpacked" extension. Follow the installation guide below — it takes about a minute.
 
@@ -28,7 +28,7 @@ This extension is **not published on the Chrome Web Store**. It's distributed as
 <div align="center">
 
 <a href="https://youtu.be/d4SHceAjRGk">
-  <img src="https://github.com/Archimetrix/storage-project-files/blob/main/random-share/vivimusicdemo.gif" alt="Vivimusic Web demo — click to watch the full video" width="720" />
+  <img src="https://github.com/Archimetrix/storage-project-files/blob/main/random-share/vivimusicdemo.gif" alt="ViviMusic Xten demo — click to watch the full video" width="720" />
 </a>
 
 **Click the preview above to watch the full video** 
@@ -37,19 +37,58 @@ This extension is **not published on the Chrome Web Store**. It's distributed as
 
 ---
 ## 📥 Download
-<a href="https://github.com/Archimetrix/VIVIMUSIC_WEB/releases" target="_blank">
+<a href="https://github.com/Archimetrix/VIVIMUSIC_XTEN/releases" target="_blank">
     <img src="https://img.shields.io/badge/Download_ZIP-101010?style=for-the-badge&logo=github&logoColor=white" alt="Download ZIP" height="56">
   </a>
-<a href="https://addons.mozilla.org/en-US/firefox/addon/vivimusicweb/" target="_blank">
+<a href="https://addons.mozilla.org/en-US/firefox/addon/vivimusicxten/" target="_blank">
     <img src="https://blog.mozilla.org/addons/files/2020/04/get-the-addon-fx-apr-2020.svg" alt="Get the Add-on for Firefox" height="56">
   </a>
   
  **Note:** The Chromium build works on Chrome, Brave, Opera, Edge, Vivaldi and other Chromium browsers . Please use the **Download ZIP** button above and follow the quick **Local Installation** guide below.
 ---
 
+## Screenshots
+
+<div align="center">
+
+<img src="https://raw.githubusercontent.com/Archimetrix/storage-project-files/main/vivimusicwebfiles/spotify%20canvas%20and%20synced%20lyrics%20with%20animation.png" alt="Spotify Canvas &amp; synced lyrics" width="800" />
+
+<sub><b>Spotify Canvas &amp; synced lyrics</b> — Looping Spotify Canvas video behind the player, with word-by-word synced lyrics and animated highlighting.</sub>
+
+<br />
+
+<img src="https://raw.githubusercontent.com/Archimetrix/storage-project-files/main/vivimusicwebfiles/Different%20Fonts%20and%20lyrics%20animations.png" alt="Lyrics fonts &amp; animations" width="800" />
+
+<sub><b>Lyrics fonts &amp; animations</b> — Pick from bundled fonts and switch between highlight styles such as Fill sweep, Glow, Word bounce, Smooth zoom, Apple Music and Fluid flow.</sub>
+
+<br />
+
+<img src="https://raw.githubusercontent.com/Archimetrix/storage-project-files/main/vivimusicwebfiles/vinyl%20disc%20appearance.png" alt="Vinyl disc appearance" width="800" />
+
+<sub><b>Vinyl disc appearance</b> — Show the artwork as a rotating record with a tonearm that parks on pause, plus an optional shine effect.</sub>
+
+<br />
+
+<img src="https://raw.githubusercontent.com/Archimetrix/storage-project-files/main/vivimusicwebfiles/Glassy%20floating%20miniplayer%20-modified%20icons%20instead%20of%20description.png" alt="Glass floating mini player" width="800" />
+
+<sub><b>Glass floating mini player</b> — A floating liquid-glass pill player bar, with icon-only player tabs instead of text labels.</sub>
+
+<br />
+
+<img src="https://raw.githubusercontent.com/Archimetrix/storage-project-files/main/vivimusicwebfiles/Spotify%20to%20YTmusic%20playlists%20transfer.png" alt="Spotify → YouTube Music transfer" width="800" />
+
+<sub><b>Spotify → YouTube Music transfer</b> — Move liked songs and playlists from Spotify to YouTube Music in a few clicks from a dedicated transfer window.</sub>
+
+<br />
+
+</div>
+
+---
+
 ## Table of Contents
 
 - [Watch the Extension in Action](#watch-the-extension-in-action)
+- [Screenshots](#screenshots)
 - [Features](#features)
 - [Installation Guide](#installation-guide)
   - [Chrome / Brave / Vivaldi / Opera](#chrome--edge--brave--vivaldi--opera)
@@ -72,7 +111,7 @@ This extension is **not published on the Chrome Web Store**. It's distributed as
 
 - 🎨 **Canvas Artwork** — Fetches animated, Apple Music–style Canvas videos (or high-res artwork as a fallback) for the currently playing song and blends it into the player thumbnail and page background. If a track has both Apple Music artwork and a Spotify Canvas, you choose which one is preferred.
 - 🖼️ **Spotify Canvas** — Spotify Canvas support for YT Music songs. Connect with a one-click Spotify login or by supplying your `sp_dc` cookie locally.
-- 🔄 **Spotify → YouTube Music Playlist Transfer** — Transfer your Spotify playlists and Liked Songs directly from the browser into YouTube Music without sending your library to a VIVIMUSIC server. The transfer page shows which Spotify account and which YouTube Music account are connected, lets you search and multi-select, shows live per-playlist progress with a **Stop** button, and finishes with a results summary (links to the new playlists and a list of tracks that were not found). See [the transfer guide](#spotify--youtube-music-playlist-transfer).
+- 🔄 **Spotify → YouTube Music Playlist Transfer** — Transfer your Spotify playlists and Liked Songs directly from the browser into YouTube Music without sending your library to a ViviMusic Xten server. The transfer page shows which Spotify account and which YouTube Music account are connected, lets you search and multi-select, shows live per-playlist progress with a **Stop** button, and finishes with a results summary (links to the new playlists and a list of tracks that were not found). See [the transfer guide](#spotify--youtube-music-playlist-transfer).
 - 🎨 **THEME** — A full dark, glassy visual reskin of YouTube Music, toggleable independently of Canvas and Lyrics.
 - 🌊 **Kawarp Background Engine** — The animated Canvas background is fully tunable from the popup: opacity, warp intensity, blur passes, saturation, brightness, dithering, animation speed, and transition duration all have live sliders, plus a "pause when inactive" toggle and a one-click **Reset to defaults** button. There's also an "artwork/image-only" mode if you'd rather skip the warped background animation entirely and just show static art.
 - 💿 **Vinyl Disc Artwork** — Show the player artwork as a rotating record. The tonearm parks when playback pauses and returns when it resumes. (Turning this on switches off Apple Music artwork and Spotify Canvas.)
@@ -108,7 +147,7 @@ This extension is **not published on the Chrome Web Store**. It's distributed as
 ### Chrome / Edge / Brave / Vivaldi / Opera /Other all Chromium Browsers
 
 1. **Download The Zipfile From Releases**
-2. **Extract it** to a folder you won't move or delete later (e.g. `Documents/Vivimusic Web`). Chrome loads the extension directly from this folder, so if you delete it, the extension breaks.
+2. **Extract it** to a folder you won't move or delete later (e.g. `Documents/ViviMusic Xten`). Chrome loads the extension directly from this folder, so if you delete it, the extension breaks.
 3. Open your browser and go to:
    ```
    chrome://extensions
@@ -117,7 +156,7 @@ This extension is **not published on the Chrome Web Store**. It's distributed as
 4. Turn on **Developer mode** — the toggle is in the top-right corner of the extensions page.
 5. Click **Load unpacked**.
 6. Select the folder you extracted and open the folder you will see icon and src folder when you see these two folders dont click on them just click open to select (the one that directly contains `manifest.json`).
-7. Vivimusic Web should now appear in your extensions list and in your toolbar. Open **[music.youtube.com](https://music.youtube.com)**, play a song, and you should see the new theme and Canvas artwork kick in within a second or two.
+7. ViviMusic Xten should now appear in your extensions list and in your toolbar. Open **[music.youtube.com](https://music.youtube.com)**, play a song, and you should see the new theme and Canvas artwork kick in within a second or two.
 
 **Click On the image below for extension installation guide video :-**
 [![Extension Installation Guide](https://i.postimg.cc/tC00y0XF/Screenshot-2026-09-13-195414.png)](https://youtu.be/HIBwMWksrTg)
@@ -130,7 +169,7 @@ Firefox addon is currently available in official firefox addon store install the
 
 ## Updating
 
- To update Vivimusic Web **For Chromium Builds Specially** :
+ To update ViviMusic Xten **For Chromium Builds Specially** :
 
 1. Open the extension popup — if a newer version is available, you'll see an **"Update available"** notice (checked automatically twice a day, or manually via **Check for updates** in the popup).
 2. Download the latest release from the [Releases page](../../releases) (or pull the latest `main` branch).
@@ -141,7 +180,7 @@ That's it — no need to remove and re-add the extension.
 
 ## Settings
 
-All settings live in the extension popup (click the Vivimusic icon in your toolbar):
+All settings live in the extension popup (click the ViviMusic Xten icon in your toolbar):
 
 | Setting | What it does |
 |---|---|
@@ -165,6 +204,8 @@ All settings live in the extension popup (click the Vivimusic icon in your toolb
 | **Theme** | Toggles the full visual reskin independently of Canvas/Lyrics. |
 | **Vinyl disc artwork** | Shows the player artwork as a rotating record with a tonearm. Turns off Apple Music artwork and Spotify Canvas while on. |
 | **Player tabs: icons only** | Replaces the Up next, Lyrics, Comments and Related labels with icons. |
+| **Floating pill player bar** | Turns the bottom player bar into a floating liquid-glass pill. |
+| **Language localization** | On by default. Lets lyrics and the player tabs work when YouTube Music is not in English. |
 | **Spotify Canvas** | Enables Spotify Canvas videos for YT Music tracks; connect via login or `sp_dc` cookie. |
 | **When both are available, prefer** | Chooses Apple Music artwork or Spotify Canvas when a track has both. |
 | **Playlist transfer** | Opens the client-side Spotify → YouTube Music transfer tool (Beta). Select playlists and/or Liked Songs and transfer them into private YouTube Music playlists. |
@@ -198,7 +239,7 @@ Once connected, you'll see your connected account shown in the popup with a **Di
 
 ## Spotify → YouTube Music Playlist Transfer
 
-Vivimusic Web can transfer Spotify playlists and your Liked Songs into YouTube Music directly from your browser. The transfer runs client-side: playlist metadata and track information are processed by the extension in your browser, and the extension talks directly to Spotify and YouTube Music using the sessions you already have open.
+ViviMusic Xten can transfer Spotify playlists and your Liked Songs into YouTube Music directly from your browser. The transfer runs client-side: playlist metadata and track information are processed by the extension in your browser, and the extension talks directly to Spotify and YouTube Music using the sessions you already have open.
 
 ### What it supports
 
@@ -217,11 +258,11 @@ The YouTube Music account is read from YouTube Music itself and re-checked whene
 
 ### What it does not require
 
-This feature does **not** require a Spotify Developer account, Spotify Client ID/secret, Google Cloud project, OAuth app registration, VIVIMUSIC server, Render deployment, database, or separate transfer application. It uses the user's existing logged-in browser sessions.
+This feature does **not** require a Spotify Developer account, Spotify Client ID/secret, Google Cloud project, OAuth app registration, ViviMusic Xten server, Render deployment, database, or separate transfer application. It uses the user's existing logged-in browser sessions.
 
 ### Authentication model
 
-**Spotify:** Open Spotify and sign in normally. Vivimusic reads the existing Spotify Web Player `sp_dc` session cookie and uses Spotify's own Web Player session flow to obtain the session needed to read playlists. The extension never asks for or stores your Spotify password.
+**Spotify:** Open Spotify and sign in normally. ViviMusic Xten reads the existing Spotify Web Player `sp_dc` session cookie and uses Spotify's own Web Player session flow to obtain the session needed to read playlists. The extension never asks for or stores your Spotify password.
 
 **YouTube Music:** Open [music.youtube.com](https://music.youtube.com) and sign in normally. The transfer uses the logged-in YouTube Music page and its own browser session/configuration to search, create, and update playlists. The extension never asks for or stores your Google password.
 
@@ -231,19 +272,19 @@ The transfer feature uses internal web interfaces exposed by Spotify and YouTube
 
 ### Privacy model
 
-There is no VIVIMUSIC transfer server in the data path:
+There is no ViviMusic Xten transfer server in the data path:
 
 ```text
 Spotify session
       ↓
-Vivimusic Web extension (your browser)
+ViviMusic Xten extension (your browser)
       ↓
 YouTube Music session
       ↓
 Private YouTube Music playlists
 ```
 
-The extension does not upload your Spotify library to a VIVIMUSIC backend. Spotify and YouTube Music still receive the requests required for the transfer because they are the services being read from and written to.
+The extension does not upload your Spotify library to a ViviMusic Xten backend. Spotify and YouTube Music still receive the requests required for the transfer because they are the services being read from and written to.
 
 ### Transfer safety
 
@@ -253,7 +294,7 @@ Keep the transfer page open until the operation finishes. Do not close the YouTu
 
 ## Last.fm Scrobbling
 
-Vivimusic Web can scrobble what you listen to on YouTube Music straight to your Last.fm profile.
+ViviMusic Xten can scrobble what you listen to on YouTube Music straight to your Last.fm profile.
 
 **Logging in** — two options:
 1. Open the popup and switch on **Last.fm scrobbling**.
@@ -275,7 +316,7 @@ When enabled, liking or unliking a song in YouTube Music sends a matching Love/U
 
 ## SponsorBlock
 
-Vivimusic Web can skip the **non-music** parts of music videos — spoken intros, skits and outros — using community-submitted segments from [SponsorBlock](https://sponsor.ajay.app/).
+ViviMusic Xten can skip the **non-music** parts of music videos — spoken intros, skits and outros — using community-submitted segments from [SponsorBlock](https://sponsor.ajay.app/).
 
 **How it works**
 
@@ -284,14 +325,14 @@ Vivimusic Web can skip the **non-music** parts of music videos — spoken intros
 - Each segment is skipped once per track. Segments longer than 2 minutes are ignored as probably mislabeled, and the synced-lyrics timeline is shifted so lyrics stay aligned after a skip.
 - Results (including "no segments found") are cached locally for 6 hours, for up to 500 videos.
 - It is controlled by **Skip non-music sections (SponsorBlock)** in the popup. When it is off, no SponsorBlock requests are made.
-- Vivimusic Web is **read-only** here: it does not submit or vote on segments. To contribute segments, use the official [SponsorBlock extension](https://sponsor.ajay.app/).
+- ViviMusic Xten is **read-only** here: it does not submit or vote on segments. To contribute segments, use the official [SponsorBlock extension](https://sponsor.ajay.app/).
 
 **Attribution and licensing**
 
 > This product uses data from **SponsorBlock** (<https://sponsor.ajay.app/>), created by **Ajay Ramachandran** and contributors, used under the [Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International license](https://creativecommons.org/licenses/by-nc-sa/4.0/).
 
 - SponsorBlock's API and database are licensed CC BY-NC-SA 4.0 unless its author gives explicit permission.
-- The SponsorBlock browser extension is licensed under GPL-3.0. **No code from the SponsorBlock extension is used in Vivimusic Web.** The small API client in `src/sponsorblock.js` is original code that only calls the public API, so Vivimusic Web's own license is unaffected.
+- The SponsorBlock browser extension is licensed under GPL-3.0. **No code from the SponsorBlock extension is used in ViviMusic Xten.** The small API client in `src/sponsorblock.js` is original code that only calls the public API, so ViviMusic Xten's own license is unaffected.
 - SponsorBlock data is fetched live and cached locally for each user. It is not bundled with or redistributed in this package.
 - Because the data is licensed for non-commercial use, anyone who redistributes or forks this extension commercially should check SponsorBlock's license terms, or contact its author, before keeping this feature.
 
@@ -299,11 +340,11 @@ Vivimusic Web can skip the **non-music** parts of music videos — spoken intros
 
 ## Star Verification
 
-Vivimusic Web asks you to star this repository on GitHub once before it unlocks. This is what the check does, so there are no surprises:
+ViviMusic Xten asks you to star this repository on GitHub once before it unlocks. This is what the check does, so there are no surprises:
 
 - When you press the verify button, the extension uses **GitHub's OAuth Device Flow**: it shows you a short code, and you approve it on `github.com`. The extension never sees your GitHub password.
-- The resulting GitHub token is used for one thing only: asking GitHub whether your account has starred `Archimetrix/VIVIMUSIC_WEB`. It does not read your repositories, and it does not star or change anything on your behalf.
-- The token and the result are stored **locally in your browser** (extension storage). They are sent only to GitHub, never to a VIVIMUSIC server.
+- The resulting GitHub token is used for one thing only: asking GitHub whether your account has starred `Archimetrix/VIVIMUSIC_XTEN`. It does not read your repositories, and it does not star or change anything on your behalf.
+- The token and the result are stored **locally in your browser** (extension storage). They are sent only to GitHub, never to a ViviMusic Xten server.
 - **Not forced.** The verification screen has a **Show it later** button. It hides the screen for that browser tab only; opening a new tab shows it again until you verify. New installs also get a 10-minute head start before it first appears.
 - **Verify once, unlocked for good.** After a successful check there are no re-checks, even if you un-star later.
 - **Already verified? You won't be asked again.** Updates never show it, and a small "verified" flag is kept in browser-synced extension storage so removing and re-adding the extension on a profile with extension sync turned on doesn't ask again either. (Without profile sync, removing the extension erases it and you would need to verify once more.)
@@ -313,7 +354,7 @@ Vivimusic Web asks you to star this repository on GitHub once before it unlocks.
 
 ## Permissions & Privacy
 
-Vivimusic Web's content scripts only run on `music.youtube.com`. Everything else listed below is contacted by the extension's background service worker (or, for lyrics, the page script) only for the feature that needs it.
+ViviMusic Xten's content scripts only run on `music.youtube.com`. Everything else listed below is contacted by the extension's background service worker (or, for lyrics, the page script) only for the feature that needs it.
 
 | Permission | Why it's needed |
 |---|---|
@@ -336,7 +377,7 @@ Vivimusic Web's content scripts only run on `music.youtube.com`. Everything else
 | `api.github.com`, `github.com`, `raw.githubusercontent.com`, `avatars.githubusercontent.com` | Update check (read-only release lookup), developer announcements (a read-only JSON file in this project's repository), and [star verification](#star-verification) (GitHub's device flow, your token, and your avatar on the verification screen). |
 | `ws.audioscrobbler.com` | Last.fm's API — used only if you enable and log in to Last.fm scrobbling. Sends the current artist/track (and your login once, to establish a session) directly to Last.fm. |
 
-Nothing is sent to a VIVIMUSIC-owned server. The extension communicates directly with the external services needed by the enabled features: Spotify, YouTube Music, Apple Music and Deezer, the lyrics providers, GitHub (updates, announcements and star verification), SponsorBlock if enabled, Google Translate if you enable romanization lookups, and Last.fm if you opt in to scrobbling. For the Spotify → YouTube Music transfer, Spotify playlist data is read locally by the extension and YouTube Music receives the search/playlist-update requests needed to perform the transfer. No analytics and no tracking.
+Nothing is sent to a ViviMusic Xten-owned server. The extension communicates directly with the external services needed by the enabled features: Spotify, YouTube Music, Apple Music and Deezer, the lyrics providers, GitHub (updates, announcements and star verification), SponsorBlock if enabled, Google Translate if you enable romanization lookups, and Last.fm if you opt in to scrobbling. For the Spotify → YouTube Music transfer, Spotify playlist data is read locally by the extension and YouTube Music receives the search/playlist-update requests needed to perform the transfer. No analytics and no tracking.
 
 ---
 
@@ -370,7 +411,7 @@ Double-check your username and password (not your email, unless that's what you 
 Check that **Last.fm scrobbling** is switched on and you're shown as connected in the popup. Remember scrobbles only send after your configured percentage/minutes threshold is reached, not the instant a song starts (that's what "Now Playing" is for).
 
 **The GitHub star screen keeps appearing.**
-Make sure you finished approving the code on `github.com` and that you starred `Archimetrix/VIVIMUSIC_WEB` with the same GitHub account, then press the check again. You can use **Show it later** to keep listening for that browser tab in the meantime. Once verification succeeds it stays unlocked.
+Make sure you finished approving the code on `github.com` and that you starred `Archimetrix/VIVIMUSIC_XTEN` with the same GitHub account, then press the check again. You can use **Show it later** to keep listening for that browser tab in the meantime. Once verification succeeds it stays unlocked.
 
 **Crossfade isn't blending songs.**
 Check that **Crossfade** is switched on in **Audio playback** and click once anywhere on the YouTube Music page after enabling it (browsers only start audio processing after a click or key press). The first song after switching it on or reloading the tab plays normally; blending starts from the next one. It is skipped for ads, repeat-one, very short tracks, and when you seek to within the last minute of a song.
@@ -411,7 +452,7 @@ Full copyright notices and license texts for the bundled components are in [`THI
 
 **Disclaimer**
 
-Vivimusic Web is an independent project and is **not affiliated with, endorsed by, or sponsored by** Google, YouTube, YouTube Music, Spotify, Apple, Last.fm, Musixmatch, Deezer, GitHub, SponsorBlock, Better Lyrics or any other service named here. All product names, logos and trademarks are the property of their respective owners.
+ViviMusic Xten is an independent project and is **not affiliated with, endorsed by, or sponsored by** Google, YouTube, YouTube Music, Spotify, Apple, Last.fm, Musixmatch, Deezer, GitHub, SponsorBlock, Better Lyrics or any other service named here. All product names, logos and trademarks are the property of their respective owners.
 
 ---
 
@@ -425,4 +466,4 @@ transmitted, transcribed, stored in a retrieval system, or translated into
 any human or computer language, in any form or by any means, without the 
 prior written permission of the copyright owner.
 
-**Third-party components.** The terms above apply only to the original code and assets of Vivimusic Web. The bundled third-party components listed under [Credits](#credits) remain under their own licenses (Apache-2.0, MIT and SIL OFL 1.1), and nothing above restricts the rights those licenses grant. Services the extension connects to — including SponsorBlock, whose data is licensed CC BY-NC-SA 4.0 — are not part of the Software and are governed by their own terms. See [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
+**Third-party components.** The terms above apply only to the original code and assets of ViviMusic Xten. The bundled third-party components listed under [Credits](#credits) remain under their own licenses (Apache-2.0, MIT and SIL OFL 1.1), and nothing above restricts the rights those licenses grant. Services the extension connects to — including SponsorBlock, whose data is licensed CC BY-NC-SA 4.0 — are not part of the Software and are governed by their own terms. See [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).

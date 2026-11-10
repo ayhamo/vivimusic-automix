@@ -1,4 +1,4 @@
-/* VIVIMUSIC WEB — crossfade-page.js  (runs in the page's MAIN world)
+/* VIVIMUSIC XTEN — crossfade-page.js  (runs in the page's MAIN world)
  *
  * Crossfading needs the *end* of the current song to keep playing after the
  * <video> element has already moved on to the next one. The only place that
@@ -247,6 +247,36 @@
     return picks.map((f) => ({ url: f.url, size: Number(f.contentLength), initEnd: Number(f.initRange?.end) || 0, itag: f.itag, musicVideo }));
   }
 
+  // Some files are served after two redirects between Google's servers: the
+  // browser then sends Origin "null" and the last server's reply fails the
+  // CORS check ("Failed to fetch", every time, for that song). The
+  // extension's background worker is not bound by CORS, so crossfade.js
+  // fetches those bytes through it (measured 10 Nov 2026: 2 MB in ~0.4 s).
+  const viaExtension = new Set();   // URLs the page itself can't fetch
+  const relayWait = new Map();      // rid -> { resolve, reject, timer }
+  let relaySeq = 0;
+  function relayRange(url) {
+    return new Promise((resolve, reject) => {
+      const rid = ++relaySeq;
+      const timer = setTimeout(() => { relayWait.delete(rid); reject(new Error('extension fetch timed out')); }, 30000);
+      relayWait.set(rid, { resolve, reject, timer });
+      say({ type: 'range', rid, url });
+    });
+  }
+  async function getRange(url, a, b) {
+    const ranged = url + '&range=' + a + '-' + b;
+    if (viaExtension.has(url)) return relayRange(ranged);
+    try {
+      return await fetch(ranged, { credentials: 'omit' });
+    } catch (e) {
+      if (!(e instanceof TypeError)) throw e;
+      if (viaExtension.size > 20) viaExtension.clear();
+      viaExtension.add(url);
+      log('the page may not fetch this file (CORS); fetching it through the extension');
+      return relayRange(ranged);
+    }
+  }
+
   // Bytes a..b of `url`; null when the song changed meanwhile. A refusal
   // (403/404/410) throws at once with .refused; anything else is retried.
   async function fetchRange(url, a, b, wanted) {
@@ -255,7 +285,7 @@
       if (attempt) await sleep(600 * 2 ** attempt);
       if (!wanted()) return null;
       try {
-        const res = await fetch(url + '&range=' + a + '-' + b, { credentials: 'omit' });
+        const res = await getRange(url, a, b);
         if (!wanted()) return null;
         if (res.status === 403 || res.status === 404 || res.status === 410) throw refused('HTTP ' + res.status + ' at ' + Math.round(a / 1024) + ' KB');
         if (!res.ok) { last = 'HTTP ' + res.status; continue; }
@@ -332,17 +362,20 @@
     while (files.size > MAX_FILES) files.delete(files.keys().next().value);
     const t0 = performance.now();
     const wanted = () => files.get(id) === me;
+    // Pushed out by newer downloads before it finished (not replaced by a new
+    // try of the same song): the extension forgets it, so it can ask again.
+    const dropped = () => { if (!files.has(id)) say({ type: 'prefetch', id, state: 'dropped', why: 'evicted before it finished' }); };
     me.done = (async () => {
       const errors = [];
       for (const c of CLIENTS) {
         try {
           const got = await tryClient(id, c, wanted);
-          if (!got) return;   // the song changed
+          if (!got) { dropped(); return; }   // the song changed
           Object.assign(me, got, { state: 'ready', client: c.name });
           log('prefetch: whole song', id, 'downloaded via', c.name, '| itag', got.itag, '|', (got.size / 1048576).toFixed(1), 'MB in', Math.round(performance.now() - t0), 'ms |', got.segs.length, 'segments' + (errors.length ? ' | after: ' + errors.join('; ') : ''));
           break;
         } catch (e) {
-          if (!wanted()) return;
+          if (!wanted()) { dropped(); return; }
           errors.push(c.name + ': ' + (e?.message || e));
         }
       }
@@ -352,6 +385,7 @@
         log('prefetch failed' + (retry ? ' again' : '') + ':', me.why);
       }
       if (wanted()) say({ type: 'prefetch', id, state: me.state, why: me.why || '', client: me.client || '' });
+      else dropped();
     })();
   }
 
@@ -440,7 +474,7 @@
       dur,
       off: v.currentTime - pos,           // element timeline minus track timeline
       ad: p.classList.contains('ad-showing'),
-      rep: document.querySelector('ytmusic-player-bar')?.repeatMode === 'ONE',
+      rep: repeatOne(),
       next: nextQueued(id),
     };
   }
@@ -631,8 +665,17 @@
     } catch { /* ignore */ }
   }
 
+  // Repeat-one from the player bar; from the queue store when there is no bar
+  // (YouTube Music's new-layout test: see NEXT_BUTTONS in crossfade.js).
+  function repeatOne() {
+    const bar = document.querySelector('ytmusic-player-bar');
+    if (bar) return bar.repeatMode === 'ONE';
+    try { return document.querySelector('ytmusic-player-queue')?.getState?.().queue?.repeatMode === 'ONE'; } catch { return false; }
+  }
+
   function pressNext() {
-    const btn = document.querySelector('ytmusic-player-bar .next-button');
+    // (the miniplayer selectors: YouTube Music's new-layout test, untested; see crossfade.js)
+    const btn = document.querySelector('ytmusic-player-bar .next-button, ytmusic-miniplayer .next-button, ytmusic-miniplayer [class*="NextButton"]');
     if (btn) btn.click();
     else moviePlayer()?.nextVideo?.();
   }
@@ -687,6 +730,14 @@
       try { moviePlayer()?.pauseVideo?.(); } catch { /* ignore */ }
     } else if (d.type === 'play') {
       try { moviePlayer()?.playVideo?.(); } catch { /* ignore */ }
+    } else if (d.type === 'range') {
+      // bytes crossfade.js fetched through the extension (see relayRange)
+      const w = relayWait.get(d.rid);
+      if (!w) return;
+      relayWait.delete(d.rid);
+      clearTimeout(w.timer);
+      if (d.ok) w.resolve(new Response(d.bytes, { status: d.status }));
+      else w.reject(new Error(d.why || 'extension fetch failed'));
     } else if (d.type === 'next') {
       pressNext();
     } else if (d.type === 'set-volume') {

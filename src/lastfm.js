@@ -1,5 +1,5 @@
 /**
- * VIVIMUSIC WEB — lastfm.js
+ * VIVIMUSIC XTEN — lastfm.js
  */
 'use strict';
 

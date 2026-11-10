@@ -1,10 +1,10 @@
 # Third-Party Notices
 
-Vivimusic Web's own source code is proprietary (see `LICENSE.txt`). It includes or relies on the third-party
+ViviMusic Xten's own source code is proprietary (see `LICENSE.txt`). It includes or relies on the third-party
 components and services listed below. Components that are bundled in this package remain under their own
 licenses, reproduced here. Nothing in `LICENSE.txt` limits the rights those licenses grant you for those components.
 
-Vivimusic Web is an independent project and is **not affiliated with, endorsed by, or sponsored by** Google / YouTube /
+ViviMusic Xten is an independent project and is **not affiliated with, endorsed by, or sponsored by** Google / YouTube /
 YouTube Music, Spotify, Apple, Last.fm, Musixmatch, Deezer, GitHub, SponsorBlock, Better Lyrics, or any other service
 named in this file. All product names, logos and trademarks belong to their respective owners.
 
@@ -85,7 +85,7 @@ SOFTWARE.
 
 ### 1.3 Kawarp (`@kawarp/core`) — MIT License
 
-`src/kawarp.js` is based on `@kawarp/core` and has been modified for Vivimusic Web (performance tuning for the
+`src/kawarp.js` is based on `@kawarp/core` and has been modified for ViviMusic Xten (performance tuning for the
 extension's background layer). The original copyright and license notice is retained below.
 
 ```
@@ -125,10 +125,10 @@ included in this package unless stated above. Use of each service is subject to 
 > contributors, used under the **Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International** license
 > (https://creativecommons.org/licenses/by-nc-sa/4.0/).
 
-- Vivimusic Web only **reads** SponsorBlock's public API (`https://sponsor.ajay.app/api/skipSegments`) to look up
+- ViviMusic Xten only **reads** SponsorBlock's public API (`https://sponsor.ajay.app/api/skipSegments`) to look up
   "Non-Music" (`music_offtopic`) segments and skip them. It does not submit, vote on, or republish segments.
 - The SponsorBlock browser extension is licensed under GPL-3.0. **No code from the SponsorBlock extension is used** in
-  Vivimusic Web; the API client in `src/sponsorblock.js` is original code. To submit or vote on segments, use the
+  ViviMusic Xten; the API client in `src/sponsorblock.js` is original code. To submit or vote on segments, use the
   official SponsorBlock extension: https://sponsor.ajay.app/
 - The SponsorBlock API and database are licensed CC BY-NC-SA 4.0 "unless you have explicit permission" from the author.
   Segment data is fetched live and cached locally in your own browser for up to 6 hours; it is not redistributed with this package.
@@ -160,7 +160,7 @@ included in this package unless stated above. Use of each service is subject to 
 
 ### 2.5 Theme
 
-- **"Dynamic Background"** — a marketplace theme by **chengggit** (`src/theme.css`), used as the foundation of the Vivimusic theme.
+- **"Dynamic Background"** — a marketplace theme by **chengggit** (`src/theme.css`), used as the foundation of the ViviMusic Xten theme.
 
 ---
 
