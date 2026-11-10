@@ -2,7 +2,7 @@
 
 Upstream publishes two different things:
   * GitHub (Archimetrix/VIVIMUSIC_WEB): the Chrome source, tagged vX.Y.Z.
-  * AMO (addons.mozilla.org/firefox/addon/vivimusicweb): a separate Firefox
+  * AMO (addons.mozilla.org/firefox/addon/vivimusicxten (was vivimusicweb)): a separate Firefox
     port of the same version, never pushed to GitHub.
 
 For every file the AMO build ships, this does a 3-way merge:
@@ -40,13 +40,14 @@ import urllib.request
 import zipfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-AMO_API = 'https://addons.mozilla.org/api/v5/addons/addon/vivimusicweb/'
+AMO_API = 'https://addons.mozilla.org/api/v5/addons/addon/vivimusicxten/'
 # Upstream's star-verification gate was removed from this fork on purpose.
 SKIP = {'src/gate.js', 'src/gate.css', 'src/stargate.js', 'src/loader.js', 'src/favicon-main.js', 'icons/custom-logo-full.png', 'icons/custom-logo-icon.png', 'manifest.json'}
 # Files where this fork deliberately differs from the AMO build: conflicting
 # hunks keep our side (non-conflicting upstream changes still merge in).
 # background.js: AMO drops the VIVI_NET_FETCH relay that net.js needs.
-KEEP_OURS = {'src/background.js'}
+# popup.js: the update notice points to this fork's GitHub release, not upstream's AMO page.
+KEEP_OURS = {'src/background.js', 'src/popup.js'}
 AMO_DIR = os.path.join(ROOT, 'upstream-amo')
 AMO_MANIFEST_BASELINE = os.path.join(AMO_DIR, 'manifest-last-synced.json')
 TEXT_EXT = ('.js', '.css', '.html', '.json', '.md', '.txt')

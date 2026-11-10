@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Vivimusic Web",
-  "version": "10.2.0",
-  "description": "Vivimusic Web \u2014 Apple Music artwork, Spotify Canvas, synced lyrics, Last.fm scrobbling and Spotify \u2192 YouTube Music playlist transfer using local Spotify Web GraphQL and YouTube Music page session.",
+  "name": "ViviMusic Xten",
+  "version": "11.1",
+  "description": "ViviMusic Xten \u2014 Apple Music artwork, Spotify Canvas, synced lyrics, Last.fm scrobbling and Spotify \u2192 YouTube Music playlist transfer using local Spotify Web GraphQL and YouTube Music page session.",
   "permissions": [
     "storage",
     "unlimitedStorage",
@@ -77,16 +77,6 @@
         "https://music.youtube.com/*"
       ],
       "js": [
-        "src/favicon-main.js"
-      ],
-      "run_at": "document_start",
-      "world": "MAIN"
-    },
-    {
-      "matches": [
-        "https://music.youtube.com/*"
-      ],
-      "js": [
         "src/crossfade-page.js"
       ],
       "run_at": "document_start",
@@ -113,9 +103,11 @@
         "https://music.youtube.com/*"
       ],
       "js": [
+        "src/layout-compat.js",
         "src/lyrics.js",
         "src/vendor/pinyin-pro.min.js",
         "src/romanize.js",
+        "src/tab-locale.js",
         "src/lyrics-ui.js",
         "src/sponsorblock.js",
         "src/kawarp.js",
@@ -127,7 +119,8 @@
       ],
       "css": [
         "src/lyrics-fonts.css",
-        "src/canvas.css"
+        "src/canvas.css",
+        "src/layout-compat.css"
       ],
       "run_at": "document_idle"
     }

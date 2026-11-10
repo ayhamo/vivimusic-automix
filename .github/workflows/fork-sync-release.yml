@@ -30,7 +30,7 @@ concurrency:
 
 env:
   UPSTREAM_REPO: Archimetrix/VIVIMUSIC_WEB
-  AMO_SLUG: vivimusicweb
+  AMO_SLUG: vivimusicxten
 
 jobs:
   check:

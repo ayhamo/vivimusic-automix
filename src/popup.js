@@ -631,7 +631,6 @@
     chrome.storage.local.set({ localizationEnabled: localizationToggle.checked });
   });
 
-
   // Layout compatibility toggle
   {
     const layoutCompatToggle = document.getElementById('layoutCompatToggle');
@@ -1171,6 +1170,8 @@
   const updateStatus     = document.getElementById('updateStatus');
 
   currentVersionEl.textContent = chrome.runtime.getManifest().version;
+
+  const FIREFOX_ADDON_URL = 'https://addons.mozilla.org/en-US/firefox/addon/vivimusicweb/';
 
   function renderUpdateResult(result) {
     if (!result) return;

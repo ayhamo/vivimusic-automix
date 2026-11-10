@@ -96,7 +96,7 @@ Measured in Edge, 6 Nov 2026: Despacito → LALA (blend, 16 bars, next song ×0.
 |---|---|
 | This fork | private repo `ayhamo/vivimusic-automix` (remote `origin`; was `vivimusic-firefox`, GitHub redirects the old name) |
 | Upstream Chrome source | GitHub `Archimetrix/VIVIMUSIC_WEB`, tagged `vX.Y.Z` (remote `upstream`) |
-| Upstream Firefox port | AMO `vivimusicweb` (https://addons.mozilla.org/firefox/addon/vivimusicweb/). A separate port of each version, **never pushed to GitHub** |
+| Upstream Firefox port | AMO `vivimusicxten` (https://addons.mozilla.org/firefox/addon/vivimusicxten/; was `vivimusicweb` until v11). A separate port of each version, **never pushed to GitHub** |
 | Copy of upstream's Firefox build | `upstream-amo/vivimusicweb-<version>.xpi` (the original AMO file, for reference; open it as a zip) |
 | AMO manifest we last handled | `upstream-amo/manifest-last-synced.json` |
 

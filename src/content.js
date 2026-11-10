@@ -479,7 +479,6 @@
     return type !== 'MUSIC_VIDEO_TYPE_ATV';
   }
 
-
   // ── "Is this really a song yet?" gate ──────────────────────────────────
   // On a slow network YT Music first lays out its 16:9 video surface (the
   // black rectangle) and only switches to square art-track presentation once
@@ -554,14 +553,15 @@
   // under one key while playback looked the other key up, so Alt+C showed
   // "Not cached" for the track that was, in fact, already cached (just
   // under a sibling key). Both call sites now go through this one function.
-  function getBarEl() {
-    return document.querySelector('ytmusic-player-bar') || window.__viviLayoutCompat?.getMiniplayer() || null;
-  }
-
   function bylineArtistText(bylineEl) {
     if (!bylineEl) return null;
     const text = bylineEl.textContent?.trim()?.split('•')[0]?.trim();
     return text || null;
+  }
+
+  // Classic player bar, or the new miniplayer on accounts with the new layout.
+  function getBarEl() {
+    return document.querySelector('ytmusic-player-bar') || window.__viviLayoutCompat?.getMiniplayer() || null;
   }
 
   function getCurrentTrack() {
