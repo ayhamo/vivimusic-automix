@@ -2319,6 +2319,26 @@
     });
   }
 
+  // Seen in Firefox (a song started from a library playlist): YT Music's tab
+  // strip keeps its 4 tabs in data, but the repeater that draws them has drawn
+  // none, so the row above "Playing from" is empty until a page refresh.
+  // Asking that repeater to render again brings the tabs back. Its data and
+  // render() live in the page's JS world (wrappedJSObject in Firefox); where
+  // the content script can't reach them, this does nothing.
+  function repairEmptyPlayerTabs() {
+    if (document.hidden) return;
+    const content = document.querySelector('ytmusic-player-page .tab-header-container #tabsContent');
+    const repeat = content?.querySelector(':scope > dom-repeat');
+    if (!repeat || content.querySelector('tp-yt-paper-tab')) return;
+    try {
+      const raw = repeat.wrappedJSObject || repeat;
+      if (!(raw.items?.length > 0) || typeof raw.render !== 'function') return;
+      raw.render();
+      log('player tabs were empty; redrew', content.querySelectorAll('tp-yt-paper-tab').length, 'tabs');
+    } catch (_) { /* page objects unavailable */ }
+  }
+  setInterval(repairEmptyPlayerTabs, 1000);
+
   // Language localization toggled (or the tab strip is otherwise re-read):
   // drop existing decorations and re-evaluate every tab with the new rules.
   document.addEventListener('vivi-localization-changed', () => {
