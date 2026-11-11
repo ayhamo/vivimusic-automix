@@ -447,6 +447,34 @@
     chrome.storage.local.set({ automixEnabled: automixToggle.checked });
   });
 
+  // Automix version: 1 = Original AutoDJ (BitChord web), 2 = Advanced AutoDJ (BitChord phone ideas on top)
+  const automixVersionSelect = document.getElementById('automixVersionSelect');
+  const automixVersionVal = document.getElementById('automixVersionVal');
+  const automixKeyAwareToggle = document.getElementById('automixKeyAwareToggle');
+  const automixKeyAwareRow = document.getElementById('automixKeyAwareRow');
+  // The key toggle only works in Advanced AutoDJ: greyed out (its setting kept) under Original.
+  const showVersion = (v) => {
+    if (automixVersionVal) automixVersionVal.textContent = v === 2 ? 'Advanced' : 'Original';
+    if (automixKeyAwareToggle) automixKeyAwareToggle.disabled = v !== 2;
+    if (automixKeyAwareRow) automixKeyAwareRow.style.opacity = v === 2 ? '' : '0.45';
+  };
+  chrome.storage.local.get({ automixVersion: 1 }, (r) => {
+    const v = r.automixVersion === 2 ? 2 : 1;
+    if (automixVersionSelect) automixVersionSelect.value = String(v);
+    showVersion(v);
+  });
+  chrome.storage.local.get({ automixKeyAware: false }, (r) => {
+    if (automixKeyAwareToggle) automixKeyAwareToggle.checked = r.automixKeyAware === true;
+  });
+  automixKeyAwareToggle?.addEventListener('change', () => {
+    chrome.storage.local.set({ automixKeyAware: automixKeyAwareToggle.checked });
+  });
+  automixVersionSelect?.addEventListener('change', () => {
+    const v = automixVersionSelect.value === '2' ? 2 : 1;
+    chrome.storage.local.set({ automixVersion: v });
+    showVersion(v);
+  });
+
   const preferMusicOnlyToggle = document.getElementById('preferMusicOnlyToggle');
   chrome.storage.local.get({ preferMusicOnly: false }, (r) => {
     if (preferMusicOnlyToggle) preferMusicOnlyToggle.checked = r.preferMusicOnly === true;

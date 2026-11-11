@@ -1662,6 +1662,23 @@
         </label>
       </div>
       <p class="theme-sub" style="margin-top:2px;">Needs Crossfade on. BitChord's automix: the playing and the next song are downloaded and analysed on your device (tempo, downbeats, intro, outro, where it is sung). When a song ends on its own it loops an instrumental bar into the next song, or blends on a phrase with the next song matched to its tempo, or uses a filter mix or a 12 s crossfade when the pair can't be beatmatched.</p>
+      <div class="kawarp-slider-row" id="automixVersionRow" style="margin-top:4px;">
+        <div class="kw-label-row"><span>Automix version</span><span class="kw-val" id="automixVersionVal">Original</span></div>
+        <select id="automixVersionSelect" style="width:100%;background:rgba(255,255,255,0.06);color:var(--text-1);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:5px 8px;font-size:12.5px;margin-top:4px;">
+          <option value="1" selected>Original AutoDJ</option>
+          <option value="2">Advanced AutoDJ</option>
+        </select>
+        <p class="theme-sub" style="margin-top:4px;"><b>Original AutoDJ</b>: BitChord web's automix. Beat-matched blends on a phrase, loop mixes, a filter mix or a plain crossfade when a pair can't be matched; a gentle bass and treble cross, equal-power fade.</p>
+        <p class="theme-sub" style="margin-top:4px;"><b>Advanced AutoDJ</b>: the same, plus ideas from the BitChord phone app. It looks (with synced lyrics, or the vocal model) for a blend point where the two songs don't sing over each other, and moves the blend there when it finds a clearly better one. The bass swaps in one quick step at the middle, the old song's highs fade away while the new one opens up, and the new song is at full volume by the middle (levels kept in check). A filter mix sweeps the old song down to a muffle. Blends end where a song's music ends, not in its trailing silence or applause, and the next song never starts more than a quarter of the way in. You can switch back any time.</p>
+      </div>
+      <div class="row" id="automixKeyAwareRow" style="margin-top:6px;">
+        <span class="row-label">Shorter blend when keys clash <span class="beta-tag" style="background:rgba(255,255,255,0.15);color:#fff;">Test</span></span>
+        <label class="switch">
+          <input type="checkbox" id="automixKeyAwareToggle"/>
+          <span class="slider"></span>
+        </label>
+      </div>
+      <p class="theme-sub" style="margin-top:2px;">Advanced AutoDJ only, off by default. Every song is in a musical key (C major, A minor…). Two songs in keys that don't go together can sound out of tune while they play on top of each other. With this on, such a pair gets a short blend (2 bars, about 4–6 s) instead of the usual length, so the out-of-tune moment is brief. Keys that go together (the same key, its relative major/minor, or a neighbour on the Camelot wheel) keep the normal blend. Off: every pair gets the normal length, whatever the keys.</p>
       <div class="kawarp-slider-row" id="automixBarsRow" style="margin-top:4px;">
         <div class="kw-label-row"><span>Blend length</span><span class="kw-val" id="automixBarsVal">Auto</span></div>
         <select id="automixBarsSelect" style="width:100%;background:rgba(255,255,255,0.06);color:var(--text-1);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:5px 8px;font-size:12.5px;margin-top:4px;">

@@ -91,12 +91,44 @@
     return out;
   }
 
+  // Where the music ends (BitChord phone, audio_analysis.cpp contentEnd): RMS
+  // in 0.25 s windows; a trailing run under the silence level of 0.35 s or
+  // more ends it where that run starts; otherwise it is the end of the last
+  // 1.5 s block that is still mostly playing. Used by Automix version 2, so
+  // a blend isn't laid over a song's trailing silence. null: unmeasurable.
+  function contentEnd(mono, sr) {
+    const win = Math.round(0.25 * sr);
+    const n = Math.floor(mono.length / win);
+    if (n < 12) return null;
+    const env = new Float32Array(n);
+    for (let w = 0; w < n; w++) {
+      let ss = 0, c = 0;
+      for (let i = w * win, e = i + win; i < e; i += 4) { ss += mono[i] * mono[i]; c++; }
+      env[w] = Math.sqrt(ss / c);
+    }
+    const sorted = Float32Array.from(env).sort();
+    const ref = sorted[Math.floor(n * 0.85)], noise = sorted[Math.floor(n * 0.05)];
+    if (!(ref > 0)) return null;
+    const thr = Math.max(0.0025, Math.min(noise * 2.6, ref * 0.28), ref * 0.1);
+    const silence = Math.max(0.0015, Math.min(thr * 0.25, ref * 0.04));
+    let w = n;
+    while (w > 0 && env[w - 1] < silence) w--;
+    if ((n - w) * 0.25 >= 0.35) return w * 0.25;
+    for (let b = n - 6; b >= 0; b--) {
+      let on = 0, sum = 0;
+      for (let k = b; k < b + 6; k++) { if (env[k] >= thr) on++; sum += env[k]; }
+      if (on >= 3 && sum / 6 >= 0.85 * thr) return (b + 6) * 0.25;
+    }
+    return null;
+  }
+
   // BitChord analyzer.ts analyzeOne, from the song's compressed bytes.
   async function analyzeSong(id, fileKey, bytes, musicVideo) {
     const decodeCtx = new OfflineAudioContext({ numberOfChannels: 2, length: 1, sampleRate: ANALYSIS_SR });
     const buffer = await decodeCtx.decodeAudioData(bytes.slice(0));
     const mono = downmixToMono(buffer);
     const durationSec = buffer.duration;
+    const contentEndSec = contentEnd(mono, ANALYSIS_SR);   // (before mono goes to the worker)
     // Beat This! wants mono at 22,050 Hz: the browser's resampler, not decimation.
     const beatCtx = new OfflineAudioContext({ numberOfChannels: 1, length: 1, sampleRate: BEAT_SR });
     const mono22 = downmixToMono(await beatCtx.decodeAudioData(bytes));
@@ -128,7 +160,7 @@
       );
     });
     if (res.type !== 'result' || !res.result) throw new Error(res.message || 'analysis failed');
-    const analysis = { fileKey: id, durationSec, ...res.result, musicVideo: !!musicVideo, analysisVersion: ANALYSIS_VERSION };
+    const analysis = { fileKey: id, durationSec, contentEndSec, ...res.result, musicVideo: !!musicVideo, analysisVersion: ANALYSIS_VERSION };
     await putCached(analysis);
     return analysis;
   }
@@ -141,6 +173,17 @@
     } else if (d.type === 'analyzeSong') {
       try {
         reply({ type: 'result', fileKey: d.fileKey, result: await analyzeSong(d.id, d.fileKey, d.bytes, d.musicVideo) });
+      } catch (err) {
+        reply({ type: 'error', fileKey: d.fileKey, message: String(err?.message || err) });
+      }
+    } else if (d.type === 'contentEnd') {
+      // A song saved before contentEndSec existed: just that, from its bytes, saved with it.
+      try {
+        const ctx = new OfflineAudioContext({ numberOfChannels: 2, length: 1, sampleRate: ANALYSIS_SR });
+        const end = contentEnd(downmixToMono(await ctx.decodeAudioData(d.bytes)), ANALYSIS_SR);
+        const saved = await getCached(d.id);
+        if (saved) await putCached({ ...saved, contentEndSec: end });
+        reply({ type: 'result', fileKey: d.fileKey, result: { contentEndSec: end } });
       } catch (err) {
         reply({ type: 'error', fileKey: d.fileKey, message: String(err?.message || err) });
       }

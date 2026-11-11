@@ -544,10 +544,14 @@
     const bass = new BiquadFilterNode(ctx, { type: 'lowshelf', frequency: 250, gain: 0 });
     const high = new BiquadFilterNode(ctx, { type: 'highshelf', frequency: 4000, gain: 0 });
     const hp = new BiquadFilterNode(ctx, { type: 'highpass', frequency: 20, Q: 0.7 });
+    // AutoDJ (version 2): the outgoing song's highs close through a low-pass
+    const lp = mix?.v2 && (mix.style === 'blend' || mix.style === 'filter') ? new BiquadFilterNode(ctx, { type: 'lowpass', frequency: 20000, Q: 0.7 }) : null;
     const vol = ctx.createGain();
     const srcGain = ctx.createGain();
     src.buffer = p.buf;
-    src.connect(srcGain); srcGain.connect(fade); fade.connect(bass); bass.connect(high); high.connect(hp); hp.connect(vol); vol.connect(g.entry);
+    src.connect(srcGain); srcGain.connect(fade); fade.connect(bass); bass.connect(high); high.connect(hp);
+    if (lp) { hp.connect(lp); lp.connect(vol); } else hp.connect(vol);
+    vol.connect(g.entry);
     vol.gain.setValueAtTime(0, T);
     vol.gain.linearRampToValueAtTime(base, T + SWITCH);
     hold(g.gate.gain, ctx.currentTime);
@@ -556,7 +560,7 @@
     src.start(T, idxT / sr);
 
     const me = {
-      phase: 'asked', oldId: st.id, N, mix, src, srcGain, fade, bass, high, hp, vol, base, muted: false,
+      phase: 'asked', oldId: st.id, N, mix, src, srcGain, fade, bass, high, hp, lp, vol, base, muted: false,
       // the player's volume `base` was measured at, and the level since (the slider moved: k = volume / volRef)
       volRef: v.volume || 1, k: 1, deckBase: base, inBase: base,
       aPos: p.start + idxT / sr - st.off,   // old song's position (s) at T, for the lyrics
@@ -1135,6 +1139,95 @@
   const EP_OUT = Float32Array.from({ length: EP }, (_, i) => Math.cos((i / (EP - 1)) * Math.PI / 2));
   const EP_IN = Float32Array.from({ length: EP }, (_, i) => Math.sin((i / (EP - 1)) * Math.PI / 2));
 
+  // ───────── AutoDJ (Automix version 2): the BitChord phone's blend shapes ─────────
+  // CrossfadeController.kt (Advanced Automix), p = blend progress 0..1:
+  //   blend: the bass changes hands over half a beat at the midpoint, on
+  //   high-pass corners (20 Hz open, 200 Hz bass gone); the next song comes
+  //   in through a high-pass that opens; the playing song's highs close
+  //   through a low-pass. Fader: the next song is full by the swap, the
+  //   playing one falls after it, both trimmed by 1/sqrt(in+out).
+  //   filter mix (SWEEP): the playing song's low-pass closes 7 kHz → 300 Hz,
+  //   the next song's high-pass opens from 1.2 kHz; the same bass swap.
+  // clash (the share both sing, from the plan) deepens the filters and
+  // moves the fader towards a vocal-safe pair.
+  const glide = (a, b, x) => a * Math.pow(b / a, clamp(x, 0, 1));
+  const bassCut = (x) => glide(20, 200, x);
+  const entryHp = (p, top, openBy) => (p >= openBy ? 20 : glide(20, top, Math.pow(1 - p / openBy, 0.35)));
+  const djShapes = new WeakMap();   // plan -> its shapes, made once per blend length
+  function djShape(m, style, D) {
+    const hit = djShapes.get(m);
+    if (hit && hit.D === D && hit.style === style) return hit;
+    const clash = clamp(m.clash || 0, 0, 1);
+    const beat = m.bpm > 0 ? 60 / m.bpm : 0;
+    const grid = beat ? D / beat : 0;   // beats in the blend
+    const onBar = (f) => (grid >= 8 ? clamp(Math.round((f * grid) / 4) * 4 / grid, 4 / grid, 1 - 4 / grid) : f);
+    const w = grid >= 2 ? 0.5 / grid : 0.2;
+    const swapAt = onBar(0.5);
+    const h = (p) => clamp((p - (swapAt - w)) / w, 0, 1);
+    const S = Math.PI / 2;
+    let inHp, outHp, outLp, rise, fall;
+    if (style === 'filter') {
+      const top = glide(1200, 2400, clash), openBy = onBar(0.6 + 0.18 * clash);
+      outLp = (p) => glide(7000, 300, Math.pow(p, 0.75));
+      outHp = (p) => bassCut(h(p));
+      inHp = (p) => Math.max(entryHp(p, top, openBy), bassCut(1 - h(p)));
+      rise = (p) => Math.sin(Math.pow(p, 0.8) * S);
+      fall = (p) => Math.cos(Math.pow(p, 1.6) * S);
+    } else {
+      const top = glide(520, 950, clash), openBy = onBar(0.45 + 0.25 * clash);
+      const from = onBar(0.3 - 0.18 * clash), floor = glide(2200, 1100, clash);
+      const fallFrom = Math.max(0, Math.min(swapAt, 0.5, grid ? 1 - 4 / grid : 0.5));
+      outLp = (p) => glide(20000, floor, (p - from) / (1 - from));
+      outHp = (p) => bassCut(h(p));
+      inHp = (p) => Math.max(bassCut(1 - h(p)), entryHp(p, top, openBy));
+      const held = (plain, dj) => plain + (dj - plain) * (1 - clash);
+      rise = (p) => held(Math.sin(p * S), Math.sin(clamp(p / swapAt, 0, 1) * S));
+      fall = (p) => held(Math.cos(p * S), p <= fallFrom ? 1 : Math.cos(((p - fallFrom) / (1 - fallFrom)) * S));
+    }
+    // ~25 ms steps, so half a beat of bass swap is drawn. Firefox draws a
+    // curve as one ramp per step (fadeCurve), five params at once: fewer there.
+    const most = typeof AudioParam !== 'undefined' && AudioParam.prototype.cancelAndHoldAtTime ? 4000 : 1200;
+    const n = Math.max(EP, Math.min(most, Math.ceil(D * 40)));
+    const mk = (f) => Float32Array.from({ length: n }, (_, i) => f(i / (n - 1)));
+    const gIn = new Float32Array(n), gOut = new Float32Array(n);
+    for (let i = 0; i < n; i++) {
+      const p = i / (n - 1);
+      let r = rise(p), f = fall(p);
+      r += (Math.sin(Math.pow(p, 1.65) * S) - r) * clash;
+      f += (Math.cos(Math.pow(p, 0.65) * S) - f) * clash;
+      const trim = r + f <= 1 ? 1 : Math.max(0.5, 1 / Math.sqrt(r + f));
+      gIn[i] = r * trim; gOut[i] = f * trim;
+    }
+    const shape = { D, style, gIn, gOut, inHp: mk(inHp), outHp: mk(outHp), outLp: mk(outLp) };
+    djShapes.set(m, shape);
+    return shape;
+  }
+  const djNote = (m, style) => (m.v2 && style !== 'crossfade'
+    ? ` [AutoDJ: both sing ${Math.round((m.clash || 0) * 100)}%${m.vocalsBy ? ' (' + m.vocalsBy + ')' : ''}${m.rerouted ? '; ' + m.rerouted : ''}${m.keyClash ? '; keys clash (' + m.keyClash + '), short blend' : ''}]`
+    : '');
+  // The fader for this mix: AutoDJ's for a version 2 blend or filter mix, else equal power.
+  const gainCurves = (m, style, D) => (m.v2 && style !== 'crossfade' ? (({ gIn, gOut }) => [gIn, gOut])(djShape(m, style, D)) : [EP_IN, EP_OUT]);
+  // AutoDJ's filters: the next song's (the player's high-pass, which the
+  // incoming deck feeds too) from `pre`, where it is still silent; the
+  // playing song's from t0, eased in over 30 ms (a 20 kHz → 7 kHz step clicks).
+  function djFilters(g, style, t0, D, pre) {
+    const s = djShape(live.mix, style, D);
+    if (g.highpass) {
+      const f = g.highpass.frequency;
+      f.setValueAtTime(s.inHp[0], pre);
+      if (t0 > pre + 0.002) f.setValueAtTime(s.inHp[0], t0 - 0.001);
+      fadeCurve(f, s.inHp, t0, D);
+    }
+    for (const [node, curve, open] of [[live.lp, s.outLp, 20000], [live.hp, s.outHp, 20]]) {
+      if (!node) continue;
+      const f = node.frequency, ease = Math.max(live.T + SWITCH + 0.01, t0 - 0.03);
+      f.cancelScheduledValues(ease);
+      f.setValueAtTime(open, ease);
+      f.linearRampToValueAtTime(curve[0], t0 - 0.001);
+      fadeCurve(f, curve, t0, D);
+    }
+  }
+
   function beginAutomix(g, v) {
     const ctx = g.ctx, now = ctx.currentTime, m = live.mix;
     const t0 = Math.max(live.t0, now + 0.05);
@@ -1152,14 +1245,15 @@
       deck.follow();
     }
 
-    // gains: equal-power cross
-    const inn = g.gate.gain, out = live.fade.gain;
-    inn.cancelScheduledValues(now); inn.setValueAtTime(0, now); fadeCurve(inn, EP_IN, t0, D);
-    out.cancelScheduledValues(now); out.setValueAtTime(1, now); fadeCurve(out, EP_OUT, t0, D);
-
+    // gains: equal-power cross (AutoDJ: its own fader)
     const style = matched ? m.style : 'crossfade';
+    const [cIn, cOut] = gainCurves(m, style, D);
+    const inn = g.gate.gain, out = live.fade.gain;
+    inn.cancelScheduledValues(now); inn.setValueAtTime(0, now); fadeCurve(inn, cIn, t0, D);
+    out.cancelScheduledValues(now); out.setValueAtTime(1, now); fadeCurve(out, cOut, t0, D);
+
     blendShape(g, style, t0, D, rate);
-    log(`automix: ${style}${style !== 'crossfade' ? ' of ' + m.bars + ' bars' : ''}, ${D.toFixed(1)} s, starting in ${(t0 - now).toFixed(2)} s; next song from ${m.mixInTrackTime.toFixed(2)} s at x${rate.toFixed(3)}${m.reason ? ' (' + m.reason + ')' : ''}`);
+    log(`automix: ${style}${style !== 'crossfade' ? ' of ' + m.bars + ' bars' : ''}, ${D.toFixed(1)} s, starting in ${(t0 - now).toFixed(2)} s; next song from ${m.mixInTrackTime.toFixed(2)} s at x${rate.toFixed(3)}${m.reason ? ' (' + m.reason + ')' : ''}${djNote(m, style)}`);
     live.phase = 'mixing';
     live.mixId = st.id;
   }
@@ -1181,7 +1275,9 @@
       to.setValueAtTime(m.swapDb, pre); to.setValueAtTime(m.swapDb, mid - bar / 2); to.linearRampToValueAtTime(0, mid + bar / 2);
       from.setValueAtTime(0, mid - bar / 2); from.linearRampToValueAtTime(m.swapDb, mid + bar / 2);
     };
-    if (style === 'blend') {
+    if (m.v2 && style !== 'crossfade') {
+      djFilters(g, style, t0, D, pre);
+    } else if (style === 'blend') {
       if (g.bassFilter) swap(g.bassFilter.gain, live.bass.gain);
       live.high.gain.setValueAtTime(0, t0); live.high.gain.linearRampToValueAtTime(-8, t0 + D);
       if (g.highFilter) { const h = g.highFilter.gain; h.setValueAtTime(-8, pre); h.setValueAtTime(-8, t0); h.linearRampToValueAtTime(0, t0 + D); }
@@ -1191,7 +1287,8 @@
       if (g.lowpass) { const lp = g.lowpass.frequency; lp.setValueAtTime(350, pre); lp.setValueAtTime(350, t0); lp.exponentialRampToValueAtTime(20000, t0 + D); }
     }
 
-    const title = style === 'blend' ? 'Automix' : style === 'filter' ? 'Automix · filter mix' : 'Automix · crossfade';
+    const name = m.v2 && style !== 'crossfade' ? 'Advanced AutoDJ' : 'Automix';
+    const title = style === 'blend' ? name : style === 'filter' ? name + ' · filter mix' : 'Automix · crossfade';
     const sub = style === 'crossfade'
       ? `${D.toFixed(1)} s${m.reason ? ' · ' + m.reason : ''}`
       : `${m.bars} bars · ${D.toFixed(1)} s · ${Math.round(m.bpm)} BPM${style === 'blend' && Math.abs(rate - 1) > 0.002 ? ` · ×${rate.toFixed(3)}` : ''}`;
@@ -1281,12 +1378,13 @@
     const pre = Math.min(PREROLL_SEC, m.mixInTrackTime / rate);
     inDeck.schedule([{ output: t0 - pre, input: m.mixInTrackTime - pre * rate, rate, active: true, loop: null }]);
     const ig = inDeck.gain.gain, out = live.fade.gain;
-    ig.cancelScheduledValues(0); ig.setValueAtTime(0, now); fadeCurve(ig, EP_IN, t0, D);
-    out.cancelScheduledValues(now); out.setValueAtTime(1, now); fadeCurve(out, EP_OUT, t0, D);
+    const [cIn, cOut] = gainCurves(m, m.style, D);
+    ig.cancelScheduledValues(0); ig.setValueAtTime(0, now); fadeCurve(ig, cIn, t0, D);
+    out.cancelScheduledValues(now); out.setValueAtTime(1, now); fadeCurve(out, cOut, t0, D);
     blendShape(g, m.style, t0, D, rate);
     live.handoffAt = t0 + D / 2;
     live.src.onended = null;   // the mix may run on the deck past the old song's end (a late take-over)
-    log(`automix: ${m.style}, ${D.toFixed(1)} s, starting in ${(t0 - now).toFixed(2)} s on the incoming deck (next song from ${m.mixInTrackTime.toFixed(2)} s at x${rate.toFixed(3)}); the player moves on in ${(live.askAt - now).toFixed(2)} s`);
+    log(`automix: ${m.style}, ${D.toFixed(1)} s, starting in ${(t0 - now).toFixed(2)} s on the incoming deck (next song from ${m.mixInTrackTime.toFixed(2)} s at x${rate.toFixed(3)}); the player moves on in ${(live.askAt - now).toFixed(2)} s${djNote(m, m.style)}`);
   }
   // The new song is on YouTube's player: silent, held to the clock, it takes over at the blend's end.
   function blendTakeOver(g, v) {

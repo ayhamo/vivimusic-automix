@@ -35,15 +35,23 @@
 
   let enabled = true;
   let barsSetting = 'auto';
+  // 1: the web original; 2: AutoDJ, the original plus BitChord phone ideas.
+  // Everything version 2 adds checks `version === 2`, so 1 stays as it was.
+  let version = 1;
+  let keyAware = false;   // version 2's key-aware blend length, off unless switched on
   try {
-    chrome.storage.local.get({ automixEnabled: true, automixBars: 'auto' }, (s) => {
+    chrome.storage.local.get({ automixEnabled: true, automixBars: 'auto', automixVersion: 1, automixKeyAware: false }, (s) => {
       enabled = s.automixEnabled !== false;
       barsSetting = s.automixBars === 'auto' ? 'auto' : (Number(s.automixBars) || 8);
+      version = s.automixVersion === 2 ? 2 : 1;
+      keyAware = s.automixKeyAware === true;
     });
     chrome.storage.onChanged.addListener((ch, area) => {
       if (area !== 'local') return;
       if ('automixEnabled' in ch) enabled = ch.automixEnabled.newValue !== false;
       if ('automixBars' in ch) barsSetting = ch.automixBars.newValue === 'auto' ? 'auto' : (Number(ch.automixBars.newValue) || 8);
+      if ('automixVersion' in ch) version = ch.automixVersion.newValue === 2 ? 2 : 1;
+      if ('automixKeyAware' in ch) keyAware = ch.automixKeyAware.newValue === true;
     });
   } catch { /* extension context gone */ }
   // barsSetting: a number is BitChord web's AutoDJ.transitionBars ("Up to N
@@ -155,7 +163,7 @@
           status.delete(old);
         }
         status.set(id, 'done');
-        log(`analysis of ${id}${a.cached ? ' (saved)' : ''}${a.musicVideo ? ' (music video)' : ''}: ${a.bpm?.toFixed(1) ?? '?'} BPM (end ${a.tailGrid?.bpm?.toFixed(1) ?? '?'}), ${a.keyName ?? '?'}, grid ${a.gridConfidence.toFixed(2)} / end ${a.tailGrid?.gridConfidence?.toFixed(2) ?? '-'}, intro ends ${a.introEndSec?.toFixed(1) ?? '-'} s, outro from ${a.outroStartSec?.toFixed(1) ?? '-'} s, in ${Math.round(performance.now() - started)} ms`);
+        log(`analysis of ${id}${a.cached ? ' (saved)' : ''}${a.musicVideo ? ' (music video)' : ''}: ${a.bpm?.toFixed(1) ?? '?'} BPM (end ${a.tailGrid?.bpm?.toFixed(1) ?? '?'}), ${a.keyName ?? '?'}, grid ${a.gridConfidence.toFixed(2)} / end ${a.tailGrid?.gridConfidence?.toFixed(2) ?? '-'}, intro ends ${a.introEndSec?.toFixed(1) ?? '-'} s, outro from ${a.outroStartSec?.toFixed(1) ?? '-'} s${a.contentEndSec != null ? `, music ends ${a.contentEndSec.toFixed(1)} s` : ''}, in${Math.round(performance.now() - started)} ms`);
       } catch (e) {
         log('analysis of', id, 'failed:', e?.message || e);
         failedAt.set(id, Date.now());
@@ -180,7 +188,18 @@
   async function analyzeOne(id) {
     await ensureFrame();
     const cached = await askHost({ type: 'cached', id }, [], 15000).catch(() => null);
-    if (cached) { cached.cached = true; return cached; }
+    if (cached) {
+      cached.cached = true;
+      // Advanced AutoDJ: a song saved before its music end was measured gets
+      // it now (a decode, not a new analysis; saved with it). null: unmeasurable.
+      if (version === 2 && cached.contentEndSec === undefined) {
+        try {
+          const { bytes } = await songBytes(id);
+          cached.contentEndSec = (await askHost({ type: 'contentEnd', id, bytes }, [bytes], 30000))?.contentEndSec ?? null;
+        } catch { /* not downloaded (yet): the song's length, as before */ }
+      }
+      return cached;
+    }
     const { bytes, musicVideo } = await songBytes(id);
     const result = await askHost({ type: 'analyzeSong', id, bytes, musicVideo }, [bytes]);
     if (!result) throw new Error('analysis failed');
@@ -325,14 +344,17 @@
     const outRate = ratio < 1 ? 1 / ratio : 1;        // the playing song's, from the blend on
     const rampBeats = outRate > 1.0001 ? Math.ceil((outRate - 1) / TEMPO_STEP_PER_BEAT) : 0;
     const rampSongSec = rampBeats * fromGrid.beatSec;  // song time the ramp covers, ending at the mix-out
-    const bars = requestedBars(cur, next, fromGrid, toGrid.downbeatSec, false);
+    // AutoDJ's key-aware length (its own toggle): keys that clash get a short blend
+    const keyClash = version === 2 && keyAware ? keysClash(cur, next) : null;
+    const bars = keyClash ? keyClashBars(fromGrid) : requestedBars(cur, next, fromGrid, toGrid.downbeatSec, false);
     const effBars = effectiveBlendBars(bars, cur.gridConfidence, next.gridConfidence);
     const outSpan = effBars * fromGrid.barSec;        // the playing song's seconds the blend covers
     const dur = outSpan / outRate;                    // output seconds
 
     // outgoing mix-out point (naturalMixOut: at the song's end); the ramp before it has to fit too
     const first = earliest + rampSongSec;
-    let mixOut = naturalMixOut(fromGrid, cur, outSpan);
+    const v2 = version === 2;
+    let mixOut = naturalMixOut(fromGrid, v2 ? musicEnd(cur) : cur, outSpan);
     if (mixOut < pos + rampSongSec) mixOut = phraseAtOrAfter(fromGrid, first);   // too late for the natural point: the next phrase
     if (mixOut < first) mixOut = downbeatAtOrAfter(fromGrid, first);
     if (mixOut + outSpan > cur.durationSec - 0.3) return filterMix(cur, next, fromGrid, toGrid, bars, pos, earliest, 'too close to the end for a blend');
@@ -343,8 +365,19 @@
     let mixIn = fullEnergyPhrase - dur * rate;
     if (mixIn < toGrid.downbeatSec) mixIn = toGrid.downbeatSec;
 
+    // AutoDJ (version 2): no further than a quarter into the next song, and
+    // a blend point where the two songs don't sing over each other.
+    let dj = null;
+    if (v2) {
+      mixIn = capIncomingSkip(next, toGrid, mixIn);
+      dj = rerouteForVocals(cur, next, fromGrid, toGrid, mixOut, mixIn, outSpan, rate / outRate, Math.max(first, pos + rampSongSec));
+      mixOut = dj.mixOut;
+      mixIn = dj.mixIn;
+    }
+
     return {
       style: 'blend', fallback: false, reason: null,
+      v2, clash: dj?.clash ?? 0, rerouted: dj?.rerouted ?? null, vocalsBy: dj?.by ?? null, keyClash,
       mixOutTrackTime: mixOut, durationSec: dur, mixInTrackTime: mixIn, rate,
       outRate, rampBeats, rampSongSec, beatSec: fromGrid.beatSec,
       bars: effBars, swapDb: effBars >= FULL_SWAP_MIN_BARS ? KILL_DB : SHORT_BLEND_KILL_DB,
@@ -357,7 +390,8 @@
   function filterMix(cur, next, fromGrid, toGrid, requested, pos, earliest, reason) {
     let bars = Math.min(requested, FILTER_MAX_BARS);
     let dur = bars * fromGrid.barSec;
-    let mixOut = naturalMixOut(fromGrid, cur, dur);
+    const v2 = version === 2;
+    let mixOut = naturalMixOut(fromGrid, v2 ? musicEnd(cur) : cur, dur);
     if (mixOut < pos) mixOut = phraseAtOrAfter(fromGrid, earliest);
     if (mixOut < earliest) mixOut = downbeatAtOrAfter(fromGrid, earliest);
     // never past the outgoing song's end: shorten to the bars that still fit
@@ -368,10 +402,160 @@
     }
     if (room < fromGrid.barSec) return fallback(cur, next, earliest, reason);
     const mixIn = toGrid ? toGrid.downbeatSec : Math.min(next.introEndSec ?? 0, 1);
+    // AutoDJ: how much the two sing at once, for the filter shapes (no re-route: a filter mix has no tempo match to keep)
+    const clash = v2 ? vocalOverlap(cur, next, mixOut, dur, mixIn, 1, { out: lyricSpans(cur), in: lyricSpans(next) }) ?? 0 : 0;
     return {
-      style: 'filter', fallback: false, reason,
+      style: 'filter', fallback: false, reason, v2, clash, rerouted: null,
       mixOutTrackTime: mixOut, durationSec: dur, mixInTrackTime: mixIn, rate: 1,
       bars, swapDb: KILL_DB, barSec: fromGrid.barSec, bpm: fromGrid.bpm, inBpm: toGrid?.bpm ?? null,
+    };
+  }
+
+  // ───────── AutoDJ (Automix version 2): BitChord phone ideas ─────────
+  // From the BitChord phone's TransitionPlanner / TransitionPolicy: the
+  // vocal mask decides whether a blend has both songs singing at once, and
+  // a blend that does is moved to a cleaner point when one exists.
+  const VOCAL_SUNG = 0.25;          // POL VOCAL_ACTIVE_THRESHOLD
+  const REROUTE_OVERLAP = 0.3;      // TP VOCAL_REROUTE_OVERLAP
+  const REROUTE_GAIN = 0.5;         // an alternative must halve the overlap
+  const MAX_DISCARD_SEC = 12;       // POL MAX_DISCARDED_MUSIC_SECONDS
+  const MAX_IN_SKIP = 0.25;         // TP MAX_INCOMING_SKIP_FRACTION
+  const ENTRY_SHIFTS = [0, -4, 4, -8, 8];   // bars the incoming cue may move
+
+  // Key-aware blend length (toggle automixKeyAware, version 2 only). The
+  // BitChord phone shortens a blend whose keys clash (TP adaptiveOverlap:
+  // 8 beats instead of 16). Compatible here is harmonic mixing on the
+  // Camelot wheel: the same number, or one step round it on the same
+  // letter. A key the analysis is unsure of doesn't count.
+  const KEY_MIN_CONFIDENCE = 0.5;
+  function keysClash(a, b) {
+    const x = a.camelot, y = b.camelot;
+    if (!x || !y || !(a.keyConfidence >= KEY_MIN_CONFIDENCE) || !(b.keyConfidence >= KEY_MIN_CONFIDENCE)) return null;
+    const step = (x.num - y.num + 12) % 12;
+    const ok = x.num === y.num || (x.letter === y.letter && (step === 1 || step === 11));
+    return ok ? null : `${a.keyName ?? x.num + x.letter} → ${b.keyName ?? y.num + y.letter}`;
+  }
+  // 2 bars, unless that is under 4 s (6 s from 140 BPM): then 4.
+  const keyClashBars = (g) => (2 * g.barSec >= (g.bpm >= 140 ? 6 : 4) ? 2 : 4);
+
+  // The song with its length cut to where its music ends (analysis
+  // contentEndSec), when there's real silence after it; never over 20 s cut.
+  function musicEnd(a) {
+    const end = a.contentEndSec;
+    if (!(end > 0) || end >= a.durationSec - 1) return a;
+    return { ...a, durationSec: Math.max(end, a.durationSec - 20) };
+  }
+
+  // TP capIncomingSkip: the cue pulled back by whole bars to within a quarter of the song.
+  function capIncomingSkip(next, toGrid, mixIn) {
+    const cap = next.durationSec > 0 ? next.durationSec * MAX_IN_SKIP : Infinity;
+    if (mixIn <= cap) return mixIn;
+    return Math.max(toGrid.downbeatSec, mixIn - Math.ceil((mixIn - cap) / toGrid.barSec) * toGrid.barSec);
+  }
+
+  // Where a song is sung, from its synced lyrics (the lyrics panel's lookup,
+  // as the loop mix uses): asked for once per song, answered on a later
+  // plan (the plan is redone every tick until the outro is asked for);
+  // until then, and for songs without synced lyrics, the vocal mask. Not
+  // for a music video: its audio rarely runs on the song's lyric times.
+  const sungCache = new Map();   // id -> { spans: array | null | 'pending', at, tries }
+  const SUNG_RETRY_MS = 60000;   // no lyrics found: asked once more after this long (a slow lookup), then never
+  function lyricSpans(a) {
+    if (!a || a.stub || a.musicVideo || !a.fileKey) return null;
+    const id = a.fileKey;
+    const known = sungCache.get(id);
+    if (!known || (known.spans === null && known.tries < 2 && Date.now() - known.at > SUNG_RETRY_MS)) {
+      const me = { spans: 'pending', at: Date.now(), tries: (known?.tries ?? 0) + 1 };
+      sungCache.set(id, me);
+      sharedSungSpans(id).then((s) => { me.spans = s ?? null; me.at = Date.now(); }, () => { me.spans = null; me.at = Date.now(); });
+      while (sungCache.size > 24) sungCache.delete(sungCache.keys().next().value);
+    }
+    const s = sungCache.get(id).spans;
+    return Array.isArray(s) ? s : null;
+  }
+  // One lookup per song at a time: songMeta answers a second ask for the same
+  // song by giving the first one nothing, so the loop mix's lookup and this
+  // one, made at the same moment, share a single answer.
+  const sungInflight = new Map();
+  function sharedSungSpans(id) {
+    let p = sungInflight.get(id);
+    if (!p) {
+      p = sungSpans(id).finally(() => sungInflight.delete(id));
+      sungInflight.set(id, p);
+    }
+    return p;
+  }
+
+  // Sung or not at song second t: 1/0 from lyric lines when the song has
+  // them, else the vocal mask (open-unmix, 0..1 per ~23 ms frame); null
+  // where neither knows.
+  function vocalAt(a, t, spans = null) {
+    if (spans) return spans.some(([x, y]) => t >= x && t < y) ? 1 : 0;
+    for (const w of a.vocals ?? []) {
+      const i = Math.round((t - w.startSec) * w.fps);
+      if (i >= 0 && i < w.curve.length) return w.curve[i];
+    }
+    return null;
+  }
+
+  // POL simultaneousVocalFraction: the share of the blend where both songs
+  // sing. [inPerOut]: incoming song seconds per outgoing song second. null
+  // when the masks cover under half of it.
+  function vocalOverlap(cur, next, mixOut, outSpan, mixIn, inPerOut, sung = {}) {
+    let both = 0, n = 0, steps = 0;
+    for (let t = mixOut; t < mixOut + outSpan; t += 0.05) {
+      steps++;
+      const a = vocalAt(cur, t, sung.out), b = vocalAt(next, mixIn + (t - mixOut) * inPerOut, sung.in);
+      if (a == null || b == null) continue;
+      n++;
+      if (a >= VOCAL_SUNG && b >= VOCAL_SUNG) both++;
+    }
+    return steps && n >= steps * 0.5 ? both / n : null;
+  }
+
+  // TP's vocal re-route: over 30% sung by both, the exit is tried up to
+  // 12 s of music earlier (whole bars) and the cue up to 8 bars either way;
+  // the cleanest is taken if it halves the overlap. Otherwise the blend
+  // stays and its shapes keep the voices apart (clash, in crossfade.js).
+  // The plan is redone every tick, so the overlaps are measured once per
+  // blend (same songs, points, length and vocal sources) and kept; only the
+  // filter for candidates the playhead has passed runs each time.
+  let rerouteMemo = null;
+  function rerouteForVocals(cur, next, fromGrid, toGrid, mixOut, mixIn, outSpan, inPerOut, earliestOut) {
+    const sung = { out: lyricSpans(cur), in: lyricSpans(next) };
+    const by = `${sung.out ? 'lyrics' : 'mask'}/${sung.in ? 'lyrics' : 'mask'}`;
+    const key = [cur.fileKey, next.fileKey, mixOut, mixIn, outSpan, inPerOut, fromGrid.barSec, toGrid.barSec, by].map(String).join('|');
+    if (rerouteMemo?.key !== key) {
+      const first = vocalOverlap(cur, next, mixOut, outSpan, mixIn, inPerOut, sung);
+      const cands = [];
+      if (first != null && first > REROUTE_OVERLAP) {
+        const inCap = next.durationSec > 0 ? next.durationSec * MAX_IN_SKIP : Infinity;
+        for (let k = 0; k * fromGrid.barSec <= MAX_DISCARD_SEC; k++) {
+          for (const j of ENTRY_SHIFTS) {
+            if (!k && !j) continue;
+            const mi = mixIn + j * toGrid.barSec;
+            if (mi < toGrid.downbeatSec - 1e-6 || mi > inCap) continue;
+            const mo = mixOut - k * fromGrid.barSec;
+            const o = vocalOverlap(cur, next, mo, outSpan, mi, inPerOut, sung);
+            if (o != null) cands.push({ o, cost: k + Math.abs(j) / 2, mo, mi, k, j });
+          }
+        }
+      }
+      rerouteMemo = { key, primary: first, cands };
+    }
+    const { primary, cands } = rerouteMemo;
+    const keep = { mixOut, mixIn, clash: primary ?? 0, rerouted: null, by };
+    if (primary == null || primary <= REROUTE_OVERLAP) return keep;
+    let best = null;
+    for (const c of cands) {
+      if (c.mo < earliestOut) continue;   // the playhead is past where its ramp would start
+      if (!best || c.o < best.o - 1e-9 || (Math.abs(c.o - best.o) < 1e-9 && c.cost < best.cost)) best = c;
+    }
+    const pct = (x) => Math.round(x * 100) + '%';
+    if (!best || best.o > primary * REROUTE_GAIN) return { ...keep, rerouted: `both sing ${pct(primary)} of it, no cleaner point` };
+    return {
+      mixOut: best.mo, mixIn: best.mi, clash: best.o, by,
+      rerouted: `both sang ${pct(primary)} of it, moved to ${pct(best.o)} (exit ${best.k} bars earlier, cue ${best.j >= 0 ? '+' : ''}${best.j} bars)`,
     };
   }
 
@@ -665,6 +849,7 @@
   window.__viviAutomix = {
     isEnabled: () => enabled,
     getBars: () => barsSetting,
+    getVersion: () => version,
     request,
     get: (id) => results.get(id) ?? null,
     statusOf: (id) => status.get(id) ?? null,
@@ -673,7 +858,7 @@
     gridOk: (a) => !!gridOf(a) && a.gridConfidence >= MIN_GRID_CONFIDENCE,
     audioBytes,
     planLoopMix,
-    sungSpans,
+    sungSpans: sharedSungSpans,
     loopSchedule,
     LOOP: { OUT_REGION_SEC, IN_REGION_SEC, LOOP_SETUP_SEC },
     warmup,
