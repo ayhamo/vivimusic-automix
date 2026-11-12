@@ -540,7 +540,12 @@
     let b = document.getElementById(BTN_ID);
     if (!on) { if (b) b.hidden = true; return; }
     if (!b) b = makeButton();
-    if (b.parentElement !== host) host.prepend(b);
+    // between the volume control (left) and Repeat (right)
+    const kids = [...host.children];
+    const at = kids.find((c) => c.matches('.repeat')) || kids.find((c) => c.matches('.volume'))?.nextElementSibling;
+    if (b.parentElement !== host || (at ? b.nextElementSibling !== at : b !== host.firstElementChild)) {
+      if (at) host.insertBefore(b, at); else host.prepend(b);
+    }
     b.hidden = false;
     const state = !s || s.why ? 'idle' : s.editable ? 'planned' : 'mixing';
     if (b.dataset.state !== state) b.dataset.state = state;
