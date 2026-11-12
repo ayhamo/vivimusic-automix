@@ -679,6 +679,26 @@
     if (btn) btn.click();
     else moviePlayer()?.nextVideo?.();
   }
+  function pressPrevious() {
+    const btn = document.querySelector('ytmusic-player-bar .previous-button, ytmusic-miniplayer .previous-button, ytmusic-miniplayer [class*="PreviousButton"]');
+    if (btn) btn.click();
+    else moviePlayer()?.previousVideo?.();
+  }
+
+  // Media keys and headphone buttons reach the player through the Media
+  // Session, past the page's buttons. While an automix mix holds the player
+  // they go to crossfade.js instead, which ends the mix the way the buttons do.
+  let mixing = false;   // told by crossfade.js
+  try {
+    const ms = navigator.mediaSession, set = ms?.setActionHandler?.bind(ms);
+    if (set) {
+      ms.setActionHandler = (action, handler) => {
+        const dir = action === 'nexttrack' ? 'next' : action === 'previoustrack' ? 'prev' : '';
+        if (!dir || typeof handler !== 'function') return set(action, handler);
+        return set(action, (details) => { if (mixing) say({ type: 'media-key', dir }); else handler(details); });
+      };
+    }
+  } catch { /* no Media Session here */ }
 
 
   // ───────────────────────── Dev Console Test Helpers ─────────────────────────
@@ -740,6 +760,10 @@
       else w.reject(new Error(d.why || 'extension fetch failed'));
     } else if (d.type === 'next') {
       pressNext();
+    } else if (d.type === 'previous') {
+      pressPrevious();
+    } else if (d.type === 'mixing') {
+      mixing = !!d.on;
     } else if (d.type === 'set-volume') {
       setPlayerVolume(d.volume);
     }

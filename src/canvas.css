@@ -1687,3 +1687,112 @@ html.vivi-pill-player ytmusic-player-bar #hover-time-info.ytmusic-player-bar {
     background: rgba(28,28,32,0.92) !important;
   }
 }
+
+/* ─── Automix overview (automix-overview.js) ─── */
+#vivi-automix-toast.vivi-automix-visible { pointer-events: auto; cursor: pointer; }
+/* its button in the player bar: grey with no mix to show, blue once one is planned, pulsing while it plays */
+.vivi-amx-ov-open {
+  flex: none; width: 40px; height: 40px; padding: 8px; margin: 0 2px;
+  border: 0; border-radius: 50%; background: transparent;
+  color: rgba(255, 255, 255, 0.5); cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+  transition: color 0.2s, background-color 0.2s;
+}
+.vivi-amx-ov-open[hidden] { display: none; }
+.vivi-amx-ov-open svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
+.vivi-amx-ov-open:hover { background: rgba(255, 255, 255, 0.1); color: #fff; }
+.vivi-amx-ov-open:focus-visible { outline: 2px solid #3A9BDC; outline-offset: 1px; }
+.vivi-amx-ov-open[data-state="planned"] { color: #3A9BDC; }
+.vivi-amx-ov-open[data-state="mixing"] { color: #3A9BDC; animation: vivi-amx-ov-pulse 1.2s ease-in-out infinite; }
+@keyframes vivi-amx-ov-pulse { 50% { color: #F2C230; } }
+@media (prefers-reduced-motion: reduce) { .vivi-amx-ov-open[data-state="mixing"] { animation: none; color: #F2C230; } }
+.vivi-amx-ov {
+  position: fixed;
+  inset: 0;
+  z-index: 100001;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  box-sizing: border-box;
+  background: rgba(0, 0, 0, 0.6);
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  color: #fff;
+}
+.vivi-amx-ov.vivi-open { opacity: 1; }
+.vivi-amx-ov-card {
+  width: min(760px, 100%);
+  max-height: calc(100vh - 32px);
+  overflow: auto;
+  box-sizing: border-box;
+  padding: 18px 20px 16px;
+  border-radius: 18px;
+  background: #15131d !important;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.7);
+  transform: translateY(12px) scale(0.98);
+  transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.vivi-amx-ov.vivi-open .vivi-amx-ov-card { transform: none; }
+.vivi-amx-ov-head { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 14px; }
+.vivi-amx-ov-titles { flex: 1; min-width: 0; }
+.vivi-amx-ov-title { font-size: 18px; font-weight: 700; }
+.vivi-amx-ov-sub { font-size: 13px; color: rgba(255, 255, 255, 0.7); margin-top: 2px; }
+.vivi-amx-ov-close {
+  width: 32px; height: 32px; border-radius: 50%;
+  border: 0; background: rgba(255, 255, 255, 0.08); color: #fff;
+  font-size: 20px; line-height: 1; cursor: pointer;
+}
+.vivi-amx-ov-close:hover { background: rgba(255, 255, 255, 0.16); }
+.vivi-amx-ov-songs { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+.vivi-amx-ov-song { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; }
+.vivi-amx-ov-cover {
+  width: 52px; height: 52px; flex: none; border-radius: 8px;
+  object-fit: cover; background: rgba(255, 255, 255, 0.06);
+}
+.vivi-amx-ov-text { min-width: 0; }
+.vivi-amx-ov-name, .vivi-amx-ov-artist { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.vivi-amx-ov-name { font-size: 14px; font-weight: 600; }
+.vivi-amx-ov-artist { font-size: 12px; color: rgba(255, 255, 255, 0.65); }
+.vivi-amx-ov-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.vivi-amx-ov-tag {
+  font-size: 11px; padding: 1px 7px; border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08); color: rgba(255, 255, 255, 0.85);
+}
+.vivi-amx-ov-arrow { flex: none; color: rgba(255, 255, 255, 0.5); font-size: 18px; }
+.vivi-amx-ov-well { position: relative; border-radius: 10px; overflow: hidden; background: #15141c; }
+.vivi-amx-ov-canvas { display: block; width: 100%; height: 220px; }
+.vivi-amx-ov-msg { padding: 48px 16px; text-align: center; color: rgba(255, 255, 255, 0.7); font-size: 13px; }
+.vivi-amx-ov-legend {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 12px;
+  margin: 8px 2px 14px; font-size: 11px; color: rgba(255, 255, 255, 0.65);
+}
+.vivi-amx-ov-key { display: inline-flex; align-items: center; gap: 5px; }
+.vivi-amx-ov-key i { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+.vivi-amx-ov-clock { margin-left: auto; color: rgba(255, 255, 255, 0.85); font-variant-numeric: tabular-nums; }
+.vivi-amx-ov-controls { display: flex; flex-direction: column; gap: 10px; }
+.vivi-amx-ov-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.vivi-amx-ov-label { width: 56px; font-size: 12px; color: rgba(255, 255, 255, 0.6); }
+.vivi-amx-ov-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.vivi-amx-ov-chip, .vivi-amx-ov-btn {
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: transparent; color: #fff;
+  font: inherit; font-size: 12px; font-weight: 600;
+  padding: 5px 12px; border-radius: 999px; cursor: pointer;
+}
+.vivi-amx-ov-chip:hover:not(:disabled), .vivi-amx-ov-btn:hover:not(:disabled) { background: rgba(255, 255, 255, 0.08); }
+.vivi-amx-ov-chip.vivi-on { background: #ff4b8b; border-color: #ff4b8b; }
+.vivi-amx-ov-chip:disabled, .vivi-amx-ov-btn:disabled { opacity: 0.35; cursor: default; }
+.vivi-amx-ov-chip:focus-visible, .vivi-amx-ov-btn:focus-visible, .vivi-amx-ov-close:focus-visible { outline: 2px solid #3A9BDC; outline-offset: 2px; }
+.vivi-amx-ov-actions { display: flex; align-items: center; gap: 12px; margin-top: 2px; }
+.vivi-amx-ov-note { font-size: 12px; color: rgba(255, 255, 255, 0.6); }
+@media (max-width: 560px) {
+  .vivi-amx-ov-songs { flex-direction: column; align-items: stretch; }
+  .vivi-amx-ov-arrow { display: none; }
+  .vivi-amx-ov-canvas { height: 180px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .vivi-amx-ov, .vivi-amx-ov-card { transition: none; }
+}

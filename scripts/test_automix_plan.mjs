@@ -7,13 +7,13 @@ import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 
 // automix.js is a content script: run it with just enough of the extension world.
-function loadAutomix(bars) {
+function loadAutomix(bars, settings = {}) {
   const listeners = [];
   const window = { addEventListener() {}, location: { origin: 'https://music.youtube.com' } };
   const chrome = {
     runtime: { getURL: (p) => 'chrome-extension://test' + p },
     storage: {
-      local: { get: (defaults, cb) => cb({ ...defaults, automixBars: bars }) },
+      local: { get: (defaults, cb) => cb({ ...defaults, automixBars: bars, ...settings }) },
       onChanged: { addListener: (fn) => listeners.push(fn) },
     },
   };
@@ -112,4 +112,39 @@ test('Seeked past the natural point: the next phrase after the earliest start (u
   const natural = planOf(A, cur, song(120, 200)).mixOutTrackTime;
   const p = planOf(A, cur, song(120, 200), natural + 1);
   assert.ok(p.mixOutTrackTime >= natural + 1 + 4.5 - 1e-6);
+});
+
+// The Automix overview's pick for a pair: { style, bars }
+const pickOf = (A, cur, next, pick, pos = 20) =>
+  A.plan({ fromId: 'a', toId: 'b', from: cur, to: next, durationSec: cur.durationSec, pos, earliest: pos + 4.5, pick });
+
+test('Overview pick: a length overrides the setting, and only for that plan', () => {
+  const A = loadAutomix('auto');
+  assert.equal(pickOf(A, song(120, 200), song(120, 200), { style: null, bars: 16 }).bars, 16);
+  assert.equal(planOf(A, song(120, 200), song(120, 200)).bars, 4, 'the next plan without a pick is Auto again');
+  assert.equal(pickOf(A, song(120, 200), song(120, 200), { style: 'blend', bars: 32 }).bars, 32);
+});
+
+test('Overview pick: filter mix and fade on a pair that would blend', () => {
+  const A = loadAutomix('auto');
+  const f = pickOf(A, song(120, 200), song(120, 200), { style: 'filter', bars: 16 });
+  assert.equal(f.style, 'filter');
+  assert.equal(f.bars, 8, 'a filter mix is at most 8 bars');
+  const x = pickOf(A, song(120, 200), song(120, 200), { style: 'crossfade', bars: null });
+  assert.equal(x.style, 'crossfade');
+  assert.ok(x.mixOutTrackTime + x.durationSec <= 200, 'ends with the song');
+});
+
+test('Overview pick: a picked length still fits the song (a weak grid shortens it)', () => {
+  const A = loadAutomix('auto');
+  assert.equal(pickOf(A, song(120, 200, { conf: 0.3 }), song(120, 200), { style: 'blend', bars: 16 }).bars, 4);
+});
+
+test('Overview pick: a picked length beats the key-aware short blend', () => {
+  const A = loadAutomix('auto', { automixVersion: 2, automixKeyAware: true });
+  const keyed = (num, letter) => ({ ...song(120, 200), camelot: { num, letter }, keyConfidence: 1 });
+  const cur = keyed(1, 'A'), next = keyed(6, 'B');   // far apart on the wheel: a clash
+  assert.equal(planOf(A, cur, next).bars, 2, 'clashing keys get the short blend');
+  assert.equal(pickOf(A, cur, next, { style: 'blend', bars: 16 }).bars, 16, 'unless a length was picked');
+  assert.equal(planOf(A, cur, next).bars, 2, 'and only for the plan it was picked for');
 });

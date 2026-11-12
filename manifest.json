@@ -130,6 +130,7 @@
         "src/automix/automix.js",
         "src/vendor/signalsmith-stretch.js",
         "src/crossfade.js",
+        "src/automix-overview.js",
         "src/music-only.js",
         "src/vendor/hls.min.js",
         "src/content.js"

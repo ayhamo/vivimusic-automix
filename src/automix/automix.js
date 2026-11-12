@@ -281,7 +281,9 @@
     return AUTO_BAR_CHOICES.find((b) => b * g.barSec <= cap + 1e-6) ?? AUTO_BAR_CHOICES[AUTO_BAR_CHOICES.length - 1];
   }
   // The bars asked for: the "Up to N bars" setting, or the Auto pick for this pair.
-  const requestedBars = (cur, next, g, entrySec, filter) => (barsSetting === 'auto' ? autoBars(cur, next, g, entrySec, filter) : barsSetting);
+  // A length picked for this pair in the Automix overview comes first.
+  let pinnedBars = null;
+  const requestedBars = (cur, next, g, entrySec, filter) => pinnedBars || (barsSetting === 'auto' ? autoBars(cur, next, g, entrySec, filter) : barsSetting);
 
   // ───────── transition planner (BitChord engine/transition-scheduler.ts) ─────────
   const MIN_GRID_CONFIDENCE = 0.2;
@@ -321,16 +323,24 @@
    *   swapDb, barSec, bpm, reason, fallback } (durationSec is output seconds;
    *   the outgoing song always plays at rate 1 here).
    */
-  function plan({ fromId, toId, from, to, durationSec, pos, earliest }) {
+  // [pick]: what the Automix overview asked for this pair, { style, bars }
+  // (style 'blend', 'filter' or 'crossfade'; either may be null: Auto).
+  function plan({ fromId, toId, from, to, durationSec, pos, earliest, pick = null }) {
+    pinnedBars = pick?.bars || null;
+    try { return planFor({ fromId, toId, from, to, durationSec, pos, earliest, pick }); } finally { pinnedBars = null; }
+  }
+  function planFor({ fromId, toId, from, to, durationSec, pos, earliest, pick }) {
     const both = !!(from && to);
     const cur = asOutgoing(both ? { ...from, durationSec } : stub(fromId, durationSec));
     const next = both ? to : stub(toId, 0);
     const fromGrid = gridOf(cur);
     const toGrid = gridOf(next);
 
+    if (pick?.style === 'crossfade' && both) return fallback(cur, next, earliest, 'picked in the overview');
     if (!fromGrid || cur.gridConfidence < MIN_GRID_CONFIDENCE) {
       return fallback(cur, next, earliest, both ? 'this song has no beat grid at its end' : 'songs not analysed in time');
     }
+    if (pick?.style === 'filter') return filterMix(cur, next, fromGrid, toGrid && next.gridConfidence >= MIN_GRID_CONFIDENCE ? toGrid : null, requestedBars(cur, next, fromGrid, toGrid?.downbeatSec ?? 0, true), pos, earliest, 'picked in the overview');
     if (!toGrid || next.gridConfidence < MIN_GRID_CONFIDENCE) return filterMix(cur, next, fromGrid, null, requestedBars(cur, next, fromGrid, 0, true), pos, earliest, 'next song has no beat grid');
 
     const ratio = foldRate(fromGrid.bpm / toGrid.bpm);
@@ -346,7 +356,7 @@
     const rampSongSec = rampBeats * fromGrid.beatSec;  // song time the ramp covers, ending at the mix-out
     // AutoDJ's key-aware length (its own toggle): keys that clash get a short blend
     const keyClash = version === 2 && keyAware ? keysClash(cur, next) : null;
-    const bars = keyClash ? keyClashBars(fromGrid) : requestedBars(cur, next, fromGrid, toGrid.downbeatSec, false);
+    const bars = keyClash && !pinnedBars ? keyClashBars(fromGrid) : requestedBars(cur, next, fromGrid, toGrid.downbeatSec, false);
     const effBars = effectiveBlendBars(bars, cur.gridConfidence, next.gridConfidence);
     const outSpan = effBars * fromGrid.barSec;        // the playing song's seconds the blend covers
     const dur = outSpan / outRate;                    // output seconds
@@ -859,6 +869,7 @@
     audioBytes,
     planLoopMix,
     sungSpans: sharedSungSpans,
+    meta: songMeta,
     loopSchedule,
     LOOP: { OUT_REGION_SEC, IN_REGION_SEC, LOOP_SETUP_SEC },
     warmup,

@@ -318,11 +318,10 @@ function registerWorkletProcessor(Module, audioNodeKey) {
 							let channelBuffer = audioBuffer[c%audioBuffer.length];
 							buffer.subarray(blockSamples).set(channelBuffer.subarray(startIndex, startIndex + count));
 						});
-						audioSamples += count;
+						inputSamples += count; // Vivimusic: the upstream loop advanced audioSamples by count here, which misreads every buffer after the first
 						blockSamples += count;
-					} else { // we're already past this buffer - skip it
-						audioSamples += audioBuffer[0].length;
 					}
+					audioSamples = bufferEnd; // start of the next buffer
 					++audioBufferIndex;
 				}
 				if (blockSamples < this.bufferLength) {

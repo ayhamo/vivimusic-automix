@@ -139,9 +139,13 @@
       if (d.id !== seenId) {
         seenId = d.id;
         if (!live) { dropPlan(); reqId = ''; failedId = ''; tries = 0; }
+        if (jumpTo && d.id !== jumpTo.id) jumpTo = null;
       }
     } else if (d.type === 'tail') {
       acceptTail(d);
+    } else if (d.type === 'media-key') {
+      // a media key during a mix (crossfade-page.js); the mix may have ended meanwhile
+      if (!skipDuringMix(null, d.dir)) post({ type: d.dir === 'next' ? 'next' : 'previous' });
     } else if (d.type === 'prefetch') {
       // dropped by the page before it finished: forgotten here, so it is asked for again when wanted
       if (d.state === 'dropped') { if (songs.get(d.id)?.state === 'loading') songs.delete(d.id); return; }
@@ -198,6 +202,34 @@
   // Automix for the current song (BitChord web's AutoDJ, see automix.js):
   // idle (planning) → waiting (outro asked) → ready → done | fallback | off
   let amx = { id: '', state: 'idle', plan: null };
+  // The Automix overview's choices, per pair of songs ("a>b" → { style, bars };
+  // style: loop | blend | filter | crossfade, null for Auto; bars: 4..32, null for Auto)
+  const PICKS_KEY = 'automixPairPicks', MAX_PICKS = 300;
+  let pairPicks = {};
+  try {
+    chrome.storage.local.get({ [PICKS_KEY]: {} }, (r) => { pairPicks = r[PICKS_KEY] || {}; });
+    chrome.storage.onChanged.addListener((ch, area) => {
+      if (area !== 'local' || !(PICKS_KEY in ch)) return;
+      const was = pairPicks;
+      pairPicks = ch[PICKS_KEY].newValue || {};
+      // picked in another tab: the pair playing here is planned again too
+      if (st) { const key = st.id + '>' + (st.next || ''); if (JSON.stringify(was[key]) !== JSON.stringify(pairPicks[key])) replanPair(key); }
+    });
+  } catch { /* extension context gone */ }
+  // planned afresh with a new pick (once the mix has begun, it is for next time)
+  function replanPair(key) {
+    if (!live && st && key === st.id + '>' + (st.next || '') && ['waiting', 'ready', 'fallback'].includes(amx.state)) { amx.state = 'idle'; reqId = ''; }
+  }
+  function setPairPick(key, pick) {
+    const next = { ...pairPicks };
+    delete next[key];
+    if (pick && (pick.style || pick.bars)) next[key] = { style: pick.style || null, bars: pick.bars || null };
+    const keys = Object.keys(next);
+    for (const k of keys.slice(0, Math.max(0, keys.length - MAX_PICKS))) delete next[k];
+    pairPicks = next;
+    try { chrome.storage.local.set({ [PICKS_KEY]: next }); } catch { /* extension context gone */ }
+    replanPair(key);
+  }
   // Whole-song downloads (crossfade-page.js) of the playing and next song:
   // id → { state: loading|ready|failed, at, retried, why, client }
   const songs = new Map();
@@ -294,7 +326,50 @@
     if (f.state === 'ready') window.__viviAutomix?.request(id, true);
   }
 
+  // Next or Previous during an automix mix. The mix holds YouTube's player
+  // (silent on the old song, or paused on the new one until its take-over),
+  // so the player's own Next/Previous did nothing the listener could hear.
+  //   Next: the mix ends now and the new song plays on from where the mix had
+  //   brought it (a loop mix: its take-over point).
+  //   Previous: the mix ends; on the old song YouTube's Previous runs as
+  //   usual, on the new one (the player already moved on) it starts over.
+  // [e]: the click or key press; null for a media key (crossfade-page.js).
+  let jumpTo = null;   // { id, t, at }: the song Next is waiting for, and where it goes on
+  let mixSent = false; // what crossfade-page.js was last told: a mix holds the player
+  function skipDuringMix(e, dir) {
+    const L = live, g = graph();
+    if (!L?.mix || !g) return false;
+    const m = L.mix, now = g.ctx.currentTime;
+    const onNew = !!st && st.id === m.nextId && st.id !== L.oldId;
+    if (dir === 'prev') {
+      abortLive('previous pressed');
+      if (onNew) {
+        e?.preventDefault();
+        e?.stopImmediatePropagation();
+        post({ type: 'seek', t: 0 });
+        post({ type: 'play' });
+      } else if (!e) post({ type: 'previous' });   // a media key: YouTube's own Previous, pressed for it
+      return true;
+    }
+    e?.preventDefault();
+    e?.stopImmediatePropagation();
+    const started = L.t0 != null && now >= L.t0;
+    const at = !started ? null
+      : m.style === 'loop' ? (L.loopX?.elementTrackTime ?? m.mixInTrackTime)
+        : m.mixInTrackTime + (now - L.t0) * (m.rate || 1);
+    abortLive('skipped by you');
+    if (onNew) {
+      if (at != null) post({ type: 'seek', t: at });
+      post({ type: 'play' });
+    } else {
+      jumpTo = at != null && m.nextId ? { id: m.nextId, t: at, at: performance.now() } : null;
+      post({ type: 'next' });
+    }
+    return true;
+  }
+
   function onManualSkipRequested(e) {
+    if (live?.mix && skipDuringMix(e, 'next')) return;
     if (!userManualSkip || seconds() === 0 || skip || live) return;
     const g = graph();
     const v = g?.video;
@@ -343,16 +418,20 @@
   const PLAY_PAUSE_BUTTONS = 'ytmusic-player-bar .play-pause-button, ytmusic-miniplayer .play-pause-button, ytmusic-miniplayer [class*="PlayPauseButton"]';
 
   // Only real user input: our own hand-over presses Next with a synthetic click.
+  const PREV_BUTTONS = 'ytmusic-player-bar .previous-button, ytmusic-miniplayer .previous-button, ytmusic-miniplayer [class*="PreviousButton"]';
   document.addEventListener('click', (e) => {
     if (!e.isTrusted) return;
     if (e.target.closest?.(NEXT_BUTTONS)) onManualSkipRequested(e);
+    else if (live?.mix && e.target.closest?.(PREV_BUTTONS)) skipDuringMix(e, 'prev');
   }, true);
 
   document.addEventListener('keydown', (e) => {
-    if (!e.isTrusted || !e.shiftKey || e.ctrlKey || e.altKey || e.metaKey || (e.key !== 'N' && e.key !== 'n')) return;
+    const k = e.key?.toLowerCase();
+    if (!e.isTrusted || !e.shiftKey || e.ctrlKey || e.altKey || e.metaKey || (k !== 'n' && k !== 'p')) return;
     const active = e.composedPath?.()[0] || document.activeElement;
     if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable)) return;
-    onManualSkipRequested(e);
+    if (k === 'n') onManualSkipRequested(e);
+    else if (live?.mix) skipDuringMix(e, 'prev');   // YouTube Music's Shift+P
   }, true);
 
   // While a mix holds YouTube's player paused (a loop mix waits on it for
@@ -887,6 +966,8 @@
   // MIT) over a decoded region of a song, so it can loop whole bars
   // sample-accurately and change tempo with the pitch kept, at any ratio.
   const POST_AHEAD_SEC = 0.25;   // the worklet keeps one pending change: each goes out just before it's due
+  const LOAD_PIECE_SEC = 4;       // a deck's audio goes to its worklet this much at a time
+  const LOAD_PIECE_GAP_MS = 40;
   const PREROLL_SEC = 0.5;       // a deck starts this early, silent, ahead of its first change that is heard
   const DISPATCH_MS = 20;
   let loopDecks = null;          // [outgoing, incoming], built on first use
@@ -929,10 +1010,17 @@
       await this.stretch.dropBuffers();
       const from = Math.max(0, Math.floor(startSec * buffer.sampleRate));
       const to = Math.min(buffer.length, Math.ceil(endSec * buffer.sampleRate));
-      const channels = [];
-      for (let c = 0; c < Math.min(2, buffer.numberOfChannels); c++) channels.push(buffer.getChannelData(c).slice(from, to));
-      if (channels.length === 1) channels.push(channels[0].slice());
-      await this.stretch.addBuffers(channels);
+      // In pieces, each handed over (not copied), a moment apart: the whole
+      // region in one message (25-45 MB) cost Firefox's audio thread 30-40 ms,
+      // heard as a stutter in the song playing meanwhile.
+      const piece = Math.round(LOAD_PIECE_SEC * buffer.sampleRate);
+      const mono = buffer.numberOfChannels < 2;
+      for (let a = from; a < to; a += piece) {
+        const b = Math.min(to, a + piece);
+        const channels = [buffer.getChannelData(0).slice(a, b), buffer.getChannelData(mono ? 0 : 1).slice(a, b)];
+        await this.stretch.addBuffers(channels, channels.map((c) => c.buffer));
+        if (b < to) await new Promise((r) => setTimeout(r, LOAD_PIECE_GAP_MS));
+      }
       this.regionStart = from / buffer.sampleRate;
       this.loadedKey = key;
     }
@@ -972,6 +1060,26 @@
   // cut from the same samples, so the switch onto its deck is seamless.
   let loopPrep = { key: '', state: 'idle' };
   const loopRefetched = new Set();   // pairs whose songs were downloaded again for the loop mix
+  // A whole song decoded at the graph's rate on a context of its own: decoded
+  // on the playing context, Firefox's audio loses ~40 ms as it lands.
+  const decodeAside = (g, bytes) => new OfflineAudioContext(2, 1, g.ctx.sampleRate).decodeAudioData(bytes);
+
+  // The loop decks, made once per audio graph (normally at its start: see warmDecks)
+  async function ensureLoopDecks(g) {
+    // a new player brings a new audio context: the decks are rebuilt in it
+    if (deckOut && deckOut.context !== g.ctx && live?.mix?.style !== 'loop') {
+      loopDecks?.forEach((d) => d.stop());
+      try { deckOut.disconnect(); } catch { /* gone */ }
+      deckOut = null; loopDecks = null;
+    }
+    if (!deckOut) { deckOut = g.ctx.createGain(); deckOut.connect(g.entry); }
+    if (!loopDecks) {
+      loopDecksMaking ??= Promise.all([LoopDeck.create(g.ctx, deckOut), LoopDeck.create(g.ctx, deckOut)])
+        .finally(() => { loopDecksMaking = null; });
+      loopDecks ??= await loopDecksMaking;
+    }
+  }
+
   async function prepareLoopMix(g, curId, nextId, pos) {
     const key = curId + '>' + nextId;
     if (loopPrep.key === key) return;
@@ -988,24 +1096,13 @@
       // where each song is sung: its synced lyrics (looked up meanwhile), else the vocal mask
       const lyrics = Promise.all([A.sungSpans(curId), A.sungSpans(nextId)]);
       const [ob, ib] = await Promise.all([A.audioBytes(curId), A.audioBytes(nextId)]);
-      const [outBuffer, inBuffer] = await Promise.all([g.ctx.decodeAudioData(ob), g.ctx.decodeAudioData(ib)]);
+      const [outBuffer, inBuffer] = await Promise.all([decodeAside(g, ob), decodeAside(g, ib)]);
       const [sungOut, sungIn] = await lyrics;
       if (!still()) return;
       const plan = A.planLoopMix(cur, outBuffer, nxt, inBuffer, pos + A.LOOP.LOOP_SETUP_SEC, { out: sungOut, in: sungIn });
       log(`automix: sung parts from ${sungOut ? 'synced lyrics' : 'the vocal mask'} (playing song) and ${sungIn ? 'synced lyrics' : 'the vocal mask'} (next song)`);
       if (!plan || plan.none) return none(plan?.none || 'no beat grid to loop on');
-      // a new player brings a new audio context: the decks are rebuilt in it
-      if (deckOut && deckOut.context !== g.ctx && live?.mix?.style !== 'loop') {
-        loopDecks?.forEach((d) => d.stop());
-        try { deckOut.disconnect(); } catch { /* gone */ }
-        deckOut = null; loopDecks = null;
-      }
-      if (!deckOut) { deckOut = g.ctx.createGain(); deckOut.connect(g.entry); }
-      if (!loopDecks) {
-        loopDecksMaking ??= Promise.all([LoopDeck.create(g.ctx, deckOut), LoopDeck.create(g.ctx, deckOut)])
-          .finally(() => { loopDecksMaking = null; });
-        loopDecks ??= await loopDecksMaking;
-      }
+      await ensureLoopDecks(g);
       if (!still()) return;
       if (live?.mix?.style === 'loop') return none('a loop mix is still playing');
       const load = deckLoads.then(async () => {
@@ -1311,6 +1408,35 @@
   // (not loaded in time) the player moves on before the blend, as before.
   let inDeck = null, inDeckMaking = null, inBus = null, inTap = null, inDeckGraph = null;
   let inPrep = { key: '', state: 'idle', end: 0, want: 0, why: '', retryAt: 0 };
+  // The incoming deck, made once per audio graph (normally at its start: see warmDecks)
+  async function ensureInDeck(g) {
+    if (inDeck && inDeckGraph === g) return;
+    inDeckMaking ??= (async () => {
+      // the audio graph was rebuilt (a new player): the old deck goes with it
+      if (inDeck) { inDeck.stop(); try { inBus.disconnect(); inDeck.gain.disconnect(); } catch { /* gone */ } }
+      inDeck = null;
+      const bus = g.ctx.createGain();
+      bus.connect(g.bassFilter);
+      const d = await LoopDeck.create(g.ctx, bus);
+      const t = g.ctx.createAnalyser();
+      t.fftSize = 16384; t.smoothingTimeConstant = 0;
+      d.lp.connect(t);   // read before the deck's own gain (the blend's curve): its plain level
+      inBus = bus; inTap = t; inDeck = d; inDeckGraph = g;
+    })().finally(() => { inDeckMaking = null; });
+    await inDeckMaking;
+  }
+
+  // Starting a deck's stretch engine holds up Firefox's audio for ~50 ms, so
+  // all three are made as the audio graph starts (it glitches then anyway),
+  // not in the middle of the first song with Automix (heard as a stutter
+  // once per browser session).
+  let warmedFor = null;
+  function warmDecks(g) {
+    if (warmedFor === g || typeof SignalsmithStretch !== 'function' || !g.bassFilter) return;
+    warmedFor = g;
+    Promise.all([ensureLoopDecks(g), ensureInDeck(g)]).catch((e) => log('automix: decks not made ahead:', e?.message || e));
+  }
+
   async function prepareInDeck(g, p) {
     const A = window.__viviAutomix, id = p.nextId;
     if (!id || !g.bassFilter || typeof SignalsmithStretch !== 'function') return;
@@ -1324,22 +1450,8 @@
     const me = { key: id, state: 'loading', end: 0, want, why: '', retryAt: 0 };
     inPrep = me;
     try {
-      if (!inDeck || inDeckGraph !== g) {
-        inDeckMaking ??= (async () => {
-          // the audio graph was rebuilt (a new player): the old deck goes with it
-          if (inDeck) { inDeck.stop(); try { inBus.disconnect(); inDeck.gain.disconnect(); } catch { /* gone */ } }
-          inDeck = null;
-          const bus = g.ctx.createGain();
-          bus.connect(g.bassFilter);
-          const d = await LoopDeck.create(g.ctx, bus);
-          const t = g.ctx.createAnalyser();
-          t.fftSize = 16384; t.smoothingTimeConstant = 0;
-          d.lp.connect(t);   // read before the deck's own gain (the blend's curve): its plain level
-          inBus = bus; inTap = t; inDeck = d; inDeckGraph = g;
-        })().finally(() => { inDeckMaking = null; });
-        await inDeckMaking;
-      }
-      const buf = await g.ctx.decodeAudioData(await A.audioBytes(id));
+      await ensureInDeck(g);
+      const buf = await decodeAside(g, await A.audioBytes(id));
       if (inPrep !== me) return;
       if (live?.inDeck) { inPrep = { key: '', state: 'idle', end: 0, want: 0, why: '', retryAt: 0 }; return; }
       const end = Math.min(buf.duration, want);
@@ -1777,6 +1889,17 @@
     const v = g?.video;
     toastWatch();
     kickMixUi();
+    // the page sends media keys here while a mix holds the player
+    if (!!live?.mix !== mixSent) { mixSent = !!live?.mix; post({ type: 'mixing', on: mixSent }); }
+    // Next pressed during a mix, before the player had moved on: the new song
+    // goes on from where the mix had brought it, once it really plays (a seek
+    // while YouTube still loads it is lost)
+    if (jumpTo && (performance.now() - jumpTo.at > 10000 || live)) jumpTo = null;
+    if (jumpTo && v && st?.id === jumpTo.id && !v.paused && v.readyState >= 3) {
+      const pos = v.currentTime - (st.off || 0);
+      if (pos < jumpTo.t - 1) post({ type: 'seek', t: jumpTo.t });
+      jumpTo = null;
+    }
     if (live) {
       if (g) driveLive(g, v); else live = null;
       // the hand-over runs a few seconds ahead of the mix (more before a speed-up,
@@ -1793,6 +1916,7 @@
     if (!N || !g || !v || !st || performance.now() - stAt > 1500) return;
     if (g.ctx.state !== 'running' || g.video !== document.querySelector('#movie_player video, ytmusic-player video, video')) return;
     watchVideo(v);
+    if (window.__viviAutomix?.isEnabled()) warmDecks(g);
     // The last blend's incoming song gliding back to its own tempo: its rate is ours, not the user's.
     if (deck && deck.id !== st.id) deck.cancel();
     const gliding = !!deck && deck.id === st.id;
@@ -1818,6 +1942,7 @@
     const A = window.__viviAutomix;
     const amxOn = !!A?.isEnabled();
     if (amx.id !== st.id) amx = { id: st.id, state: amxOn ? 'idle' : 'off', plan: null };
+    else if (amxOn && amx.state === 'off') amx.state = 'idle';   // turned on during this song
     if (amxOn) {
       wantSong(st.id);
       if (st.next && st.next !== st.id) wantSong(st.next);
@@ -1829,16 +1954,19 @@
         // Planned afresh each tick until the outro is asked for: it follows
         // seeks, a queue change and analyses as they land.
         const from = A.get(st.id), to = st.next ? A.get(st.next) : null;
-        let p = A.plan({ fromId: st.id, toId: st.next, from, to, durationSec: st.dur, pos, earliest: pos + HAND_LEAD + 0.5 });
+        const pairKey = st.id + '>' + (st.next || '');
+        const pick = pairPicks[pairKey] || null;
+        const noLoop = !!pick && (['blend', 'filter', 'crossfade'].includes(pick.style) || (!pick.style && !!pick.bars));
+        let p = A.plan({ fromId: st.id, toId: st.next, from, to, durationSec: st.dur, pos, earliest: pos + HAND_LEAD + 0.5, pick: noLoop ? pick : null });
         p.nextId = st.next || '';
         // The loop mix (BitChord AutoDJ): prepared in the background as soon as
         // both songs are analysed, so the status shows it from the start; when
         // it found bars to loop, it is the mix. (Its bars are searched in the
         // song's last OUT_SEARCH_SEC, so preparing early picks the same loop.)
-        const pairKey = st.id + '>' + (st.next || '');
-        if (st.next && from && to && loopPrep.key !== pairKey) prepareLoopMix(g, st.id, st.next, pos);
-        const loopPending = loopPrep.key === pairKey && loopPrep.state === 'loading';
-        const lp = loopPrep.key === pairKey && loopPrep.state === 'ready' ? loopPrep : null;
+        // (a blend, filter mix or fade picked in the overview: no loop mix for this pair)
+        if (st.next && from && to && loopPrep.key !== pairKey && !noLoop) prepareLoopMix(g, st.id, st.next, pos);
+        const loopPending = !noLoop && loopPrep.key === pairKey && loopPrep.state === 'loading';
+        const lp = !noLoop && loopPrep.key === pairKey && loopPrep.state === 'ready' ? loopPrep : null;
         if (lp && lp.plan.out.loop[0] > pos + HAND_LEAD + 1) {
           const x = A.loopSchedule(lp.plan, 0);
           // (the loop decks do the tempo: none of the blend's speed-up of the playing song)
@@ -1918,8 +2046,64 @@
     }
   }, TICK_MS);
 
+  // ───────── the Automix overview's view of the mix (automix-overview.js) ─────────
+  // The coming mix (or the one playing) on its own clock, 0 at its start:
+  // what each song plays and how loud, as the mix will play it.
+  let ovShape = { m: null, src: null };
+  function overviewSnapshot() {
+    const g = graph(), A = window.__viviAutomix;
+    if (!A?.isEnabled()) return { why: 'Automix is off' };
+    if (!st?.id) return { why: 'Nothing is playing' };
+    const m = live?.mix || (amx.id === st.id && amx.state !== 'off' ? amx.plan : null);
+    if (!m) {
+      const why = live ? 'A plain crossfade is playing' : amx.state === 'fallback' ? 'This song ends with a plain crossfade' : st.next ? 'Planning the mix…' : 'Nothing queued after this song';
+      // a pick for this pair stays undoable while there is no mix to show
+      const pairKey = !live && st.next ? st.id + '>' + st.next : '';
+      return pairKey && pairPicks[pairKey] ? { why, pairKey, toId: st.next, pick: pairPicks[pairKey] } : { why };
+    }
+    const fromId = live ? live.oldId : st.id;
+    const toId = m.nextId || (live ? '' : st.next) || '';
+    const pairKey = fromId + '>' + toId;
+    // the mix's shape, worked out once per plan (the overview asks every frame)
+    const src = m.style === 'loop' ? live?.loopX || null : null;
+    if (ovShape.m !== m || ovShape.src !== src) {
+      let x = null;
+      if (m.style === 'loop') {
+        const s = src || A.loopSchedule(m.loop, 0), z = s.t0;
+        const rel = (c) => ({ ...c, output: c.output - z });
+        x = { beatTimes: s.beatTimes.map((t) => t - z), outChanges: s.outChanges.map(rel), inChanges: s.inChanges.map(rel),
+          enterEnd: s.enterEnd - z, rampEnd: s.rampEnd - z, releaseAt: s.releaseAt - z, elementAt: s.elementAt - z,
+          mid: s.mid - z, bar: s.bar, elementTrackTime: s.elementTrackTime };
+      }
+      const D = x ? x.elementAt : m.durationSec;
+      const [gIn, gOut] = x ? [null, null] : gainCurves(m, m.style, D);
+      ovShape = { m, src, x, D, gIn, gOut };
+    }
+    const { x, D, gIn, gOut } = ovShape;
+    // where the music is on the mix's clock
+    let at = null;
+    if (g && live?.t0 != null) at = g.ctx.currentTime - live.t0;
+    else if (g && !live) at = (g.video.currentTime - (st.off || 0)) - m.mixOutTrackTime;
+    const lp = loopPrep.key === pairKey ? loopPrep : null;
+    return {
+      fromId, toId, pairKey, mix: m, x, D, at, gIn, gOut,
+      phase: live ? live.phase : amx.state,
+      paused: !live && !!g?.video?.paused,
+      fromDur: live ? null : st.dur,
+      pick: pairPicks[pairKey] || null,
+      loop: lp ? { state: lp.state, why: lp.why || '' } : null,
+      // before the hand-over a pick can still change this mix, and a preview can jump to it
+      editable: !live && st.id === fromId,
+      previewAt: m.mixOutTrackTime - HAND_LEAD - (m.style === 'loop' ? 8 : TAIL_LEAD + 3 + (m.rampSongSec || 0)),
+    };
+  }
+
   window.__viviCrossfade = {
     active: () => !!live,
+    overview: overviewSnapshot,
+    setPairPick,
+    // the preview: the playing song jumps to just before its mix
+    seekTo: (t) => { if (!live && st) post({ type: 'seek', t: Math.max(0, t) }); },
     // While a blend is running the <video> already plays the next song, but
     // the old one is what you mostly hear until the middle of the blend.
     // Returns that song and its current position so the lyrics can stay on it.
