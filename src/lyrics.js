@@ -1282,7 +1282,7 @@
           addFb('lrcred', fromLrcRed);
           addFb('lyricsplus', fromLyricsPlus);
           addFb('paxsenix', fromPaxsenix);
-          addFb('betterlyricsTTML', fromBetterLyricsTTML);
+          addFb('betterlyrics', fromBetterLyrics);
           addFb('lrclib', fromLrclib);
           addFb('musixmatch', fromMusixmatch);
           addFb('binilyrics', fromBiniLyrics);
