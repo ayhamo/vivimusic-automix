@@ -58,7 +58,7 @@
   };
 
   // ───────── settings (read straight from storage, no relay needed) ─────────
-  let userOn = false, userSecs = 6, userManualSkip = true, userAutoAdvance = true, saver = false;
+  let userOn = false, userSecs = 6, userManualSkip = true, userAutoAdvance = true, saver = false, userStreamDeck = false;
   const seconds = () => (userOn && !saver ? clamp(Math.round(userSecs) || 0, 1, MAX_SECONDS) : 0);
 
   function post(msg) {
@@ -68,6 +68,7 @@
   function applyConfig() {
     log('config: seconds =', seconds(), '| enabled:', userOn, '| manualSkip:', userManualSkip, '| autoAdvance:', userAutoAdvance, '| resource saver:', saver);
     post({ type: 'config', enabled: seconds() > 0 });
+    if (seconds() === 0 || !userStreamDeck) streamDeckBack('turned off');
     if (seconds() === 0) { if (live) abortLive(); dropPlan(); }
     else if (navigator.userActivation?.hasBeenActive) wake();
   }
@@ -78,13 +79,15 @@
       crossfadeSeconds: 6,
       crossfadeManualSkip: true,
       crossfadeAutoAdvance: true,
-      resourceSaverEnabled: false
+      resourceSaverEnabled: false,
+      automixStreamDeck: false
     }, (r) => {
       userOn = r.crossfadeEnabled === true;
       userSecs = Number(r.crossfadeSeconds) || 6;
       userManualSkip = r.crossfadeManualSkip !== false;
       userAutoAdvance = r.crossfadeAutoAdvance !== false;
       saver = r.resourceSaverEnabled === true;
+      userStreamDeck = r.automixStreamDeck === true;
       applyConfig();
     });
     chrome.storage.onChanged.addListener((ch, area) => {
@@ -94,6 +97,7 @@
       if ('crossfadeManualSkip' in ch) userManualSkip = ch.crossfadeManualSkip.newValue !== false;
       if ('crossfadeAutoAdvance' in ch) userAutoAdvance = ch.crossfadeAutoAdvance.newValue !== false;
       if ('resourceSaverEnabled' in ch) saver = ch.resourceSaverEnabled.newValue === true;
+      if ('automixStreamDeck' in ch) userStreamDeck = ch.automixStreamDeck.newValue === true;
       applyConfig();
     });
   } catch { /* extension context gone */ }
@@ -121,6 +125,70 @@
     if (!v || watched === v) return;
     watched = v;
     v.addEventListener('playing', () => { if (live && graph()) live.playedAt = graph().ctx.currentTime; });
+  }
+
+  // ───────── debug: the full-stream deck on the playing song (src/plus/stream-deck.js) ─────────
+  // postMessage({ ch: 'vivi-xfade', dir: 'out', type: 'vivi-stream-deck-test', reqId, sec, fail, trim, takeIn, release })
+  // Plays the playing song on the deck from our copy of its audio, YouTube
+  // muted, for `sec` seconds; every second: the deck's drift and the level of
+  // YouTube's element against the deck's (both before their gains). With
+  // `fail`, the deck's audio is then broken to check the handback. `takeIn`: the
+  // deck takes over that many seconds in (a scheduled takeover, as after a mix);
+  // `release`: it ends with a release (as at the next mix), the gate then reopened here.
+  async function streamDeckTest(d) {
+    const reply = (m) => window.postMessage({ ch: CHANNEL, dir: 'deck-test', reqId: d.reqId, ...m }, window.location.origin);
+    const g = graph(), A = window.__viviAutomix, SD = window.__viviStreamDeck;
+    if (!g || !st?.id || !A || !SD) { reply({ ok: false, error: 'not ready (audio graph, song or deck missing)' }); return; }
+    const id = st.id, v = g.video, sleepMs = (ms) => new Promise((r) => setTimeout(r, ms));
+    let deck = null;
+    try {
+      const bytes = await A.audioBytes(id);
+      deck = SD.create(g.ctx, g.bassFilter);
+      await deck.load(bytes, 'audio/webm');
+      const ytTap = g.ctx.createAnalyser(), dTap = g.ctx.createAnalyser();
+      ytTap.fftSize = dTap.fftSize = 8192;
+      g.source.connect(ytTap); deck.src.connect(dTap);
+      const a = new Float32Array(8192), b = new Float32Array(8192);
+      let handedBack = null, released = null;
+      deck.follow({
+        // (buffering or seeking, YouTube's time stands still: the deck waits with it)
+        clock: () => (st && st.id === id ? { pos: v.currentTime - st.off, playing: !v.paused && !v.seeking && v.readyState >= 3 } : null),
+        level: () => v.volume,
+        gate: g.gate.gain,
+        onHandback: (why) => { handedBack = why; },
+        trim: d.trim !== false,
+        takeAt: d.takeIn ? g.ctx.currentTime + d.takeIn : 0,
+      });
+      const samples = [];
+      for (let s = 0; s < (d.sec || 20) && !handedBack; s++) {
+        await sleepMs(1000);
+        ytTap.getFloatTimeDomainData(a); dTap.getFloatTimeDomainData(b);
+        const ry = rms(a), rd = rms(b);
+        samples.push({ s: s + 1, pos: +(v.currentTime - st.off).toFixed(2), vol: +v.volume.toFixed(4), gate: +g.gate.gain.value.toFixed(3),
+          ytOverDeck: rd > 1e-4 ? +(ry / rd).toFixed(4) : null, ...deck.stats() });
+      }
+      if (d.fail && !handedBack) {
+        deck.el.src = 'blob:broken';   // the deck's audio fails mid-song
+        await sleepMs(1500);
+      } else if (!handedBack && d.release) {
+        deck.release(g.ctx.currentTime + 0.2, 0.4);
+        await sleepMs(900);
+        released = { gate: +g.gate.gain.value.toFixed(3), deckGain: +deck.gain.gain.value.toFixed(3), state: deck.state };
+        const now = g.ctx.currentTime, y = g.gate.gain;
+        y.cancelScheduledValues(now); y.setValueAtTime(y.value, now); y.linearRampToValueAtTime(1, now + 0.05);
+        await sleepMs(100);
+      } else if (!handedBack) {
+        deck.handBack('test over');
+        await sleepMs(300);
+      }
+      try { g.source.disconnect(ytTap); deck.src.disconnect(dTap); } catch { /* gone */ }
+      const after = { gate: +g.gate.gain.value.toFixed(3), deckGain: +deck.gain.gain.value.toFixed(3), playing: !v.paused, handedBack, released };
+      deck.dispose();
+      reply({ ok: true, id, samples, after });
+    } catch (e) {
+      deck?.dispose();
+      reply({ ok: false, error: String(e?.message || e) });
+    }
   }
 
   // ───────── state from the page world ─────────
@@ -177,6 +245,8 @@
         engine: a?.getLiveState(),
         crossfade: window.__viviCrossfade?.status(),
       }));
+    } else if (d.type === 'vivi-stream-deck-test') {
+      streamDeckTest(d);
     } else if (d.type === 'vivi-automix-fixture') {
       // Debug helper for spec/automix/pairs (the test Firefox's capture scenario): both songs'
       // analysis, where they are sung (synced lyrics), and their loudness at
@@ -656,8 +726,16 @@
     vol.gain.setValueAtTime(0, T);
     vol.gain.linearRampToValueAtTime(base, T + SWITCH);
     hold(g.gate.gain, ctx.currentTime);
-    g.gate.gain.setValueAtTime(1, T);
-    g.gate.gain.linearRampToValueAtTime(0, T + SWITCH);
+    if (sdeck?.audible) {
+      // the stream deck plays the song (YouTube's gate is down): it gives way to the copy instead
+      g.gate.gain.setValueAtTime(0, T);
+      sdeck.release(T, SWITCH);
+      sdeck = null;
+    } else {
+      streamDeckBack('the next mix');   // (one not in step yet: gone before the gate moves below)
+      g.gate.gain.setValueAtTime(1, T);
+      g.gate.gain.linearRampToValueAtTime(0, T + SWITCH);
+    }
     src.start(T, idxT / sr);
 
     const me = {
@@ -760,6 +838,13 @@
       setTimeout(() => { if (!live?.deckRamp) { blendDeck.stop(); try { blendBus.disconnect(); } catch { /* gone */ } } }, 200);
     }
     resetPlayerFilters(g);
+    if (sdeck?.audible) {
+      // the stream deck plays the new song: YouTube's gate stays down (the deck brings it back if it fails)
+      hold(L.vol.gain, now); L.vol.gain.setValueAtTime(L.vol.gain.value, now); L.vol.gain.linearRampToValueAtTime(0, now + 0.12);
+      try { L.src.stop(now + 0.15); } catch { /* not started / already stopped */ }
+      setTimeout(() => { try { L.vol.disconnect(); } catch { /* gone */ } }, 300);
+      return;
+    }
     hold(g.gate.gain, now);
     if (rampGate) {
       g.gate.gain.setValueAtTime(g.gate.gain.value, now);
@@ -801,6 +886,7 @@
     log('aborted crossfade', why);
     const g = graph(), L = live;
     live = null;
+    streamDeckBack('the mix was called off');   // (YouTube's own sound, before the gate is touched below)
     // (the decks are stopped first; whatever happens there, the player's own sound comes back below)
     if (L?.mix) {
       try {
@@ -1244,6 +1330,7 @@
     deckTapOf(idk, g.ctx);
     setTimeout(() => matchInLevel(L, tk - 0.05, 'loop'), Math.max(0, (tk - 0.45 - now) * 1000));
     log(`automix: the new song waits on the player, taking over in ${(tk - now).toFixed(2)} s`);
+    startStreamDeck(g, v, st.id, tk, H, L);
     L.phase = 'mixing';
     L.mixId = st.id;
   }
@@ -1534,10 +1621,54 @@
     if (!G && early < tk - 1.2) setTimeout(() => matchInLevel(L, early + 0.8), (early - now) * 1000);
     setTimeout(() => matchInLevel(L, tk - 0.05), Math.max(0, (tk - 0.45 - now) * 1000));
     log(`automix: the new song waits on the player, taking over from the incoming deck in ${(tk - now).toFixed(2)} s${G ? ` (the deck glides from x${rate.toFixed(3)} to x1.000 first, ${(G.end - L.t0 - L.D).toFixed(1)} s; the player stays at x1.000)` : ''}`);
+    startStreamDeck(g, v, st.id, tk, H, L);
     L.mixEnd = tk;
     L.phase = 'mixing';
     L.mixId = st.id;
   }
+  // ───────── the full-stream deck (src/plus/stream-deck.js, setting "Smooth hand-over") ─────────
+  // After a blend the new song goes on from our own copy of its audio instead
+  // of YouTube's player: the deck follows the player's clock (YouTube plays on,
+  // muted, and still does play, pause, seek and next) and takes over from the
+  // incoming deck at the blend's end, where the gate would open. Not in step by
+  // then: the gate opens as before and the deck takes over once it is, a fade
+  // between two copies of the same audio. On any trouble it hands the sound back
+  // to the player, already at the same spot. It plays until the next mix's hand-over.
+  let sdeck = null;
+  async function startStreamDeck(g, v, id, takeAt, takeSec, L) {
+    streamDeckBack('a new song');
+    const SD = window.__viviStreamDeck, A = window.__viviAutomix;
+    if (!userStreamDeck || !SD || !A || !g.bassFilter) return;
+    let d = null;
+    try {
+      const bytes = await A.audioBytes(id);
+      if (live !== L || st?.id !== id) return;
+      d = SD.create(g.ctx, g.bassFilter);
+      sdeck = d;
+      await d.load(bytes, 'audio/webm');
+      // it follows the player only shortly before it takes over: until then the player is held to
+      // the mix (silent seeks, the incoming deck's glide), its clock not yet the song's own
+      const wait = (takeAt - 3 - g.ctx.currentTime) * 1000;
+      if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+      if (sdeck !== d || st?.id !== id || live !== L) { if (sdeck === d) sdeck = null; d.dispose(); return; }
+      d.follow({
+        clock: () => (st && st.id === id && !st.ad && graph() === g ? { pos: v.currentTime - st.off, playing: !v.paused && !v.seeking && v.readyState >= 3 } : null),
+        level: () => (v.muted ? 0 : v.volume),   // the element's volume: the listener's times YouTube's loudness factor
+        gate: g.gate.gain, takeAt, takeSec,
+        onHandback: () => { if (sdeck === d) sdeck = null; d.dispose(); },
+      });
+    } catch (e) {
+      log('automix: no stream deck for this song:', e?.message || e);
+      if (d) { if (sdeck === d) sdeck = null; d.dispose(); }
+    }
+  }
+  // the stream deck stops (YouTube's own sound back, if the deck was playing)
+  function streamDeckBack(why) {
+    const d = sdeck;
+    sdeck = null;
+    d?.dispose(why);
+  }
+
   // The player's level for this song (YouTube's own volume and normalisation)
   // against the deck's, both playing the same moment: the deck is brought to it.
   // `by`: when the new level is reached. The blend's incoming deck (inBus), or

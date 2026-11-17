@@ -58,11 +58,11 @@
     },
     "ytLoudnessDb": {
       "type": ["number", "null"],
-      "description": "Optional. YouTube's loudness for this video: playerConfig.audioConfig.loudnessDb of the player response, dB above YouTube's reference level (positive: louder, YouTube turns it down). Both decks level against this. Extension: read in the page from the player response (#movie_player getPlayerResponse(), or the /youtubei/v1/player answer). Phone: the same field of its InnerTube player request (BitChord: StreamResolver.loudnessDbFor). null: YouTube gave none."
+      "description": "Optional. YouTube's loudness for this video: playerConfig.audioConfig.loudnessDb of the player response = trackAbsoluteLoudnessLkfs - loudnessTargetLkfs (target -7 LKFS). YouTube web only turns loud songs down, never quiet ones up: element volume = player volume x min(1, 10^(-loudnessDb/20)) (measured 2026-11-17 in Firefox: +1.76 dB -> x0.8166, +0.85 dB -> x0.9068, -1.26 dB -> x1). A deck replacing YouTube's sound plays at that same level. Both decks level against this. Extension: read in the page from the player response (#movie_player getPlayerResponse(), or the /youtubei/v1/player answer). Phone: the same field of its InnerTube player request (BitChord: StreamResolver.loudnessDbFor). null: YouTube gave none."
     },
     "ytPerceptualLoudnessDb": {
       "type": ["number", "null"],
-      "description": "Optional. playerConfig.audioConfig.perceptualLoudnessDb when YouTube sends it: an absolute level (LUFS-like). Prefer: ytLoudnessDb to match what YouTube's own player does (a deck replacing the player must sound like it); ytPerceptualLoudnessDb, when present, to compare two songs' absolute loudness, else ytLoudnessDb - 7 (Metrolist's conversion)."
+      "description": "Optional. playerConfig.audioConfig.perceptualLoudnessDb when YouTube sends it: the track's absolute loudness in LKFS (equal to trackAbsoluteLoudnessLkfs; loudnessDb is this minus loudnessTargetLkfs, -7). Prefer: ytLoudnessDb to match what YouTube's own player does (a deck replacing the player must sound like it); ytPerceptualLoudnessDb, when present, to compare two songs' absolute loudness, else ytLoudnessDb - 7 (Metrolist's conversion)."
     },
 
     "vocals": {

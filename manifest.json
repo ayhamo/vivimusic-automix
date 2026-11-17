@@ -135,6 +135,7 @@
         "src/equalizer.js",
         "src/automix/automix.js",
         "src/vendor/signalsmith-stretch.js",
+        "src/plus/stream-deck.js",
         "src/crossfade.js",
         "src/automix-overview.js",
         "src/music-only.js",

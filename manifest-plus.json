@@ -64,6 +64,7 @@
           { "item": "src/fx-compat.js", "after": "src/net.js" },
           { "item": "src/automix/automix.js", "before": "src/crossfade.js" },
           { "item": "src/vendor/signalsmith-stretch.js", "before": "src/crossfade.js" },
+          { "item": "src/plus/stream-deck.js", "before": "src/crossfade.js" },
           { "item": "src/automix-overview.js", "after": "src/crossfade.js" },
           { "item": "src/music-only.js", "after": "src/automix-overview.js" }
         ]

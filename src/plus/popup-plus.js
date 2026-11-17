@@ -97,6 +97,14 @@
         </label>
       </div>
       <p class="theme-sub" style="margin-top:2px;">Advanced AutoDJ only, off by default. Every song is in a musical key (C major, A minor…). Two songs in keys that don't go together can sound out of tune while they play on top of each other. With this on, such a pair gets a short blend (2 bars, about 4–6 s) instead of the usual length, so the out-of-tune moment is brief. Keys that go together (the same key, its relative major/minor, or a neighbour on the Camelot wheel) keep the normal blend. Off: every pair gets the normal length, whatever the keys.</p>
+      <div class="row" style="margin-top:6px;">
+        <span class="row-label">Smooth hand-over <span class="beta-tag" style="background:rgba(255,255,255,0.15);color:#fff;">Test</span></span>
+        <label class="switch">
+          <input type="checkbox" id="automixStreamDeckToggle"/>
+          <span class="slider"></span>
+        </label>
+      </div>
+      <p class="theme-sub" style="margin-top:2px;">Off by default. After a blend, the new song keeps playing from the copy Automix already downloaded, in step with YouTube's player (which plays on, muted), so there is no switch back to the player right after the mix. Play, pause, seek and skip work as usual. If the copy ever falls out of step, YouTube's own sound comes back at the same spot.</p>
       <div class="kawarp-slider-row" id="automixBarsRow" style="margin-top:4px;">
         <div class="kw-label-row"><span>Blend length</span><span class="kw-val" id="automixBarsVal">Auto</span></div>
         <select id="automixBarsSelect" style="width:100%;background:rgba(255,255,255,0.06);color:var(--text-1);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:5px 8px;font-size:12.5px;margin-top:4px;">
@@ -270,6 +278,14 @@
 
   automixToggle?.addEventListener('change', () => {
     chrome.storage.local.set({ automixEnabled: automixToggle.checked });
+  });
+
+  const automixStreamDeckToggle = document.getElementById('automixStreamDeckToggle');
+  chrome.storage.local.get({ automixStreamDeck: false }, (r) => {
+    if (automixStreamDeckToggle) automixStreamDeckToggle.checked = r.automixStreamDeck === true;
+  });
+  automixStreamDeckToggle?.addEventListener('change', () => {
+    chrome.storage.local.set({ automixStreamDeck: automixStreamDeckToggle.checked });
   });
 
   // Automix version: 1 = Original AutoDJ (BitChord web), 2 = Advanced AutoDJ (BitChord phone ideas on top)
