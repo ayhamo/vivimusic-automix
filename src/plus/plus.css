@@ -347,6 +347,10 @@ html.vivi-lyrics-canvas-visible #vivi-lyrics-canvas {
 .vivi-amx-ov-open[data-state="mixing"] { color: #3A9BDC; animation: vivi-amx-ov-pulse 1.2s ease-in-out infinite; }
 @keyframes vivi-amx-ov-pulse { 50% { color: #F2C230; } }
 @media (prefers-reduced-motion: reduce) { .vivi-amx-ov-open[data-state="mixing"] { animation: none; color: #F2C230; } }
+/* a narrow bar: YouTube's "More player controls" menu opens over the right controls; the button
+   gives way to it like YouTube's own expand button (theme.css), else it shows through behind repeat */
+/* (open: the menu loses aria-hidden="true" and its display: none; theme.css's [aria-hidden="false"] never matches) */
+ytmusic-player-bar:has(ytmusic-player-expanding-menu:not([aria-hidden="true"]):not([style*="display: none"])) .vivi-amx-ov-open { opacity: 0; pointer-events: none; }
 .vivi-amx-ov {
   position: fixed;
   inset: 0;

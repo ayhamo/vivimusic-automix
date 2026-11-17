@@ -81,13 +81,13 @@
       </div>
       <p class="theme-sub" style="margin-top:2px;">Needs Crossfade on. BitChord's automix: the playing and the next song are downloaded and analysed on your device (tempo, downbeats, intro, outro, where it is sung). When a song ends on its own it loops an instrumental bar into the next song, or blends on a phrase with the next song matched to its tempo, or uses a filter mix or a 12 s crossfade when the pair can't be beatmatched.</p>
       <div class="kawarp-slider-row" id="automixVersionRow" style="margin-top:4px;">
-        <div class="kw-label-row"><span>Automix version</span><span class="kw-val" id="automixVersionVal">Original</span></div>
+        <div class="kw-label-row"><span>Automix version</span><span class="kw-val" id="automixVersionVal">Classic</span></div>
         <select id="automixVersionSelect" style="width:100%;background:rgba(255,255,255,0.06);color:var(--text-1);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:5px 8px;font-size:12.5px;margin-top:4px;">
-          <option value="1" selected>Original AutoDJ</option>
-          <option value="2">Advanced AutoDJ</option>
+          <option value="2" selected>Classic</option>
+          <option value="3">Automix v2 (test)</option>
         </select>
-        <p class="theme-sub" style="margin-top:4px;"><b>Original AutoDJ</b>: BitChord web's automix. Beat-matched blends on a phrase, loop mixes, a filter mix or a plain crossfade when a pair can't be matched; a gentle bass and treble cross, equal-power fade.</p>
-        <p class="theme-sub" style="margin-top:4px;"><b>Advanced AutoDJ</b>: the same, plus ideas from the BitChord phone app. It looks (with synced lyrics, or the vocal model) for a blend point where the two songs don't sing over each other, and moves the blend there when it finds a clearly better one. The bass swaps in one quick step at the middle, the old song's highs fade away while the new one opens up, and the new song is at full volume by the middle (levels kept in check). A filter mix sweeps the old song down to a muffle. Blends end where a song's music ends, not in its trailing silence or applause, and the next song never starts more than a quarter of the way in. You can switch back any time.</p>
+        <p class="theme-sub" style="margin-top:4px;"><b>Classic</b>: the automix you know. Loop mixes when both songs have clean instrumental bars, else a beat-matched blend on a phrase. It looks (with synced lyrics, or the vocal model) for a blend point where the two songs don't sing over each other. The bass swaps in one quick step, the old song's highs fade away while the new one opens up, and a filter mix sweeps the old song down to a muffle. Blends end where a song's music ends, and the next song never starts more than a quarter of the way in.</p>
+        <p class="theme-sub" style="margin-top:4px;"><b>Automix v2</b> (test): Classic with Orchard's rules. Up to 4% apart, one song is sped up; 4-8%, both glide to meet; further apart, or with clashing bass styles or keys, the songs aren't beat-matched: a beatless bridge where both have beatless edges, else a straight hand-over. A blend both songs would sing over becomes a drop-in or a muffle. Levels are matched over the blend and the kicks lined up. The overview says which and why. You can switch back any time.</p>
       </div>
       <div class="row" id="automixKeyAwareRow" style="margin-top:6px;">
         <span class="row-label">Shorter blend when keys clash <span class="beta-tag" style="background:rgba(255,255,255,0.15);color:#fff;">Test</span></span>
@@ -96,7 +96,7 @@
           <span class="slider"></span>
         </label>
       </div>
-      <p class="theme-sub" style="margin-top:2px;">Advanced AutoDJ only, off by default. Every song is in a musical key (C major, A minor…). Two songs in keys that don't go together can sound out of tune while they play on top of each other. With this on, such a pair gets a short blend (2 bars, about 4–6 s) instead of the usual length, so the out-of-tune moment is brief. Keys that go together (the same key, its relative major/minor, or a neighbour on the Camelot wheel) keep the normal blend. Off: every pair gets the normal length, whatever the keys.</p>
+      <p class="theme-sub" style="margin-top:2px;">Classic only (Automix v2 always checks keys), off by default. Every song is in a musical key (C major, A minor…). Two songs in keys that don't go together can sound out of tune while they play on top of each other. With this on, such a pair gets a short blend (2 bars, about 4–6 s) instead of the usual length, so the out-of-tune moment is brief. Keys that go together (the same key, its relative major/minor, or a neighbour on the Camelot wheel) keep the normal blend. Off: every pair gets the normal length, whatever the keys.</p>
       <div class="row" style="margin-top:6px;">
         <span class="row-label">Smooth hand-over <span class="beta-tag" style="background:rgba(255,255,255,0.15);color:#fff;">Test</span></span>
         <label class="switch">
@@ -288,19 +288,20 @@
     chrome.storage.local.set({ automixStreamDeck: automixStreamDeckToggle.checked });
   });
 
-  // Automix version: 1 = Original AutoDJ (BitChord web), 2 = Advanced AutoDJ (BitChord phone ideas on top)
+  // Automix engine: 2 = Classic, 3 = Automix v2 (Orchard's rules). Original (1) is retired: shown and played as Classic.
   const automixVersionSelect = document.getElementById('automixVersionSelect');
   const automixVersionVal = document.getElementById('automixVersionVal');
   const automixKeyAwareToggle = document.getElementById('automixKeyAwareToggle');
   const automixKeyAwareRow = document.getElementById('automixKeyAwareRow');
-  // The key toggle only works in Advanced AutoDJ: greyed out (its setting kept) under Original.
+  // The key toggle is Classic's: greyed out (its setting kept) under v2, which always checks keys.
+  const asVersion = (v) => (v === 3 ? 3 : 2);
   const showVersion = (v) => {
-    if (automixVersionVal) automixVersionVal.textContent = v === 2 ? 'Advanced' : 'Original';
-    if (automixKeyAwareToggle) automixKeyAwareToggle.disabled = v !== 2;
-    if (automixKeyAwareRow) automixKeyAwareRow.style.opacity = v === 2 ? '' : '0.45';
+    if (automixVersionVal) automixVersionVal.textContent = v === 3 ? 'v2' : 'Classic';
+    if (automixKeyAwareToggle) automixKeyAwareToggle.disabled = v === 3;
+    if (automixKeyAwareRow) automixKeyAwareRow.style.opacity = v === 3 ? '0.45' : '';
   };
-  chrome.storage.local.get({ automixVersion: 1 }, (r) => {
-    const v = r.automixVersion === 2 ? 2 : 1;
+  chrome.storage.local.get({ automixVersion: 2 }, (r) => {
+    const v = asVersion(r.automixVersion);
     if (automixVersionSelect) automixVersionSelect.value = String(v);
     showVersion(v);
   });
@@ -311,7 +312,7 @@
     chrome.storage.local.set({ automixKeyAware: automixKeyAwareToggle.checked });
   });
   automixVersionSelect?.addEventListener('change', () => {
-    const v = automixVersionSelect.value === '2' ? 2 : 1;
+    const v = asVersion(Number(automixVersionSelect.value));
     chrome.storage.local.set({ automixVersion: v });
     showVersion(v);
   });

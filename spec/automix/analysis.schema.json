@@ -10,6 +10,26 @@
     "fileKey": { "type": "string", "description": "The YouTube video id." },
     "musicVideo": { "type": "boolean", "description": "Analysed from a music video's audio. Loop mixes are refused for it: its bars rarely match the song's." },
     "durationSec": { "type": "number", "exclusiveMinimum": 0 },
+    "bassCurve": {
+      "type": ["object", "null"],
+      "required": ["start", "step", "values"],
+      "properties": { "start": { "type": "number" }, "step": { "type": "number" }, "values": { "type": "array", "items": { "type": "number", "minimum": 0 } } },
+      "description": "Kick and bass level (Orchard bass_curve): 35-140 Hz RMS every 0.25 s from 0 s, 1 = the song's usual level (75th percentile of per-second means). Beatless passages read near 0; Automix v2's bridge and muffle read it. null: not measured."
+    },
+    "subBassRatio": { "type": ["number", "null"], "description": "Production style (Orchard's): log10 of the energy at 25-60 Hz over 60-250 Hz, whole song. Automix v2 never overlaps two songs 0.9 or more apart. null: not measured." },
+    "chroma": { "type": ["array", "null"], "items": { "type": "number" }, "minItems": 12, "maxItems": 12, "description": "The whole song's pitch-class profile, C to B, summed to 1 (Orchard earmark chroma). Automix v2's key score uses its cosine. null: not measured." },
+    "chromaCurve": {
+      "type": ["object", "null"],
+      "required": ["start", "step", "values", "weights"],
+      "properties": { "start": { "type": "number" }, "step": { "type": "number" }, "values": { "type": "array", "items": { "type": "array", "items": { "type": "number" }, "minItems": 12, "maxItems": 12 } }, "weights": { "type": "array", "items": { "type": "number", "minimum": 0, "maximum": 4 } } },
+      "description": "Pitch classes every 0.5 s (16384-point spectra, peaks 65 Hz-2.1 kHz): each frame summed to 1, its weight against the song's median frame (drum-only frames weigh little). Automix v2's bridge checks the keys where two songs meet from it. null: not measured."
+    },
+    "loudnessCurve": {
+      "type": ["object", "null"],
+      "required": ["start", "step", "values"],
+      "properties": { "start": { "type": "number" }, "step": { "type": "number" }, "values": { "type": "array", "items": { "type": "number" } } },
+      "description": "K-weighted (ITU BS.1770) mean square every 0.1 s, in dB (floor -120). Automix v2 reads a region's EBU R128 gated loudness from it. null: not measured."
+    },
     "contentEndSec": { "type": ["number", "null"], "description": "Where the music ends (trailing silence cut). Advanced AutoDJ (version 2) plans its mix-out against this. null: not measurable." },
 
     "bpm": { "type": ["number", "null"], "description": "Tempo of the whole song's beat grid." },

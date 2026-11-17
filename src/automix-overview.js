@@ -259,9 +259,11 @@
       const l = m.loop;
       return `Loop mix · ${l.totalBars} bars · ${Math.round(l.out.bpm)}→${Math.round(l.in.bpm)} BPM · ${s.D.toFixed(1)} s`;
     }
-    if (m.style === 'crossfade') return `Fade · ${s.D.toFixed(1)} s${m.reason ? ' · ' + m.reason : ''}`;
+    // (Automix v2 names its ways: the hand-over and bridge of a pair it can't beatmatch, the drop-in, muffle and glide)
+    if (m.style === 'crossfade') return `${m.bridge ? 'Beatless bridge' : m.handoff ? 'Hand-over' : 'Fade'} · ${s.D.toFixed(1)} s${m.reason ? ' · ' + m.reason : ''}`;
     const bpm = m.inBpm && Math.round(m.inBpm) !== Math.round(m.bpm) ? `${Math.round(m.outBpm || m.bpm)}→${Math.round(m.inBpm)} BPM` : `${Math.round(m.bpm)} BPM`;
-    return `${m.style === 'filter' ? 'Filter mix' : 'Blend'} · ${m.bars} bars · ${bpm} · ${s.D.toFixed(1)} s`;
+    const kind = m.style === 'filter' ? 'Filter mix' : m.shape === 'dropin' ? 'Drop-in' : m.shape === 'muffle' ? 'Muffle' : m.glide ? 'Glide blend' : 'Blend';
+    return `${kind} · ${m.bars} bars · ${bpm} · ${s.D.toFixed(1)} s`;
   }
 
   function render() {

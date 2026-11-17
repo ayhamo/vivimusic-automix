@@ -35,22 +35,29 @@
 
   let enabled = true;
   let barsSetting = 'auto';
-  // 1: the web original; 2: AutoDJ, the original plus BitChord phone ideas.
-  // Everything version 2 adds checks `version === 2`, so 1 stays as it was.
-  let version = 1;
+  // 1: the web original; 2: AutoDJ, the original plus BitChord phone ideas;
+  // 3: Automix v2 (Phase 3), AutoDJ plus Orchard's rules, added one at a time.
+  // Everything AutoDJ adds checks `adv()` (2 and 3), what v2 adds `version === 3`,
+  // so 1 and 2 stay as they were. spec/automix/versions.md lists the parts.
+  // The choice is Classic (2) or Automix v2 (3). Original (1) is retired: a saved 1
+  // plays Classic (its loop is the same code; Classic keeps its fixes, PLAN.md
+  // Phase 3). Its code paths stay until the code audit.
+  let version = 2;
+  const adv = () => version >= 2;
+  const asVersion = (v) => (v === 3 ? 3 : 2);
   let keyAware = false;   // version 2's key-aware blend length, off unless switched on
   try {
-    chrome.storage.local.get({ automixEnabled: true, automixBars: 'auto', automixVersion: 1, automixKeyAware: false }, (s) => {
+    chrome.storage.local.get({ automixEnabled: true, automixBars: 'auto', automixVersion: 2, automixKeyAware: false }, (s) => {
       enabled = s.automixEnabled !== false;
       barsSetting = s.automixBars === 'auto' ? 'auto' : (Number(s.automixBars) || 8);
-      version = s.automixVersion === 2 ? 2 : 1;
+      version = asVersion(s.automixVersion);
       keyAware = s.automixKeyAware === true;
     });
     chrome.storage.onChanged.addListener((ch, area) => {
       if (area !== 'local') return;
       if ('automixEnabled' in ch) enabled = ch.automixEnabled.newValue !== false;
       if ('automixBars' in ch) barsSetting = ch.automixBars.newValue === 'auto' ? 'auto' : (Number(ch.automixBars.newValue) || 8);
-      if ('automixVersion' in ch) version = ch.automixVersion.newValue === 2 ? 2 : 1;
+      if ('automixVersion' in ch) version = asVersion(ch.automixVersion.newValue);
       if ('automixKeyAware' in ch) keyAware = ch.automixKeyAware.newValue === true;
     });
   } catch { /* extension context gone */ }
@@ -163,7 +170,7 @@
           status.delete(old);
         }
         status.set(id, 'done');
-        log(`analysis of ${id}${a.cached ? ' (saved)' : ''}${a.musicVideo ? ' (music video)' : ''}: ${a.bpm?.toFixed(1) ?? '?'} BPM (end ${a.tailGrid?.bpm?.toFixed(1) ?? '?'}), ${a.keyName ?? '?'}, grid ${a.gridConfidence.toFixed(2)} / end ${a.tailGrid?.gridConfidence?.toFixed(2) ?? '-'}, intro ends ${a.introEndSec?.toFixed(1) ?? '-'} s, outro from ${a.outroStartSec?.toFixed(1) ?? '-'} s${a.contentEndSec != null ? `, music ends ${a.contentEndSec.toFixed(1)} s` : ''}, in${Math.round(performance.now() - started)} ms`);
+        log(`analysis of ${id}${a.cached ? ' (saved)' : ''}${a.musicVideo ? ' (music video)' : ''}: ${a.bpm?.toFixed(1) ?? '?'} BPM (end ${a.tailGrid?.bpm?.toFixed(1) ?? '?'}), ${a.keyName ?? '?'}, grid ${a.gridConfidence.toFixed(2)} / end ${a.tailGrid?.gridConfidence?.toFixed(2) ?? '-'}, intro ends ${a.introEndSec?.toFixed(1) ?? '-'} s, outro from ${a.outroStartSec?.toFixed(1) ?? '-'} s${a.contentEndSec != null ? `, music ends ${a.contentEndSec.toFixed(1)} s` : ''}${a.subBassRatio != null ? `, sub-bass ${a.subBassRatio.toFixed(2)}` : ''}, in${Math.round(performance.now() - started)} ms`);
       } catch (e) {
         log('analysis of', id, 'failed:', e?.message || e);
         failedAt.set(id, Date.now());
@@ -192,10 +199,14 @@
       cached.cached = true;
       // Advanced AutoDJ: a song saved before its music end was measured gets
       // it now (a decode, not a new analysis; saved with it). null: unmeasurable.
-      if (version === 2 && cached.contentEndSec === undefined) {
+      // Automix v2 likewise gets its evidence (subBassRatio, bassCurve, chroma, loudnessCurve).
+      if (adv() && (cached.contentEndSec === undefined || (version === 3 && cached.loudnessCurve === undefined))) {
         try {
           const { bytes } = await songBytes(id);
-          cached.contentEndSec = (await askHost({ type: 'contentEnd', id, bytes }, [bytes], 30000))?.contentEndSec ?? null;
+          const got = await askHost({ type: 'contentEnd', id, bytes }, [bytes], 30000);
+          cached.contentEndSec = got?.contentEndSec ?? null;
+          cached.subBassRatio = got?.subBassRatio ?? null;
+          for (const k of ['bassCurve', 'chroma', 'chromaCurve', 'loudnessCurve']) cached[k] = got?.[k] ?? null;
         } catch { /* not downloaded (yet): the song's length, as before */ }
       }
       return cached;
@@ -304,6 +315,43 @@
     if (conf >= 0.45) return Math.min(requested, 8);
     return Math.min(requested, 4);
   }
+  // Automix v2 (Orchard's pairTempoHarmony): the speed-up a pair needs, however it is split
+  const V2_MAX_STRETCH = 0.08;
+  const stretchOf = (ratio) => Math.max(ratio, 1 / ratio) - 1;
+  // Orchard pairTempoHarmony: a constant stretch up to 4%; 4-8% only as a glide
+  // (both songs' tempo moves together across the blend, each at its own speed at its loud end)
+  const V2_MAX_CONSTANT = 0.04;
+  // The glide, one step per beat of the blend: the shared tempo moves
+  // geometrically from the playing song's (x = 0) to the next one's (x = 1),
+  // q = next tempo / playing tempo (folded). Each beat k plays at x = (k + 0.5) / B:
+  // the playing song at q^x, the next at q^(x - 1), so both play one beat of
+  // their own in the same output time and stay beat-locked. The playing song
+  // starts at its own speed, the next ends at its own. Output seconds per beat
+  // in `dur`, `at[k]` = where beat k starts (from the blend's start).
+  function glideSteps(q, beats, beatOutSec) {
+    const outRate = [], inRate = [], dur = [], at = [];
+    let t = 0;
+    for (let k = 0; k < beats; k++) {
+      const x = (k + 0.5) / beats;
+      outRate.push(Math.pow(q, x)); inRate.push(Math.pow(q, x - 1));
+      at.push(t); dur.push(beatOutSec / outRate[k]); t += dur[k];
+    }
+    return { outRate, inRate, dur, at, total: t, beatInSec: beatOutSec / q };
+  }
+  // v2 gates (Orchard pairTransitionGates, transitionFlow):
+  // two 808 styles (subBassRatio apart by this much) are never overlapped;
+  const V2_SUB_BASS_VETO = 0.9;
+  const subBassContrast = (a, b) => (Number.isFinite(a?.subBassRatio) && Number.isFinite(b?.subBassRatio) ? Math.abs(a.subBassRatio - b.subBassRatio) : null);
+  // "beatmatch or do nothing": a pair that can't be beatmatched meets at its natural boundary, with this short fade;
+  const V2_SWITCH_SEC = 1.5;
+  // the bass swap moves off a line the playing song is singing (voice risk, Orchard's 0.5 / 0.3).
+  const SWAP_SINGING = 0.5, SWAP_CLEAR = 0.3;
+  // The fallback ladder (Orchard pairTransitionPlanner): a blend both songs would sing over
+  // more than this share of, after the re-route, is not played as a blend.
+  const V2_CLASH_MAX = 0.3;
+  const DROP_IN_BARS = 2;              // a drop-in's overlap (pairTransitionEvidence: two bars)
+  const MUFFLE_LEAD_BEATS = 8, MUFFLE_MIN_LEAD_BEATS = 4, MUFFLE_EXIT_BEATS = 2, MUFFLE_MIN_BODY = 0.3, MUFFLE_MIN_OPENING_SEC = 2;
+  const BRIDGE_MIN_SEC = 4, BRIDGE_MAX_SEC = 12, BRIDGE_MAX_SKIP_SEC = 16, BEATLESS = 0.3;
   const stretchAllowed = (rate) => (rate >= 1 ? rate - 1 <= MAX_SPEED_UP : 1 - rate <= MAX_SLOW_DOWN);
   // Fold half/double time so the stretch stays near 1 (64 vs 128 BPM still beat-locks).
   const foldRate = (raw) => [raw, raw / 2, raw * 2].reduce((best, r) => (Math.abs(r - 1) < Math.abs(best - 1) ? r : best));
@@ -341,42 +389,61 @@
     const toGrid = gridOf(next);
 
     if (pick?.style === 'crossfade' && both) return fallback(cur, next, earliest, 'picked in the overview');
+    const v3 = version === 3;
     if (!fromGrid || cur.gridConfidence < MIN_GRID_CONFIDENCE) {
+      if (v3 && both) return handoff(cur, next, earliest, 'this song has no beat grid at its end');
       return fallback(cur, next, earliest, both ? 'this song has no beat grid at its end' : 'songs not analysed in time');
     }
     if (pick?.style === 'filter') return filterMix(cur, next, fromGrid, toGrid && next.gridConfidence >= MIN_GRID_CONFIDENCE ? toGrid : null, requestedBars(cur, next, fromGrid, toGrid?.downbeatSec ?? 0, true), pos, earliest, 'picked in the overview');
+    if (v3 && (!toGrid || next.gridConfidence < MIN_GRID_CONFIDENCE)) return handoff(cur, next, earliest, 'next song has no beat grid');
     if (!toGrid || next.gridConfidence < MIN_GRID_CONFIDENCE) return filterMix(cur, next, fromGrid, null, requestedBars(cur, next, fromGrid, 0, true), pos, earliest, 'next song has no beat grid');
 
     const ratio = foldRate(fromGrid.bpm / toGrid.bpm);
+    // v2: never more than V2_MAX_STRETCH of speed-up (Orchard: 6% fine, 11.8% forced),
+    // and never two 808 styles at once; either way it can't beatmatch, so it does nothing
+    if (v3 && stretchOf(ratio) > V2_MAX_STRETCH) return handoff(cur, next, earliest, `tempos ${Math.round(stretchOf(ratio) * 100)}% apart (v2 stretches at most ${Math.round(V2_MAX_STRETCH * 100)}%)`);
+    const contrast = subBassContrast(cur, next);
+    if (v3 && contrast >= V2_SUB_BASS_VETO) return handoff(cur, next, earliest, `different sub-bass styles (${contrast.toFixed(2)} apart)`);
+    const harmonic = v3 ? harmonicEvidence(cur, next) : null;
+    if (harmonic?.severeClash) return handoff(cur, next, earliest, `the keys clash (${cur.keyName} → ${next.keyName}, ${harmonic.score})`);
     if (!stretchAllowed(ratio)) return filterMix(cur, next, fromGrid, toGrid, requestedBars(cur, next, fromGrid, toGrid.downbeatSec, true), pos, earliest, `tempos ${Math.round(Math.abs(ratio - 1) * 100)}% apart`);
     // Tempo only ever moves up (BitChord's Advanced Automix): slowing a song
     // with its pitch kept repeats slivers of it, which smears piano and voices,
     // while speeding one up stays clean. The next song faster: the playing one
     // is brought up to its tempo over its last beats before the blend and the
     // next song plays at its own speed. The next song slower: it is sped up.
-    const rate = ratio < 1 ? 1 : ratio;               // the next song's
-    const outRate = ratio < 1 ? 1 / ratio : 1;        // the playing song's, from the blend on
+    // Automix v2: over 4% apart, a glide on both songs instead (glideSteps)
+    const glideQ = v3 && stretchOf(ratio) > V2_MAX_CONSTANT ? 1 / ratio : null;
+    const rate = glideQ ? 1 : ratio < 1 ? 1 : ratio;               // the next song's
+    const outRate = glideQ ? 1 : ratio < 1 ? 1 / ratio : 1;        // the playing song's, from the blend on
     const rampBeats = outRate > 1.0001 ? Math.ceil((outRate - 1) / TEMPO_STEP_PER_BEAT) : 0;
     const rampSongSec = rampBeats * fromGrid.beatSec;  // song time the ramp covers, ending at the mix-out
     // AutoDJ's key-aware length (its own toggle): keys that clash get a short blend
-    const keyClash = version === 2 && keyAware ? keysClash(cur, next) : null;
+    // (Automix v2: Orchard's key score, always on: under 0.55 with both keys trusted)
+    const keyClash = v3 ? (harmonic.short ? `${cur.keyName} → ${next.keyName}, ${harmonic.score}` : null) : adv() && keyAware ? keysClash(cur, next) : null;
     const bars = keyClash && !pinnedBars ? keyClashBars(fromGrid) : requestedBars(cur, next, fromGrid, toGrid.downbeatSec, false);
     const effBars = effectiveBlendBars(bars, cur.gridConfidence, next.gridConfidence);
     const outSpan = effBars * fromGrid.barSec;        // the playing song's seconds the blend covers
-    const dur = outSpan / outRate;                    // output seconds
+    const glide = glideQ ? glideSteps(glideQ, effBars * 4, fromGrid.beatSec) : null;
+    const dur = glide ? glide.total : outSpan / outRate;   // output seconds
+    const inPerOut = glide ? 1 / glideQ : rate / outRate;  // next song's seconds per playing song's
 
     // outgoing mix-out point (naturalMixOut: at the song's end); the ramp before it has to fit too
     const first = earliest + rampSongSec;
-    const v2 = version === 2;
+    const v2 = adv();
     let mixOut = naturalMixOut(fromGrid, v2 ? musicEnd(cur) : cur, outSpan);
     if (mixOut < pos + rampSongSec) mixOut = phraseAtOrAfter(fromGrid, first);   // too late for the natural point: the next phrase
     if (mixOut < first) mixOut = downbeatAtOrAfter(fromGrid, first);
-    if (mixOut + outSpan > cur.durationSec - 0.3) return filterMix(cur, next, fromGrid, toGrid, bars, pos, earliest, 'too close to the end for a blend');
+    if (mixOut + outSpan > cur.durationSec - 0.3) {
+      if (v3) return handoff(cur, next, earliest, 'too close to the end for a blend');
+      return filterMix(cur, next, fromGrid, toGrid, bars, pos, earliest, 'too close to the end for a blend');
+    }
 
     // incoming mix-in point: so that its pre-full-energy phrase lands at the blend's end
     const introEnd = next.introEndSec ?? 0;
     const fullEnergyPhrase = phraseAtOrAfter(toGrid, Math.max(introEnd, toGrid.downbeatSec));
-    let mixIn = fullEnergyPhrase - dur * rate;
+    let mixIn = fullEnergyPhrase - outSpan * inPerOut;
+    const introShort = mixIn < toGrid.downbeatSec - 1e-6;   // no intro the whole blend can sit on
     if (mixIn < toGrid.downbeatSec) mixIn = toGrid.downbeatSec;
 
     // AutoDJ (version 2): no further than a quarter into the next song, and
@@ -384,18 +451,75 @@
     let dj = null;
     if (v2) {
       mixIn = capIncomingSkip(next, toGrid, mixIn);
-      dj = rerouteForVocals(cur, next, fromGrid, toGrid, mixOut, mixIn, outSpan, rate / outRate, Math.max(first, pos + rampSongSec));
+      dj = rerouteForVocals(cur, next, fromGrid, toGrid, mixOut, mixIn, outSpan, inPerOut, Math.max(first, pos + rampSongSec));
       mixOut = dj.mixOut;
       mixIn = dj.mixIn;
     }
+    // v2: the bass changes hands on a bar where the playing song isn't mid-line
+    const swap = v3 && effBars >= 2 ? vocalSafeSwap(cur, mixOut, outSpan, effBars) : null;
+
+    // v2's fallback ladder for a pair that beatmatches but can't blend (Orchard: a
+    // drop-in, then a muffle; else it does nothing): both would sing over the blend,
+    // or the next song has no intro to blend over.
+    let shape = null, shapeWhy = null, muffleLead = null;
+    if (v3 && (introShort || (dj?.clash ?? 0) > V2_CLASH_MAX)) {
+      const why = introShort ? 'no intro in the next song to blend over' : `both would sing ${Math.round((dj?.clash ?? 0) * 100)}% of a blend`;
+      const sung = { out: lyricSpans(cur), in: lyricSpans(next) };
+      // drop-in: the next song on its first downbeat at full level, two bars over the
+      // playing song's exit, which may not cut a line (exit at most 12 s of music earlier)
+      const dSpan = DROP_IN_BARS * fromGrid.barSec;
+      const dGlide = glideQ ? glideSteps(glideQ, DROP_IN_BARS * 4, fromGrid.beatSec) : null;
+      const lo = Math.max(first, pos + rampSongSec);
+      const natural = naturalMixOut(fromGrid, musicEnd(cur), dSpan);
+      for (let k = 0; k * fromGrid.barSec <= MAX_DISCARD_SEC; k++) {
+        const o = natural - k * fromGrid.barSec;
+        if (o < lo) break;
+        const cut = voiceRisk(cur, o + dSpan - 1.5, o + dSpan, sung.out);
+        if (cut != null && cut >= SWAP_CLEAR) continue;
+        const both = vocalOverlap(cur, next, o, dSpan, toGrid.downbeatSec, inPerOut, sung);
+        if ((both ?? 0) > V2_CLASH_MAX) continue;
+        const dDur = dGlide ? dGlide.total : dSpan / outRate;
+        return {
+          style: 'blend', shape: 'dropin', fallback: false,
+          reason: `${why}: a drop-in on the next song's first beat${k ? ` (exit ${k} bar${k === 1 ? '' : 's'} earlier, off a sung line)` : ''}`,
+          v2, clash: both ?? 0, rerouted: null, vocalsBy: dj?.by ?? null, keyClash,
+          subBassContrast: contrast, swapAt: null, swapMoved: null, glide: dGlide ? { q: glideQ, beats: DROP_IN_BARS * 4, beatOutSec: fromGrid.beatSec } : null,
+          harmonic, trim: loudnessTrim(cur, o, dSpan, next, toGrid.downbeatSec, dSpan * inPerOut),
+          mixOutTrackTime: o, durationSec: dDur, mixInTrackTime: toGrid.downbeatSec, rate: dGlide ? dGlide.inRate[0] : rate,
+          outRate, rampBeats, rampSongSec, beatSec: fromGrid.beatSec,
+          bars: DROP_IN_BARS, swapDb: SHORT_BLEND_KILL_DB,
+          barSec: dGlide ? dDur / DROP_IN_BARS : fromGrid.barSec / outRate, bpm: dGlide ? fromGrid.bpm * Math.sqrt(glideQ) : fromGrid.bpm * outRate, outBpm: fromGrid.bpm, inBpm: toGrid.bpm,
+        };
+      }
+      // muffle (Orchard muffle.js): the playing song keeps its level while a low-pass
+      // closes over it, the next fades in over the bars before the bass swap and
+      // takes the bass on it; the muffled song is gone two beats later
+      const B = effBars * 4, at = swap?.at ?? 0.5;
+      const leadBeats = Math.min(MUFFLE_LEAD_BEATS, Math.round(at * B));
+      const lead = leadBeats / B;
+      const inAt = (f) => mixIn + f * outSpan * inPerOut;
+      const body = bassMean(cur, mixOut, mixOut + at * outSpan);
+      const swapsSingers = (voiceRisk(cur, mixOut + at * outSpan - 0.5, mixOut + at * outSpan + 0.5, sung.out) ?? 0) >= 0.5
+        && (voiceRisk(next, inAt(at) - 0.5, inAt(at) + 0.5, sung.in) ?? 0) >= 0.7;
+      if (!introShort && leadBeats >= MUFFLE_MIN_LEAD_BEATS && at + MUFFLE_EXIT_BEATS / B <= 1 + 1e-6
+        && (body == null || body >= MUFFLE_MIN_BODY) && inAt(at - lead) >= MUFFLE_MIN_OPENING_SEC && !swapsSingers) {
+        shape = 'muffle'; muffleLead = lead;
+        shapeWhy = `${why}: a muffle (the playing song closes behind a low-pass)`;
+      } else {
+        return handoff(cur, next, earliest, `${why} and no drop-in or muffle fits`);
+      }
+    }
 
     return {
-      style: 'blend', fallback: false, reason: null,
+      style: 'blend', fallback: false, reason: shapeWhy,
+      ...(shape ? { shape, muffleLead } : {}),
       v2, clash: dj?.clash ?? 0, rerouted: dj?.rerouted ?? null, vocalsBy: dj?.by ?? null, keyClash,
-      mixOutTrackTime: mixOut, durationSec: dur, mixInTrackTime: mixIn, rate,
+      ...(v3 ? { subBassContrast: contrast, swapAt: swap?.at ?? null, swapMoved: swap?.moved ?? null, glide: glide ? { q: glideQ, beats: effBars * 4, beatOutSec: fromGrid.beatSec } : null,
+        harmonic, trim: loudnessTrim(cur, mixOut, outSpan, next, mixIn, outSpan * inPerOut) } : {}),
+      mixOutTrackTime: mixOut, durationSec: dur, mixInTrackTime: mixIn, rate: glide ? glide.inRate[0] : rate,
       outRate, rampBeats, rampSongSec, beatSec: fromGrid.beatSec,
       bars: effBars, swapDb: effBars >= FULL_SWAP_MIN_BARS ? KILL_DB : SHORT_BLEND_KILL_DB,
-      barSec: fromGrid.barSec / outRate, bpm: fromGrid.bpm * outRate, outBpm: fromGrid.bpm, inBpm: toGrid.bpm,
+      barSec: glide ? dur / effBars : fromGrid.barSec / outRate, bpm: glide ? fromGrid.bpm * Math.sqrt(glideQ) : fromGrid.bpm * outRate, outBpm: fromGrid.bpm, inBpm: toGrid.bpm,
     };
   }
 
@@ -404,7 +528,7 @@
   function filterMix(cur, next, fromGrid, toGrid, requested, pos, earliest, reason) {
     let bars = Math.min(requested, FILTER_MAX_BARS);
     let dur = bars * fromGrid.barSec;
-    const v2 = version === 2;
+    const v2 = adv();
     let mixOut = naturalMixOut(fromGrid, v2 ? musicEnd(cur) : cur, dur);
     if (mixOut < pos) mixOut = phraseAtOrAfter(fromGrid, earliest);
     if (mixOut < earliest) mixOut = downbeatAtOrAfter(fromGrid, earliest);
@@ -451,6 +575,247 @@
   }
   // 2 bars, unless that is under 4 s (6 s from 140 BPM): then 4.
   const keyClashBars = (g) => (2 * g.barSec >= (g.bpm >= 140 ? 6 : 4) ? 2 : 4);
+
+  // ───────── Automix v2: keys, loudness, kick lock (Orchard) ─────────
+  // Keys (pairTempoHarmony.js): the two songs' keys on Orchard's table, 0.7 of
+  // the score, and their whole-song pitch profiles (cosine), 0.3. With both
+  // keys trusted (0.65), a score under 0.2 is a severe clash (no beatmatched
+  // blend: the hand-over), under 0.55 a short blend.
+  const KEY_ROOTS = { C: 0, 'B#': 0, 'C#': 1, DB: 1, D: 2, 'D#': 3, EB: 3, E: 4, FB: 4, F: 5, 'E#': 5, 'F#': 6, GB: 6, G: 7, 'G#': 8, AB: 8, A: 9, 'A#': 10, BB: 10, B: 11, CB: 11 };
+  const TRUSTED_KEY = 0.65;
+  function parsedKey(name) {
+    const m = String(name || '').trim().match(/^(\S+)\s+(major|minor)$/i);
+    const root = m ? KEY_ROOTS[m[1].toUpperCase().replace('♯', '#').replace('♭', 'B')] : undefined;
+    return root === undefined ? null : { root, mode: m[2].toLowerCase() };
+  }
+  function keyRelationship(a, b) {
+    if (!a || !b) return null;
+    const cw = (b.root - a.root + 12) % 12, d = Math.min(cw, 12 - cw);
+    if (a.mode !== b.mode) {
+      if ((a.mode === 'major' && cw === 9) || (a.mode === 'minor' && cw === 3)) return 0.95;   // relative
+      return d === 0 ? 0.7 : d === 5 ? 0.55 : d === 6 ? 0.05 : 0.35;
+    }
+    return d === 0 ? 1 : d === 5 ? 0.85 : d === 2 ? 0.65 : d === 1 ? 0.3 : d === 6 ? 0 : 0.45;
+  }
+  function cosine(a, b) {
+    if (!Array.isArray(a) || a.length !== 12 || !Array.isArray(b) || b.length !== 12) return null;
+    let dot = 0, pa = 0, pb = 0;
+    for (let k = 0; k < 12; k++) { dot += a[k] * b[k]; pa += a[k] * a[k]; pb += b[k] * b[k]; }
+    return pa > 0 && pb > 0 ? clamp(dot / Math.sqrt(pa * pb), 0, 1) : null;
+  }
+  function harmonicEvidence(a, b) {
+    const keyScore = keyRelationship(parsedKey(a.keyName), parsedKey(b.keyName));
+    const chromaScore = cosine(a.chroma, b.chroma);
+    const score = keyScore != null && chromaScore != null ? keyScore * 0.7 + chromaScore * 0.3 : keyScore ?? chromaScore ?? 0.5;
+    const confidence = Math.sqrt(clamp(a.keyConfidence || 0, 0, 1) * clamp(b.keyConfidence || 0, 0, 1));
+    const r = (v) => (v == null ? null : Math.round(v * 1000) / 1000);
+    return {
+      score: r(score), confidence: r(confidence), keyScore: r(keyScore), chromaScore: r(chromaScore),
+      severeClash: confidence >= TRUSTED_KEY && score < 0.2, short: confidence >= TRUSTED_KEY && score < 0.55,
+    };
+  }
+  // Where two songs meet (localHarmony.js): each side's pitch profile over at
+  // least 24 s (a key, not the passing chord), correlated; a side without a
+  // clear pitch (drums) can't clash. A semitone, tritone or major third apart
+  // (-0.3 or under) with both sides tonal is a clash. null: no chroma.
+  const CLASH_CORRELATION = -0.3, CLASH_CONFIDENCE = 0.5, KEY_CONTEXT_SEC = 24;
+  function chromaProfile(a, from, to) {
+    const c = a?.chromaCurve;
+    if (!c?.values?.length || !(to >= from)) return null;
+    const profile = new Array(12).fill(0);
+    let weight = 0, frames = 0;
+    for (let i = 0; i < c.values.length; i++) {
+      const t = c.start + i * c.step, f = c.values[i];
+      if (t < from || t > to || !f) continue;
+      for (let k = 0; k < 12; k++) profile[k] += f[k] * c.weights[i];
+      weight += c.weights[i]; frames++;
+    }
+    return frames ? { profile, weight: weight / frames } : null;
+  }
+  function pearson(a, b) {
+    const ma = a.reduce((s, v) => s + v, 0) / a.length, mb = b.reduce((s, v) => s + v, 0) / b.length;
+    let cov = 0, pa = 0, pb = 0;
+    for (let k = 0; k < a.length; k++) { cov += (a[k] - ma) * (b[k] - mb); pa += (a[k] - ma) ** 2; pb += (b[k] - mb) ** 2; }
+    return pa > 0 && pb > 0 ? cov / Math.sqrt(pa * pb) : 0;
+  }
+  function tonality(side) {
+    const total = side.profile.reduce((s, v) => s + v, 0);
+    if (!(total > 0)) return 0;
+    return clamp((Math.max(...side.profile) / (total / 12) - 1.3) / 0.4, 0, 1) * clamp(side.weight, 0, 1);
+  }
+  function overlapHarmony(cur, next, outFrom, outTo, inFrom, inTo) {
+    const left = chromaProfile(cur, Math.min(outFrom, outTo - KEY_CONTEXT_SEC), outTo);
+    const right = chromaProfile(next, inFrom, Math.max(inTo, inFrom + KEY_CONTEXT_SEC));
+    if (!left || !right) return null;
+    const confidence = Math.min(tonality(left), tonality(right)), correlation = pearson(left.profile, right.profile);
+    return { correlation: Math.round(correlation * 1000) / 1000, confidence: Math.round(confidence * 1000) / 1000, severeClash: correlation <= CLASH_CORRELATION && confidence >= CLASH_CONFIDENCE };
+  }
+
+  // Loudness (Orchard loudness.rs, strategy.rs loudness_trim): a region's EBU
+  // R128 gated loudness from the song's 100 ms K-weighted levels (400 ms
+  // blocks, 75% overlap, gates at -70 LUFS and 10 LU under the mean). YouTube
+  // plays every song at its own normalised level, so each region counts against
+  // its whole song. More than 1 dB apart, the louder side is trimmed (at most
+  // 6 dB): the playing song down towards the blend's end, or the next song
+  // from under its level up to it, both on a smoothstep.
+  const TRIM_TOLERANCE_DB = 1, TRIM_MAX_DB = 6;
+  function regionLoudness(a, from, dur) {
+    const c = a?.loudnessCurve;
+    if (!c?.values?.length || !(dur > 0)) return null;
+    const i0 = Math.max(0, Math.round((from - c.start) / c.step)), i1 = Math.min(c.values.length, Math.round((from + dur - c.start) / c.step));
+    if (i1 <= i0) return null;
+    const p = [];
+    for (let i = i0; i < i1; i++) p.push(10 ** (c.values[i] / 10));
+    const lufs = (x) => -0.691 + 10 * Math.log10(x + 1e-30), mean = (xs) => xs.reduce((s, v) => s + v, 0) / xs.length;
+    const blocks = [];
+    for (let i = 0; i + 4 <= p.length; i++) blocks.push((p[i] + p[i + 1] + p[i + 2] + p[i + 3]) / 4);
+    const loud = blocks.filter((x) => lufs(x) > -70);
+    if (!loud.length) return Math.max(-70, lufs(mean(p)));   // (too short or quiet for the gates: its plain level)
+    const rel = lufs(mean(loud)) - 10;
+    return lufs(mean(loud.filter((x) => lufs(x) > rel)));
+  }
+  function loudnessTrim(cur, outFrom, outDur, next, inFrom, inDur) {
+    const o = regionLoudness(cur, outFrom, outDur), i = regionLoudness(next, inFrom, inDur);
+    const ow = regionLoudness(cur, 0, cur.durationSec), iw = regionLoudness(next, 0, next.durationSec);
+    if (o == null || i == null || ow == null || iw == null) return null;
+    const diff = (o - ow) - (i - iw), r = (v) => Math.round(v * 10) / 10;
+    if (Math.abs(diff) <= TRIM_TOLERANCE_DB) return { diffDb: r(diff), outDb: 0, inDb: 0 };
+    const t = r(Math.min(Math.abs(diff), TRIM_MAX_DB));
+    return diff > 0 ? { diffDb: r(diff), outDb: -t, inDb: 0 } : { diffDb: r(diff), outDb: 0, inDb: -t };
+  }
+  // A blend's fader with its trim: the playing song from 1 to its trim, the next from its trim to 1.
+  function trimmed(m, gIn, gOut) {
+    const t = m?.trim;
+    if (!t || (!t.outDb && !t.inDb)) return [gIn, gOut];
+    const ss = (x) => x * x * (3 - 2 * x), gi = 10 ** (t.inDb / 20), go = 10 ** (t.outDb / 20);
+    const along = (arr, f) => Float32Array.from(arr, (v, i) => v * f(arr.length > 1 ? i / (arr.length - 1) : 1));
+    return [along(gIn, (x) => gi + (1 - gi) * ss(x)), along(gOut, (x) => 1 + (go - 1) * ss(x))];
+  }
+
+  // Kick lock (Orchard lock.rs): beat trackers put a beat tens of ms off its
+  // kick, differently per song, and two kicks 30 ms apart flam. Over the blend
+  // and 8 beats either side, each song's kick onsets (35-140 Hz level, 10 ms
+  // smoothing, its rise over 10 ms, every 1 ms) are folded into 256 bins of the
+  // playing song's beat; the next song's cue moves by the shift (under an
+  // eighth of a beat) that lines its profile up, when the two match well (0.5)
+  // and much better than as planned (by 0.2). Sides: { data, rate, origin }
+  // (mono samples, their rate, the song second of data[0]).
+  const KICK_HOP = 0.001, KICK_BINS = 256, KICK_CONTEXT_BEATS = 8, KICK_LIMIT = KICK_BINS / 8, KICK_MIN_MATCH = 0.5, KICK_MIN_GAIN = 0.2;
+  function lowBiquad(x, type, f, sr) {
+    const w = 2 * Math.PI * f / sr, cw = Math.cos(w), al = Math.sin(w) / (2 * Math.SQRT1_2);
+    const b1 = type === 'lp' ? 1 - cw : -(1 + cw), b0 = Math.abs(b1) / 2, a0 = 1 + al;
+    const B0 = b0 / a0, B1 = b1 / a0, B2 = b0 / a0, A1 = -2 * cw / a0, A2 = (1 - al) / a0;
+    const y = new Float32Array(x.length);
+    let x1 = 0, x2 = 0, y1 = 0, y2 = 0;
+    for (let i = 0; i < x.length; i++) {
+      const v = B0 * x[i] + B1 * x1 + B2 * x2 - A1 * y1 - A2 * y2;
+      x2 = x1; x1 = x[i]; y2 = y1; y1 = v; y[i] = v;
+    }
+    return y;
+  }
+  function kickOnsets(side, from, to) {
+    const r = side.rate, a = Math.max(0, Math.floor((from - side.origin) * r)), b = Math.min(side.data.length, Math.ceil((to - side.origin) * r));
+    if (b - a < r) return null;
+    let x = side.data.subarray(a, b);
+    for (const [t, f] of [['hp', 35], ['hp', 35], ['lp', 140], ['lp', 140]]) x = lowBiquad(x, t, f, r);
+    const alpha = 1 - Math.exp(-1 / (0.010 * r)), step = Math.max(1, Math.round(KICK_HOP * r)), levels = [];
+    let level = 0;
+    for (let i = 0; i < x.length; i++) {
+      level += alpha * (x[i] * x[i] - level);
+      if (i % step === 0) levels.push(Math.log1p(level * 1e4));
+    }
+    const values = levels.map((v, i) => (i >= 10 ? Math.max(0, v - levels[i - 10]) : 0));
+    const origin = side.origin + a / r;
+    return (t) => { const i = Math.round((t - origin) / KICK_HOP); return i >= 0 && i < values.length ? values[i] : null; };
+  }
+  // A side for kickLock from decoded channels: downmixed, low-passed under
+  // 400 Hz twice and kept every few samples (about 3 kHz), so the next song's
+  // opening costs ~1.5 MB to hold until its blend.
+  function kickSource(channels, rate, origin = 0, from = 0, to = Infinity) {
+    const a = Math.max(0, Math.floor(from * rate)), b = Math.min(channels[0].length, Math.ceil(to * rate));
+    const n = Math.max(0, b - a), mono = new Float32Array(n);
+    for (const c of channels) for (let i = 0; i < n; i++) mono[i] += c[a + i] / channels.length;
+    const low = lowBiquad(lowBiquad(mono, 'lp', 400, rate), 'lp', 400, rate);
+    const step = Math.max(1, Math.floor(rate / 3000)), data = new Float32Array(Math.floor(n / step));
+    for (let i = 0; i < data.length; i++) data[i] = low[i * step];
+    return { data, rate: rate / step, origin: origin + a / rate };
+  }
+  // The two songs' second at output second t of a blend plan (before it: its first speed; after: its last).
+  function blendClocks(m) {
+    if (m.glide) {
+      const G = glideSteps(m.glide.q, m.glide.beats, m.glide.beatOutSec), B = G.outRate.length;
+      const along = (t, base, beatSec, rates, after) => {
+        if (t < 0) return base + t * rates[0];
+        if (t >= G.total) return base + B * beatSec + (t - G.total) * after;
+        let k = 0;
+        while (k + 1 < B && G.at[k + 1] <= t) k++;
+        return base + k * beatSec + (t - G.at[k]) * rates[k];
+      };
+      return { D: G.total, inPerOut: G.beatInSec / m.glide.beatOutSec,
+        out: (t) => along(t, m.mixOutTrackTime, m.glide.beatOutSec, G.outRate, G.outRate[B - 1]),
+        in: (t) => along(t, m.mixInTrackTime, G.beatInSec, G.inRate, 1) };
+    }
+    const outRate = m.outRate || 1, rate = m.rate || 1;
+    return { D: m.durationSec, inPerOut: rate / outRate, out: (t) => m.mixOutTrackTime + t * outRate, in: (t) => m.mixInTrackTime + t * rate };
+  }
+  function kickLock(m, outSide, inSide) {
+    const interval = m.beatSec;
+    if (m.style !== 'blend' || !(interval > 0)) return null;
+    const ck = blendClocks(m), context = KICK_CONTEXT_BEATS * interval;
+    const outAt = kickOnsets(outSide, ck.out(-context) - 0.05, ck.out(ck.D + context) + 0.05);
+    const inAt = kickOnsets(inSide, ck.in(-context) - 0.05, ck.in(ck.D + context) + 0.05);
+    if (!outAt || !inAt) return { none: 'not enough audio' };
+    const sums = [new Float64Array(KICK_BINS), new Float64Array(KICK_BINS)], counts = [new Uint32Array(KICK_BINS), new Uint32Array(KICK_BINS)];
+    const steps = Math.floor((ck.D + 2 * context) / KICK_HOP);
+    for (let s = 0; s < steps; s++) {
+      const t = -context + s * KICK_HOP, o = ck.out(t);
+      const ph = (o - m.mixOutTrackTime) / interval;
+      const bin = Math.min(KICK_BINS - 1, Math.floor((ph - Math.floor(ph)) * KICK_BINS));
+      const vo = outAt(o), vi = inAt(ck.in(t));
+      if (vo != null) { sums[0][bin] += vo; counts[0][bin]++; }
+      if (vi != null) { sums[1][bin] += vi; counts[1][bin]++; }
+    }
+    const profile = (k) => {
+      const means = Array.from(sums[k], (v, i) => v / Math.max(1, counts[k][i]));
+      const mean = means.reduce((s, v) => s + v, 0) / KICK_BINS, peak = Math.max(...means);
+      return counts[k].every((c) => c > 0) && mean > 0 && peak > 2 * mean ? means.map((v) => v - mean) : null;
+    };
+    const L = profile(0), R = profile(1);
+    if (!L || !R) return { none: 'no clear kick' };
+    const norm = Math.sqrt(L.reduce((s, v) => s + v * v, 0) * R.reduce((s, v) => s + v * v, 0));
+    if (!(norm > 0)) return { none: 'no clear kick' };
+    const score = (sh) => { let s = 0; for (let b = 0; b < KICK_BINS; b++) s += L[b] * R[(((b + sh) % KICK_BINS) + KICK_BINS) % KICK_BINS]; return s / norm; };
+    let best = 0;
+    for (let sh = -KICK_LIMIT; sh <= KICK_LIMIT; sh++) if (score(sh) > score(best)) best = sh;
+    const r = (v) => Math.round(v * 1000) / 1000, got = { score: r(score(best)), gain: r(score(best) - score(0)) };
+    if (Math.abs(best) >= KICK_LIMIT || got.score < KICK_MIN_MATCH || got.gain < KICK_MIN_GAIN) return { none: 'the kicks already line up, or match too loosely', ...got };
+    // positive: the next song's kick comes late, so its cue moves on
+    return { shift: (best / KICK_BINS) * interval * ck.inPerOut, ...got };
+  }
+
+  // Loop mix or blend, Automix v2. A loop mix that passed its gates (its bars
+  // instrumental by lyrics or vocal mask, tempos within 8%, sub-bass, keys)
+  // keeps priority: the blend has to beat it by LOOP_MARGIN. A blend that
+  // fell back (hand-over, bridge, drop-in, muffle) never does. Otherwise both
+  // are scored as Orchard does (x0.82) on what differs: both singing at once
+  // (its vocal score, weight 0.15), the keys (weight 0.13: the blend lays the
+  // two songs' chords over each other, the loop's instrumental bars hold the
+  // playing song's own, so it scores 1) and the length (weight 0.02).
+  // LOOP_MARGIN is twice Orchard's loop cost (0.01, the price it puts on a
+  // loop): the blend has to win by about as much as a fifth of a blend sung by
+  // both songs, or a key score 0.19 worse on the loop's side.
+  const LOOP_MARGIN = 0.02;
+  function loopOrBlend(blend, loop) {
+    if (version !== 3 || !loop || loop.none) return { loop: !!loop && !loop.none };
+    if (!blend || blend.fallback || blend.style !== 'blend' || blend.shape) return { loop: true, why: 'the blend fell back' };
+    const vocal = (clash) => 1 - Math.min(1, clash * 1.15) * 0.72;
+    const length = (beats) => (beats === 16 ? 1 : beats === 8 ? 0.85 : beats === 32 ? 0.75 : 0.65);
+    const score = (clash, keys, beats) => 0.82 * (0.15 * vocal(clash) + 0.13 * keys + 0.02 * length(beats));
+    const b = score(blend.clash || 0, blend.harmonic?.score ?? 0.5, blend.bars * 4);
+    const l = score(Math.min(loop.out.vocal ?? 0, loop.in.vocal ?? 0), 1, loop.totalBars * 4);
+    const r = (v) => Math.round(v * 1e4) / 1e4;
+    return { loop: b < l + LOOP_MARGIN, why: `loop ${r(l)} vs blend ${r(b)} (the blend needs ${LOOP_MARGIN} more)` };
+  }
 
   // The song with its length cut to where its music ends (analysis
   // contentEndSec), when there's real silence after it; never over 20 s cut.
@@ -575,6 +940,108 @@
   // AutoMix's fallback: a plain 12 s equal-power fade, no beatmatch, no EQ.
   // BitChord web put it on the last 12 s before the outro; here, like the
   // blend, it ends with the song.
+  // Automix v2's "beatmatch or do nothing" (Orchard's boundary hand-off): two
+  // beats that can't be matched are never laid over each other. The playing
+  // song runs to where its music ends and the next starts from its beginning,
+  // with a short fade between (the fallback ladder adds more ways later).
+  function handoff(cur, next, earliest, reason) {
+    // first rung: the two songs' beatless edges, at any tempo
+    const b = beatlessBridge(cur, next);
+    if (!b.none && b.mixOut >= earliest) {
+      return {
+        style: 'crossfade', fallback: false, bridge: true, reason: `${reason}: a beatless bridge (${b.dur.toFixed(1)} s, no beat on either side)`,
+        mixOutTrackTime: b.mixOut, durationSec: b.dur, mixInTrackTime: b.mixIn, rate: 1,
+        bars: 0, swapDb: 0, barSec: 0, bpm: null, inBpm: null, trim: loudnessTrim(cur, b.mixOut, b.dur, next, b.mixIn, b.dur),
+      };
+    }
+    const end = Math.min(musicEnd(cur).durationSec, cur.durationSec - 0.3);
+    const mixOut = Math.max(earliest, end - V2_SWITCH_SEC);
+    return {
+      style: 'crossfade', fallback: false, handoff: true, reason: `${reason}, so a straight hand-over (no beatless bridge: ${b.none || 'past the playhead'})`,
+      mixOutTrackTime: mixOut, durationSec: Math.max(0, end - mixOut), mixInTrackTime: 0, rate: 1,
+      bars: 0, swapDb: 0, barSec: 0, bpm: null, inBpm: null,
+    };
+  }
+
+  // Orchard beatPresence: 0 in a beatless passage, 1 once kick and bass are in
+  // (bass curve: 0.1 of the song's usual level is none, 0.5 full). null: unmeasured.
+  function bassMean(a, from, to) {
+    const c = a?.bassCurve;
+    if (!c?.values?.length) return null;
+    const i0 = Math.max(0, Math.floor((from - c.start) / c.step)), i1 = Math.min(c.values.length - 1, Math.floor((to - c.start) / c.step));
+    if (i1 < i0) return null;
+    let s = 0;
+    for (let i = i0; i <= i1; i++) s += c.values[i];
+    return s / (i1 - i0 + 1);
+  }
+  const beatPresence = (a, t) => { const m = bassMean(a, t - 0.5, t + 0.5); return m == null ? null : clamp((m - 0.1) / 0.4, 0, 1); };
+  function beatlessRun(a, from, limit, step) {
+    let run = 0;
+    for (let t = from; step > 0 ? t < limit : t > limit; t += step) {
+      const p = beatPresence(a, t);
+      if (p == null || p >= BEATLESS) break;
+      run += Math.abs(step);
+    }
+    return run;
+  }
+  // Orchard beatlessBridge: the playing song's beatless ending under the next
+  // one's beatless opening (4-12 s, both sides beatless throughout), so no beat
+  // plays against another and the tempos need not match; the next song's beat
+  // lands as the playing one ends. { mixOut, dur, mixIn } or { none: why }.
+  function beatlessBridge(cur, next) {
+    if (!cur.bassCurve || !next.bassCurve) return { none: 'no bass curves' };
+    if (subBassContrast(cur, next) >= V2_SUB_BASS_VETO) return { none: 'the productions clash' };
+    const end = Math.min(musicEnd(cur).durationSec, cur.durationSec - 0.3);
+    const outRun = beatlessRun(cur, end - 0.125, end - BRIDGE_MAX_SEC, -0.25);
+    const inRun = beatlessRun(next, 0.125, Math.min(next.durationSec || 60, 60), 0.25);
+    if (Math.min(outRun, inRun) < BRIDGE_MIN_SEC) return { none: `beatless ending ${outRun} s, opening ${inRun} s` };
+    const beat = cur.beatIntervalSec > 0 ? cur.beatIntervalSec : 0.5;
+    const dur = Math.floor(Math.min(outRun, inRun, BRIDGE_MAX_SEC) / beat) * beat;
+    if (dur < BRIDGE_MIN_SEC) return { none: 'beatless edges too short' };
+    const skip = Math.min(Math.max(0, inRun - dur), BRIDGE_MAX_SKIP_SEC);
+    const sung = { out: lyricSpans(cur), in: lyricSpans(next) };
+    if ((vocalOverlap(cur, next, end - dur, dur, skip, 1, sung) ?? 0) > 0.25) return { none: 'voices meet over the bridge' };
+    if ((voiceRisk(next, skip - 0.5, skip + 1, sung.in) ?? 0) >= 0.5) return { none: 'the next song would fade in mid-line' };
+    const keys = overlapHarmony(cur, next, end - dur, end, skip, skip + dur);
+    if (keys?.severeClash) return { none: `the keys clash where they meet (${keys.correlation})` };
+    return { mixOut: end - dur, dur, mixIn: skip };
+  }
+
+  // Orchard's voice risk: the vocal mask's share mapped to 0..1 (lyric lines: sung or not).
+  function voiceRisk(a, from, to, spans) {
+    let sum = 0, n = 0;
+    for (let t = from; t < to; t += 0.05) {
+      const v = vocalAt(a, t, spans);
+      if (v == null) continue;
+      sum += spans ? v : clamp((v - 0.15) / 0.45, 0, 1);
+      n++;
+    }
+    return n ? sum / n : null;
+  }
+
+  // Orchard chooseBassSwap, by the playing song's voice only (no bass curve
+  // here): the swap sits on the bar nearest the middle; when the playing song
+  // is mid-line there, it moves to the bar nearest the middle (a quarter to
+  // three quarters in) where that song is clear. { at: fraction, moved }.
+  function vocalSafeSwap(cur, mixOut, outSpan, bars) {
+    const spans = lyricSpans(cur);
+    const mid = clamp(Math.round(bars / 2), 1, bars - 1) / bars;
+    const riskAt = (f) => voiceRisk(cur, mixOut + f * outSpan - 0.5, mixOut + f * outSpan + 0.5, spans);
+    const here = riskAt(mid);
+    if (here == null || here < SWAP_SINGING) return { at: mid, moved: null };
+    const moves = [];
+    for (let k = 1; k < bars; k++) {
+      const f = k / bars;
+      if (f < 0.25 || f > 0.75 || Math.abs(f - mid) < 1e-9) continue;
+      const r = riskAt(f);
+      if (r != null && r < SWAP_CLEAR) moves.push(f);
+    }
+    moves.sort((x, y) => Math.abs(x - 0.5) - Math.abs(y - 0.5) || x - y);
+    if (!moves.length) return { at: mid, moved: 'sung at the middle, no clear bar' };
+    const by = Math.round((moves[0] - mid) * bars);
+    return { at: moves[0], moved: `off a sung line, ${by > 0 ? '+' : ''}${by} bar${Math.abs(by) === 1 ? '' : 's'}` };
+  }
+
   function fallback(cur, next, earliest, reason) {
     const target = cur.durationSec - 0.3 - FALLBACK_SEC;
     const mixOut = Math.max(earliest, target);
@@ -605,12 +1072,13 @@
   // sing, from the plan) deepens the filters and moves the fader towards a
   // vocal-safe pair.
   function djShape(m, style, D, n) {
+    if (style === 'blend' && (m.shape === 'dropin' || m.shape === 'muffle')) return ladderShape(m, D, n);
     const clash = clamp(m.clash || 0, 0, 1);
     const beat = m.bpm > 0 ? 60 / m.bpm : 0;
     const grid = beat ? D / beat : 0;   // beats in the blend
     const onBar = (f) => (grid >= 8 ? clamp(Math.round((f * grid) / 4) * 4 / grid, 4 / grid, 1 - 4 / grid) : f);
     const w = grid >= 2 ? 0.5 / grid : 0.2;
-    const swapAt = onBar(0.5);
+    const swapAt = m.swapAt > 0 && m.swapAt < 1 ? m.swapAt : onBar(0.5);
     const h = (p) => clamp((p - (swapAt - w)) / w, 0, 1);
     const S = Math.PI / 2;
     let inHp, outHp, outLp, rise, fall;
@@ -645,6 +1113,36 @@
     return { D, style, gIn, gOut, inHp: mk(inHp), outHp: mk(outHp), outLp: mk(outLp) };
   }
 
+  // Automix v2's fallback ladder shapes (Orchard). Drop-in: the next song at full
+  // level on its first beat (20 ms), its bass with it; the playing song closes and
+  // fades over the two bars. Muffle: the playing song holds its level while its
+  // low-pass closes (18 kHz -> 300 Hz) over the lead before the bass swap; the
+  // next fades in over the same bars, takes the bass on the swap, and the playing
+  // song is gone two beats after it.
+  function ladderShape(m, D, n) {
+    const S = Math.PI / 2, beats = Math.max(1, (m.bars || 1) * 4);
+    let gIn, gOut, inHp, outHp, outLp;
+    if (m.shape === 'dropin') {
+      const e = Math.min(0.02 / D, 0.05);
+      gIn = (p) => clamp(p / e, 0, 1);
+      gOut = (p) => Math.cos(p * S);
+      outLp = (p) => glideTo(18000, 2000, p);
+      outHp = (p) => bassCutHz(clamp(p / e, 0, 1));
+      inHp = () => 20;
+    } else {
+      const at = m.swapAt > 0 && m.swapAt < 1 ? m.swapAt : 0.5, from = Math.max(0, at - (m.muffleLead || 0.25));
+      const exit = Math.min(1, at + MUFFLE_EXIT_BEATS / beats), w = 0.5 / beats;
+      const h = (p) => clamp((p - at) / w, 0, 1);
+      gOut = (p) => (p <= at ? 1 : Math.cos(clamp((p - at) / (exit - at), 0, 1) * S));
+      gIn = (p) => Math.sin(clamp((p - from) / (at - from), 0, 1) * S);
+      outLp = (p) => glideTo(18000, 300, (p - from) / (at - from));
+      outHp = (p) => bassCutHz(h(p));
+      inHp = (p) => bassCutHz(1 - h(p));
+    }
+    const mk = (f) => Float32Array.from({ length: n }, (_, i) => f(i / (n - 1)));
+    return { D, style: 'blend', gIn: mk(gIn), gOut: mk(gOut), inHp: mk(inHp), outHp: mk(outHp), outLp: mk(outLp) };
+  }
+
   // the incoming deck's glide back to x1.0 after a blend at [rate]: [seconds, steps]
   function glideBack(rate) {
     if (Math.abs(rate - 1) < 0.002) return null;
@@ -663,11 +1161,13 @@
     const out = {}, inn = {};
     if (m.v2 && style !== 'crossfade') {
       const s = djShape(m, style, D, curveSamples(D));
-      out.gain = pointsOf(s.gOut, D); inn.gain = pointsOf(s.gIn, D);
+      const [gIn, gOut] = trimmed(m, s.gIn, s.gOut);
+      out.gain = pointsOf(gOut, D); inn.gain = pointsOf(gIn, D);
       out.lowpassHz = pointsOf(s.outLp, D); out.highpassHz = pointsOf(s.outHp, D);
       inn.highpassHz = pointsOf(s.inHp, D);
     } else {
-      out.gain = pointsOf(equalPower(65, false), D); inn.gain = pointsOf(equalPower(65, true), D);
+      const [gIn, gOut] = trimmed(m, equalPower(65, true), equalPower(65, false));
+      out.gain = pointsOf(gOut, D); inn.gain = pointsOf(gIn, D);
       if (style !== 'crossfade') {
         // the bass swaps within one bar at the midpoint
         const mid = D / 2, bar = Math.min(m.barSec || 0, D / 2);
@@ -692,7 +1192,13 @@
       out.rate = pts.filter((p, i) => i === 0 || p[0] !== pts[i - 1][0] || p[1] !== pts[i - 1][1]);
     }
     const rate = style === 'blend' ? m.rate : 1;
-    if (Math.abs(rate - 1) > 1e-9) {
+    if (style === 'blend' && m.glide) {
+      // Automix v2's glide: both songs step once per beat, the next one ends at x1.0
+      const G = glideSteps(m.glide.q, m.glide.beats, m.glide.beatOutSec);
+      const steps = (rates) => rates.flatMap((r, k) => (k ? [[G.at[k], rates[k - 1]], [G.at[k], r]] : [[0, r]]));
+      out.rate = [...steps(G.outRate), [D, G.outRate[G.outRate.length - 1]]];
+      inn.rate = [...steps(G.inRate), [D, G.inRate[G.inRate.length - 1]], [D, 1]];
+    } else if (Math.abs(rate - 1) > 1e-9) {
       const g = glideBack(rate);
       inn.rate = g ? [[0, rate], [D, rate], [D + g.sec, 1]] : [[0, rate], [D, rate], [D, 1]];
     }
@@ -796,6 +1302,12 @@
     const inBpm = 60 / inBeat;
     const fold = [1, 2, 0.5].reduce((best, f) => (Math.abs(Math.log(inBpm / f / outBpm)) < Math.abs(Math.log(inBpm / best / outBpm)) ? f : best));
     const target = inBpm / fold;
+    // v2: the loop ramps the tempo too, so the same cap (a wider gap: a blend or filter mix instead)
+    if (version === 3 && stretchOf(target / outBpm) > V2_MAX_STRETCH) return { none: `tempos ${Math.round(stretchOf(target / outBpm) * 100)}% apart (v2 stretches at most ${Math.round(V2_MAX_STRETCH * 100)}%)` };
+    const contrast = subBassContrast(out, inn);
+    if (version === 3 && contrast >= V2_SUB_BASS_VETO) return { none: `different sub-bass styles (${contrast.toFixed(2)} apart)` };
+    const harmonic = version === 3 ? harmonicEvidence(out, inn) : null;
+    if (harmonic?.severeClash) return { none: `the keys clash (${out.keyName} → ${inn.keyName}, ${harmonic.score})` };
     const rampBars = Math.min(MAX_RAMP_BARS, Math.max(MIN_RAMP_BARS, Math.ceil(Math.abs(target - outBpm) / MAX_BPM_PER_BAR)));
     // the incoming loop lets go only at its own loop boundary: whole incoming loops
     const inLoopOutBars = inPick.bars / fold;
@@ -1025,6 +1537,11 @@
     loopSchedule,
     djShape,
     glideBack,
+    glideSteps,
+    trimmed,
+    kickLock,
+    kickSource,
+    loopOrBlend,
     LOOP: { OUT_REGION_SEC, IN_REGION_SEC, LOOP_SETUP_SEC },
     warmup,
     setStatus,

@@ -2,8 +2,8 @@
 //
 // Each spec/automix/pairs/*.json holds two real songs as the extension saw them
 // (analysis, sung spans from synced lyrics, loudness at 20 Hz). This runs
-// today's planner (src/automix/automix.js) on them, for engine version 1
-// (Original/Web) and 2 (Advanced AutoDJ), and compares the plans with
+// today's planner (src/automix/automix.js) on them, for the two engines,
+// Classic (version 2) and Automix v2 (version 3), and compares the plans with
 // spec/automix/golden/*.json.
 //
 //   node scripts/automix_fixtures.mjs            compare (exit 1 on a difference)
@@ -55,8 +55,10 @@ function planPair(pair, version) {
   const loop = A.gridOk(cur) && A.gridOk(nxt)
     ? A.planLoopMix(cur, bufferOf(a), nxt, bufferOf(b), pos + A.LOOP.LOOP_SETUP_SEC, { out: a.sung, in: b.sung })
     : { none: 'beat grid too weak' };
-  // what the extension plays: the loop mix when it found bars, else the blend plan
-  return round({ pos, earliest, plays: loop && !loop.none ? 'loop' : blend.style, loop, blend });
+  // what the extension plays: the loop mix when it found bars (Automix v2: and it
+  // scores over the blend, automix.js loopOrBlend), else the blend plan
+  const pick = A.loopOrBlend(blend, loop);
+  return round({ pos, earliest, plays: pick.loop ? 'loop' : blend.style, ...(pick.why ? { choice: pick.why } : {}), loop, blend });
 }
 
 const update = process.argv.includes('--update');
@@ -64,13 +66,23 @@ mkdirSync(GOLDEN, { recursive: true });
 let failed = 0;
 for (const f of readdirSync(PAIRS).filter((x) => x.endsWith('.json')).sort()) {
   const pair = JSON.parse(readFileSync(new URL(f, PAIRS), 'utf8'));
-  const got = { pair: pair.name, v1: planPair(pair, 1), v2: planPair(pair, 2) };
+  const got = { pair: pair.name, v2: planPair(pair, 2), v3: planPair(pair, 3) };
   const file = new URL(f, GOLDEN);
   const text = JSON.stringify(got, null, 2) + '\n';
-  if (update) { writeFileSync(file, text); console.log('wrote', f, '| v1 plays', got.v1.plays, '| v2 plays', got.v2.plays); continue; }
+  if (update) { writeFileSync(file, text); console.log('wrote', f, '| Classic plays', got.v2.plays, '| v2 plays', got.v3.plays); continue; }
   let want = null;
   try { want = readFileSync(file, 'utf8'); } catch { /* missing */ }
-  if (want === text) console.log('ok  ', f, '| v1', got.v1.plays, '| v2', got.v2.plays);
-  else { failed++; console.log('DIFF', f, want === null ? '(no golden file: run with --update)' : '| v1 plays ' + got.v1.plays + ', v2 plays ' + got.v2.plays); }
+  if (want === text) console.log('ok  ', f, '| Classic', got.v2.plays, '| v2', got.v3.plays);
+  else { failed++; console.log('DIFF', f, want === null ? '(no golden file: run with --update)' : '| Classic plays ' + got.v2.plays + ', v2 plays ' + got.v3.plays); }
+}
+// Hard rules (PLAN.md): Vaina Loca → SI NO ES CONTIGO keeps Web's loop under
+// Automix v2; Stereo Love → Midnight Sun (11% apart) is never a loop.
+const MUST = { '1-': 'loop', '2-': '!loop' };
+for (const f of readdirSync(GOLDEN).filter((x) => x.endsWith('.json')).sort()) {
+  const want = MUST[f.slice(0, 2)];
+  if (!want) continue;
+  const plays = JSON.parse(readFileSync(new URL(f, GOLDEN), 'utf8')).v3.plays;
+  const ok = want.startsWith('!') ? plays !== want.slice(1) : plays === want;
+  if (!ok) { failed++; console.log('RULE', f, '| v3 plays', plays, '| must', want === '!loop' ? 'never be a loop' : 'be a ' + want); }
 }
 process.exit(failed ? 1 : 0);

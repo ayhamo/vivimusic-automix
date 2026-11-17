@@ -116,7 +116,12 @@
         return;
       }
       const error = el.currentTime - c.pos, abs = Math.abs(error);
-      if (abs > SEEK_ERROR_SEC) { this.seekTo(c.pos); return; }
+      if (abs > SEEK_ERROR_SEC) {
+        // off again right after a seek: that seek landed this late (a cold element), so the next aims that much ahead
+        if (performance.now() - (this.seekTimes[this.seekTimes.length - 1] ?? -Infinity) < 1500) startLag = clamp(startLag - error, 0, 0.3);
+        this.seekTo(c.pos, `${Math.round(error * 1000)} ms at ${c.pos.toFixed(2)} s`);
+        return;
+      }
       let rate = 1;
       this.recent.push(error);
       if (this.recent.length > 3) this.recent.shift();
@@ -160,11 +165,12 @@
       if (el.playbackRate !== rate) el.playbackRate = rate;
     }
 
-    seekTo(pos) {
+    seekTo(pos, why = '') {
       const t = performance.now();
       this.seekTimes = this.seekTimes.filter((x) => t - x < 10000);
       this.seekTimes.push(t);
-      if (this.seekTimes.length > MAX_SEEKS_PER_10S) { this.handBack('the deck kept losing its place'); return; }
+      this.seekWhys = [...(this.seekWhys || []), why].slice(-MAX_SEEKS_PER_10S - 1);
+      if (this.seekTimes.length > MAX_SEEKS_PER_10S) { this.handBack(`the deck kept losing its place (off by ${this.seekWhys.join(', ')})`); return; }
       this.el.playbackRate = 1;
       this.trimming = false; this.alignSeeks = 0; this.recent = [];
       // YouTube plays while the deck lines up again silently, then it takes back over
