@@ -19,7 +19,7 @@ OUT_FIREFOX = os.path.join(ROOT, 'vivimusic-automix-firefox.zip')
 OUT_CHROMIUM = os.path.join(ROOT, 'vivimusic-automix-edge-chrome.zip')
 SKIP_DIRS = {'.git', '.github', '.claude', 'scripts', 'upstream-amo', 'dist', 'bitchrod extesnion'}
 SKIP_FILES = {os.path.basename(OUT_FIREFOX), os.path.basename(OUT_CHROMIUM),
-              'README_CUSTOM.md', 'TESTING.md', '.gitignore'}
+              'README_CUSTOM.md', 'TESTING.md', '.gitignore', 'manifest-plus.json'}
 
 
 def chromium_manifest(manifest):

@@ -1,0 +1,439 @@
+/* Vivimusic Web+ additions to upstream's canvas.css, loaded right after it
+   (see manifest-plus.json). Kept out of upstream's file so merges stay clean.
+   The first part overrides upstream rules; the rest are our own rules. */
+
+/* ── Overrides of upstream rules ── */
+
+/* Right-to-left lyric lines: the gap after a word goes on the line's end side.
+   The physical margin is reset first and the logical one set after it: within
+   one block the later declaration wins, so left-to-right lines are unchanged. */
+.vivi-lyrics-word { margin-right: 0; margin-inline-end: 0.28em; }
+.vivi-lyrics-word:last-child { margin-right: 0; margin-inline-end: 0; }
+.vivi-lyrics-wordgroup { margin-right: 0; margin-inline-end: 0.28em; }
+.vivi-lyrics-wordgroup:last-child,
+.vivi-lyrics-wordgroup.vivi-lyrics-wordgroup-joined { margin-right: 0; margin-inline-end: 0; }
+.vivi-lyrics-word.vivi-lyrics-syl { margin-right: 0; margin-inline-end: 0; }
+.vivi-lyrics-word.vivi-lyrics-word-joined { margin-right: 0; margin-inline-end: 0; }
+.vivi-lyrics-list .vivi-lyrics-word {
+  margin-left: 0;
+  margin-right: 0;
+  margin-inline-start: calc(-1 * var(--vivi-ink-x));
+  margin-inline-end: calc(0.28em - var(--vivi-ink-x));
+}
+.vivi-lyrics-list .vivi-lyrics-word:last-child,
+.vivi-lyrics-list .vivi-lyrics-word.vivi-lyrics-word-joined,
+.vivi-lyrics-list .vivi-lyrics-word.vivi-lyrics-syl {
+  margin-left: 0;
+  margin-right: 0;
+  margin-inline-start: calc(-1 * var(--vivi-ink-x));
+  margin-inline-end: calc(-1 * var(--vivi-ink-x));
+}
+
+/* Apple Music style: --vivi-line-blur is 0 off, 0.4 low (default), 1 normal (popup setting) */
+.vivi-lyrics-list.vivi-lyrics-anim-apple .vivi-lyrics-line {
+  filter: blur(min(calc(var(--vivi-d, 1) * 0.9px * var(--vivi-line-blur, 0.4)), calc(2.5px * var(--vivi-line-blur, 0.4))));
+}
+
+/* Pill player: YouTube Music now centres the progress bar with translateY(-50%),
+   which lifts it 16px into the artist line */
+html.vivi-pill-player ytmusic-player-bar #progress-bar.ytmusic-player-bar { transform: none !important; }
+
+/* ── Our own rules ── */
+
+/* With the refresh button: refresh on top, "i" below it. */
+.vivi-lyrics-info-wrap:has(.vivi-lyrics-refetch-tab-btn) {
+  flex-direction: column !important;
+  justify-content: center !important;
+  gap: 3px !important;
+}
+
+/* Refresh button beside the "i": refetch lyrics from other providers. */
+.vivi-lyrics-refetch-tab-btn {
+  all: unset;
+  box-sizing: border-box !important;
+  display: inline-flex !important;
+  flex: 0 0 auto !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 16px !important;
+  height: 16px !important;
+  margin: 0 0 0 8px !important;
+  padding: 1px !important;
+  border-radius: 50% !important;
+  color: var(--text-primary, #fff) !important;
+  cursor: pointer !important;
+  opacity: 0.55;
+  transition: opacity 0.2s ease, background 0.2s ease, color 0.2s ease;
+}
+.vivi-lyrics-refetch-tab-btn:hover:not(:disabled) {
+  opacity: 1;
+  background: rgba(255,255,255,0.14) !important;
+}
+.vivi-lyrics-refetch-tab-btn:disabled { cursor: default !important; }
+.vivi-lyrics-refetch-spinning { opacity: 1 !important; }
+.vivi-lyrics-refetch-spinning .vivi-refresh-icon {
+  animation: vivi-refetch-spin 0.9s linear infinite;
+}
+.vivi-lyrics-refetch-none { opacity: 1 !important; color: #ff6b6b !important; }
+@keyframes vivi-refetch-spin { to { transform: rotate(360deg); } }
+
+.vivi-refresh-icon {
+  width: 100%;
+  height: 100%;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+.vivi-offset-refetch-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.vivi-offset-refetch-btn .vivi-refresh-icon {
+  width: 13px;
+  height: 13px;
+  flex: 0 0 auto;
+}
+.vivi-offset-refetch-btn-loading .vivi-refresh-icon {
+  animation: vivi-refetch-spin 0.9s linear infinite;
+}
+
+/* ── Right-to-left lines (Arabic, Hebrew …) ────────────────────────────────
+   lyrics-ui.js marks a line .vivi-lyrics-rtl (dir="rtl") when its first letter
+   is from a right-to-left script. "Left" alignment means "where the line
+   starts", so those lines sit on the right (also in Smooth zoom and Apple
+   Music, which are always start-aligned) and "right" puts them on the left.
+   Their karaoke fill runs right to left: the gradient is mirrored and JS swaps
+   the positions (0% = unsung, 100% = sung). */
+.vivi-lyrics-list.vivi-lyrics-align-left .vivi-lyrics-line.vivi-lyrics-rtl {
+  align-self: flex-end;
+  text-align: right;
+  transform-origin: right center;
+}
+.vivi-lyrics-list.vivi-lyrics-align-right .vivi-lyrics-line.vivi-lyrics-rtl {
+  align-self: flex-start;
+  text-align: left;
+  transform-origin: left center;
+}
+.vivi-lyrics-list:not(.vivi-lyrics-anim-glow):not(.vivi-lyrics-anim-bounce) .vivi-lyrics-line.vivi-lyrics-rtl .vivi-lyrics-word {
+  background-image: linear-gradient(
+    270deg,
+    var(--text-primary, #fff) 50%,
+    var(--text-secondary, rgba(255,255,255,0.45)) 50%
+  );
+}
+.vivi-lyrics-list:not(.vivi-lyrics-anim-glow):not(.vivi-lyrics-anim-bounce) .vivi-lyrics-line.vivi-lyrics-rtl .vivi-lyrics-word.vivi-lyrics-syl {
+  background-image: linear-gradient(
+    270deg,
+    var(--text-primary, #fff) 0%,
+    var(--text-primary, #fff) 40%,
+    var(--text-secondary, rgba(255,255,255,0.45)) 60%,
+    var(--text-secondary, rgba(255,255,255,0.45)) 100%
+  );
+}
+.vivi-lyrics-rtl .vivi-lyrics-word { background-position: 0% 0; }
+.vivi-lyrics-line.vivi-lyrics-active.vivi-lyrics-rtl .vivi-lyrics-word { background-position: 0% 0; }
+.vivi-lyrics-line.vivi-lyrics-active.vivi-lyrics-rtl .vivi-lyrics-word-sung { background-position: 100% 0; }
+/* The romanization under an RTL line is Latin text: keep it left-to-right. */
+.vivi-lyrics-line.vivi-lyrics-rtl .vivi-lyrics-roman { direction: ltr; unicode-bidi: isolate; }
+
+/* ─── Automix on the player bar (BitChord web's seek-bar pulse) ───
+   crossfade.js drawMixUi: the coming mix's stretch is lit; during the mix the
+   fill covers the bar and breathes on the beat, the times fade into "Mixing". */
+ytmusic-player-bar #progress-bar #progressContainer .vivi-mix-fill,
+ytmusic-player-bar #progress-bar #progressContainer .vivi-mix-window {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  pointer-events: none;
+}
+ytmusic-player-bar #progress-bar #progressContainer .vivi-mix-fill {
+  width: 0;
+  opacity: 0;
+  background: #fff;
+  border-radius: inherit;
+}
+ytmusic-player-bar #progress-bar #progressContainer .vivi-mix-window {
+  background: rgba(255, 255, 255, 0.45);
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 30%, #000 70%, transparent);
+  mask-image: linear-gradient(to right, transparent, #000 30%, #000 70%, transparent);
+  opacity: 0;
+  transition: opacity 0.5s ease;
+}
+ytmusic-player-bar #progress-bar #progressContainer .vivi-mix-window.vivi-on { opacity: 1; }
+ytmusic-player-bar .vivi-mix-label {
+  position: absolute;
+  opacity: 0;
+  text-align: center;
+  white-space: nowrap;
+  pointer-events: none;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  color: rgba(255, 255, 255, 0.9);
+}
+/* while a mix runs the bar only flashes: the song position (fill, buffered
+   part, knob) isn't what plays, so it waits until the new song plays alone */
+ytmusic-player-bar #progress-bar #primaryProgress,
+ytmusic-player-bar #progress-bar #secondaryProgress,
+ytmusic-player-bar #progress-bar #sliderKnobContainer { transition: opacity 0.4s ease; }
+ytmusic-player-bar.vivi-mixing #progress-bar #primaryProgress,
+ytmusic-player-bar.vivi-mixing #progress-bar #secondaryProgress,
+ytmusic-player-bar.vivi-mixing #progress-bar #sliderKnobContainer { opacity: 0 !important; }
+/* a loop mix holds YouTube's player paused: the music plays on, so show "pause" */
+ytmusic-player-bar.vivi-mix-hold #play-pause-button #button { position: relative; }
+ytmusic-player-bar.vivi-mix-hold #play-pause-button yt-icon { opacity: 0 !important; }
+ytmusic-player-bar.vivi-mix-hold #play-pause-button #button::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 40px;
+  height: 40px;
+  background: #fff;
+  /* YouTube Music's own pause icon */
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M6.5 3A1.5 1.5 0 005 4.5v15A1.5 1.5 0 006.5 21h2a1.5 1.5 0 001.5-1.5v-15A1.5 1.5 0 008.5 3h-2Zm9 0A1.5 1.5 0 0014 4.5v15a1.5 1.5 0 001.5 1.5h2a1.5 1.5 0 001.5-1.5v-15A1.5 1.5 0 0017.5 3h-2Z'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M6.5 3A1.5 1.5 0 005 4.5v15A1.5 1.5 0 006.5 21h2a1.5 1.5 0 001.5-1.5v-15A1.5 1.5 0 008.5 3h-2Zm9 0A1.5 1.5 0 0014 4.5v15a1.5 1.5 0 001.5 1.5h2a1.5 1.5 0 001.5-1.5v-15A1.5 1.5 0 0017.5 3h-2Z'/%3E%3C/svg%3E") center / contain no-repeat;
+  pointer-events: none;
+}
+
+/* ─── ViVi Automix On-Screen HUD / Toast ─── */
+#vivi-automix-toast {
+  position: fixed;
+  bottom: 96px;
+  left: 50%;
+  transform: translateX(-50%) translateY(24px) scale(0.96);
+  z-index: 100000;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 22px;
+  border-radius: 9999px;
+  background: rgba(18, 16, 28, 0.94);
+  border: 1px solid rgba(255, 75, 139, 0.55);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.65), 0 0 24px rgba(255, 75, 139, 0.35);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  color: #fff;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  opacity: 0;
+  pointer-events: none;
+  transition: all 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+}
+#vivi-automix-toast.vivi-automix-visible {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0) scale(1);
+}
+#vivi-automix-toast.vivi-automix-done {
+  border-color: rgba(16, 185, 129, 0.65);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.65), 0 0 24px rgba(16, 185, 129, 0.35);
+}
+.vivi-automix-icon {
+  font-size: 18px;
+  line-height: 1;
+}
+.vivi-automix-content {
+  display: flex;
+  flex-direction: column;
+}
+.vivi-automix-title {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  color: #fff;
+}
+.vivi-automix-subtitle {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.72);
+}
+.vivi-automix-wave {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  height: 16px;
+}
+.vivi-automix-wave span {
+  width: 3px;
+  height: 100%;
+  background: #ff4b8b;
+  border-radius: 3px;
+  animation: vivi-wave-pulse 0.75s ease-in-out infinite alternate;
+}
+.vivi-automix-wave span:nth-child(2) { animation-delay: 0.15s; height: 60%; }
+.vivi-automix-wave span:nth-child(3) { animation-delay: 0.35s; height: 90%; }
+.vivi-automix-wave span:nth-child(4) { animation-delay: 0.5s; height: 50%; }
+@keyframes vivi-wave-pulse {
+  0% { transform: scaleY(0.25); }
+  100% { transform: scaleY(1.15); }
+}
+/* The toast's own content: fades up and out when the blend finishes, and the
+   new content fades in from below while the pill resizes (crossfade.js). */
+#vivi-automix-toast {
+  box-sizing: border-box;
+  overflow: hidden;
+  white-space: nowrap;
+}
+#vivi-automix-toast > * {
+  transition: opacity 0.2s ease, transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+#vivi-automix-toast.vivi-automix-swap > * {
+  opacity: 0;
+  transform: translateY(-8px);
+}
+#vivi-automix-toast > .vivi-automix-enter {
+  opacity: 0;
+  transform: translateY(8px);
+}
+#vivi-automix-toast.vivi-automix-done .vivi-automix-icon {
+  animation: vivi-automix-pop 0.55s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+@keyframes vivi-automix-pop {
+  0% { transform: scale(0.3) rotate(-30deg); }
+  100% { transform: scale(1) rotate(0deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  #vivi-automix-toast, #vivi-automix-toast > * { transition-duration: 0.01s; animation: none; }
+}
+
+/* ── Spotify Canvas behind the side panel (placement "lyrics" / "side") ──
+   A blurred, darkened copy of the Canvas fills the side panel behind the
+   lyrics while the Lyrics tab is open; the panel's own content sits above. */
+ytmusic-player-page #side-panel:has(> #vivi-lyrics-canvas) {
+  position: relative;
+  isolation: isolate;
+}
+/* Bleeds past the panel and fades out at every edge, so it melts into the
+   page instead of sitting in a box. */
+#vivi-lyrics-canvas {
+  position: absolute;
+  inset: -12vh -4vw -12vh -10vw;
+  width: calc(100% + 14vw);
+  height: calc(100% + 24vh);
+  object-fit: cover;
+  z-index: -1;
+  pointer-events: none;
+  opacity: 0;
+  filter: blur(var(--vivi-canvas-blur, 3px)) brightness(0.5) saturate(1.2);
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 22%, #000 88%, transparent), linear-gradient(to bottom, transparent, #000 15%, #000 85%, transparent);
+  mask-image: linear-gradient(to right, transparent, #000 22%, #000 88%, transparent), linear-gradient(to bottom, transparent, #000 15%, #000 85%, transparent);
+  -webkit-mask-composite: source-in;
+  mask-composite: intersect;
+  transition: opacity 0.6s ease;
+}
+html.vivi-lyrics-canvas-visible #vivi-lyrics-canvas {
+  opacity: 1;
+}
+
+/* ─── Automix overview (automix-overview.js) ─── */
+#vivi-automix-toast.vivi-automix-visible { pointer-events: auto; cursor: pointer; }
+/* its button in the player bar: grey with no mix to show, blue once one is planned, pulsing while it plays */
+.vivi-amx-ov-open {
+  flex: none; width: 40px; height: 40px; padding: 8px; margin: 0 2px;
+  border: 0; border-radius: 50%; background: transparent;
+  color: rgba(255, 255, 255, 0.5); cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+  transition: color 0.2s, background-color 0.2s;
+}
+.vivi-amx-ov-open[hidden] { display: none; }
+.vivi-amx-ov-open svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
+.vivi-amx-ov-open:hover { background: rgba(255, 255, 255, 0.1); color: #fff; }
+.vivi-amx-ov-open:focus-visible { outline: 2px solid #3A9BDC; outline-offset: 1px; }
+.vivi-amx-ov-open[data-state="planned"] { color: #3A9BDC; }
+.vivi-amx-ov-open[data-state="mixing"] { color: #3A9BDC; animation: vivi-amx-ov-pulse 1.2s ease-in-out infinite; }
+@keyframes vivi-amx-ov-pulse { 50% { color: #F2C230; } }
+@media (prefers-reduced-motion: reduce) { .vivi-amx-ov-open[data-state="mixing"] { animation: none; color: #F2C230; } }
+.vivi-amx-ov {
+  position: fixed;
+  inset: 0;
+  z-index: 100001;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  box-sizing: border-box;
+  background: rgba(0, 0, 0, 0.6);
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  color: #fff;
+}
+.vivi-amx-ov.vivi-open { opacity: 1; }
+.vivi-amx-ov-card {
+  width: min(760px, 100%);
+  max-height: calc(100vh - 32px);
+  overflow: auto;
+  box-sizing: border-box;
+  padding: 18px 20px 16px;
+  border-radius: 18px;
+  background: #15131d !important;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.7);
+  transform: translateY(12px) scale(0.98);
+  transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.vivi-amx-ov.vivi-open .vivi-amx-ov-card { transform: none; }
+.vivi-amx-ov-head { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 14px; }
+.vivi-amx-ov-titles { flex: 1; min-width: 0; }
+.vivi-amx-ov-title { font-size: 18px; font-weight: 700; }
+.vivi-amx-ov-sub { font-size: 13px; color: rgba(255, 255, 255, 0.7); margin-top: 2px; }
+.vivi-amx-ov-close {
+  width: 32px; height: 32px; border-radius: 50%;
+  border: 0; background: rgba(255, 255, 255, 0.08); color: #fff;
+  font-size: 20px; line-height: 1; cursor: pointer;
+}
+.vivi-amx-ov-close:hover { background: rgba(255, 255, 255, 0.16); }
+.vivi-amx-ov-songs { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+.vivi-amx-ov-song { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; }
+.vivi-amx-ov-cover {
+  width: 52px; height: 52px; flex: none; border-radius: 8px;
+  object-fit: cover; background: rgba(255, 255, 255, 0.06);
+}
+.vivi-amx-ov-text { min-width: 0; }
+.vivi-amx-ov-name, .vivi-amx-ov-artist { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.vivi-amx-ov-name { font-size: 14px; font-weight: 600; }
+.vivi-amx-ov-artist { font-size: 12px; color: rgba(255, 255, 255, 0.65); }
+.vivi-amx-ov-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.vivi-amx-ov-tag {
+  font-size: 11px; padding: 1px 7px; border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08); color: rgba(255, 255, 255, 0.85);
+}
+.vivi-amx-ov-arrow { flex: none; color: rgba(255, 255, 255, 0.5); font-size: 18px; }
+.vivi-amx-ov-well { position: relative; border-radius: 10px; overflow: hidden; background: #15141c; }
+.vivi-amx-ov-canvas { display: block; width: 100%; height: 220px; }
+.vivi-amx-ov-msg { padding: 48px 16px; text-align: center; color: rgba(255, 255, 255, 0.7); font-size: 13px; }
+.vivi-amx-ov-legend {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 12px;
+  margin: 8px 2px 14px; font-size: 11px; color: rgba(255, 255, 255, 0.65);
+}
+.vivi-amx-ov-key { display: inline-flex; align-items: center; gap: 5px; }
+.vivi-amx-ov-key i { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+.vivi-amx-ov-clock { margin-left: auto; color: rgba(255, 255, 255, 0.85); font-variant-numeric: tabular-nums; }
+.vivi-amx-ov-controls { display: flex; flex-direction: column; gap: 10px; }
+.vivi-amx-ov-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.vivi-amx-ov-label { width: 56px; font-size: 12px; color: rgba(255, 255, 255, 0.6); }
+.vivi-amx-ov-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.vivi-amx-ov-chip, .vivi-amx-ov-btn {
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: transparent; color: #fff;
+  font: inherit; font-size: 12px; font-weight: 600;
+  padding: 5px 12px; border-radius: 999px; cursor: pointer;
+}
+.vivi-amx-ov-chip:hover:not(:disabled), .vivi-amx-ov-btn:hover:not(:disabled) { background: rgba(255, 255, 255, 0.08); }
+.vivi-amx-ov-chip.vivi-on { background: #ff4b8b; border-color: #ff4b8b; }
+.vivi-amx-ov-chip:disabled, .vivi-amx-ov-btn:disabled { opacity: 0.35; cursor: default; }
+.vivi-amx-ov-chip:focus-visible, .vivi-amx-ov-btn:focus-visible, .vivi-amx-ov-close:focus-visible { outline: 2px solid #3A9BDC; outline-offset: 2px; }
+.vivi-amx-ov-actions { display: flex; align-items: center; gap: 12px; margin-top: 2px; }
+.vivi-amx-ov-note { font-size: 12px; color: rgba(255, 255, 255, 0.6); }
+@media (max-width: 560px) {
+  .vivi-amx-ov-songs { flex-direction: column; align-items: stretch; }
+  .vivi-amx-ov-arrow { display: none; }
+  .vivi-amx-ov-canvas { height: 180px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .vivi-amx-ov, .vivi-amx-ov-card { transition: none; }
+}

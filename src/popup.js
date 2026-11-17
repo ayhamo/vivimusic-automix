@@ -127,17 +127,15 @@
   }
 
   const DEFAULT_PROVIDERS = {
-    lyricsplus: true,
     lrcred: true,
     betterlyrics: true,
     lrclib: true,
     musixmatch: true,
     unison: true,
     binilyrics: true,
-    paxsenix: true,
-    genius: true,
     spotify: true,
   };
+  Object.assign(DEFAULT_PROVIDERS, window.viviPlusPopup?.providers); // Vivimusic Web+
   const PROVIDER_KEYS = Object.keys(DEFAULT_PROVIDERS);
   // Old builds had four separate Better Lyrics toggles; fold them into one.
   const LEGACY_BL_KEYS = ['betterlyricsTTML', 'betterlyricsKugou', 'betterlyricsLegacy', 'betterlyricsPortato'];
@@ -160,10 +158,9 @@
     betterlyrics: 'Better Lyrics (Syllable / Word)',
     unison: 'Better Lyrics Unison (Syllable / Word)',
     binilyrics: 'BiniLyrics (Syllable)',
-    paxsenix: 'Paxsenix (Apple Music)',
-    lyricsplus: 'LyricsPlus (Syllable / Word)',
     musixmatch: 'Musixmatch (Word)',
   };
+  Object.assign(PRIORITY_PROVIDER_LABELS, window.viviPlusPopup?.priorityLabels); // Vivimusic Web+
   const PRIORITY_KEYS = Object.keys(PRIORITY_PROVIDER_LABELS);
 
   
@@ -180,7 +177,7 @@
   };
 
   chrome.storage.local.get(
-    { enabled: true, themeEnabled: true, imageOnlyMode: false, kawarpEnabled: false, eqEnabled: false, crossfadeEnabled: false, crossfadeSeconds: 6, lyricsEnabled: true, autoSwitchLyrics: true, sponsorBlockEnabled: true, lyricsShowForVideos: false, dancerOnNotFound: true, lyricsAlign: 'center', lyricsAnimationStyle: 'apple', lyricsFont: 'default', lyricsRoman: 'off', lyricsRomanJa: true, lyricsRomanLangs: false, lyricsProviders: DEFAULT_PROVIDERS, ...KAWARP_DEFAULTS },
+    { enabled: true, themeEnabled: true, imageOnlyMode: false, kawarpEnabled: false, eqEnabled: false, crossfadeEnabled: false, crossfadeSeconds: 6, lyricsEnabled: true, autoSwitchLyrics: true, sponsorBlockEnabled: true, lyricsShowForVideos: false, dancerOnNotFound: true, lyricsAlign: 'center', lyricsAnimationStyle: 'apple', lyricsFont: 'default', lyricsRoman: 'off', lyricsRomanJa: true, lyricsRomanLangs: null, lyricsProviders: DEFAULT_PROVIDERS, ...KAWARP_DEFAULTS },
     ({ enabled, themeEnabled, imageOnlyMode, kawarpEnabled, eqEnabled, crossfadeEnabled, crossfadeSeconds, lyricsEnabled, autoSwitchLyrics, sponsorBlockEnabled, lyricsShowForVideos, dancerOnNotFound, lyricsAlign, lyricsAnimationStyle, lyricsFont, lyricsRoman, lyricsRomanJa, lyricsRomanLangs, lyricsProviders,
        kawarpPauseWhenInactive, kawarpOpacity, kawarpWarpIntensity, kawarpBlurPasses, kawarpSaturation, kawarpBrightness, kawarpDithering, kawarpAnimationSpeed, kawarpTransitionDuration }) => {
       enableToggle.checked = enabled;
@@ -416,144 +413,6 @@
     crossfadeSliderRow.style.opacity = on ? '1' : '0.45';
     crossfadeSeconds.disabled = !on;
   }
-  const crossfadeManualSkipToggle = document.getElementById('crossfadeManualSkipToggle');
-  const crossfadeAutoAdvanceToggle = document.getElementById('crossfadeAutoAdvanceToggle');
-
-  chrome.storage.local.get({ crossfadeManualSkip: true, crossfadeAutoAdvance: true }, (r) => {
-    if (crossfadeManualSkipToggle) crossfadeManualSkipToggle.checked = r.crossfadeManualSkip !== false;
-    if (crossfadeAutoAdvanceToggle) crossfadeAutoAdvanceToggle.checked = r.crossfadeAutoAdvance !== false;
-  });
-
-  crossfadeManualSkipToggle?.addEventListener('change', () => {
-    chrome.storage.local.set({ crossfadeManualSkip: crossfadeManualSkipToggle.checked });
-  });
-  crossfadeAutoAdvanceToggle?.addEventListener('change', () => {
-    chrome.storage.local.set({ crossfadeAutoAdvance: crossfadeAutoAdvanceToggle.checked });
-  });
-
-  const automixToggle = document.getElementById('automixToggle');
-  const automixBarsSelect = document.getElementById('automixBarsSelect');
-  const automixBarsVal = document.getElementById('automixBarsVal');
-
-  chrome.storage.local.get({ automixEnabled: true, automixBars: 'auto' }, (r) => {
-    if (automixToggle) automixToggle.checked = r.automixEnabled !== false;
-    if (automixBarsSelect) {
-      automixBarsSelect.value = String(r.automixBars || 'auto');
-      if (automixBarsVal) automixBarsVal.textContent = automixBarsSelect.value === 'auto' ? 'Auto' : 'Up to ' + automixBarsSelect.value + ' bars';
-    }
-  });
-
-  automixToggle?.addEventListener('change', () => {
-    chrome.storage.local.set({ automixEnabled: automixToggle.checked });
-  });
-
-  // Automix version: 1 = Original AutoDJ (BitChord web), 2 = Advanced AutoDJ (BitChord phone ideas on top)
-  const automixVersionSelect = document.getElementById('automixVersionSelect');
-  const automixVersionVal = document.getElementById('automixVersionVal');
-  const automixKeyAwareToggle = document.getElementById('automixKeyAwareToggle');
-  const automixKeyAwareRow = document.getElementById('automixKeyAwareRow');
-  // The key toggle only works in Advanced AutoDJ: greyed out (its setting kept) under Original.
-  const showVersion = (v) => {
-    if (automixVersionVal) automixVersionVal.textContent = v === 2 ? 'Advanced' : 'Original';
-    if (automixKeyAwareToggle) automixKeyAwareToggle.disabled = v !== 2;
-    if (automixKeyAwareRow) automixKeyAwareRow.style.opacity = v === 2 ? '' : '0.45';
-  };
-  chrome.storage.local.get({ automixVersion: 1 }, (r) => {
-    const v = r.automixVersion === 2 ? 2 : 1;
-    if (automixVersionSelect) automixVersionSelect.value = String(v);
-    showVersion(v);
-  });
-  chrome.storage.local.get({ automixKeyAware: false }, (r) => {
-    if (automixKeyAwareToggle) automixKeyAwareToggle.checked = r.automixKeyAware === true;
-  });
-  automixKeyAwareToggle?.addEventListener('change', () => {
-    chrome.storage.local.set({ automixKeyAware: automixKeyAwareToggle.checked });
-  });
-  automixVersionSelect?.addEventListener('change', () => {
-    const v = automixVersionSelect.value === '2' ? 2 : 1;
-    chrome.storage.local.set({ automixVersion: v });
-    showVersion(v);
-  });
-
-  const preferMusicOnlyToggle = document.getElementById('preferMusicOnlyToggle');
-  chrome.storage.local.get({ preferMusicOnly: false }, (r) => {
-    if (preferMusicOnlyToggle) preferMusicOnlyToggle.checked = r.preferMusicOnly === true;
-  });
-  preferMusicOnlyToggle?.addEventListener('change', () => {
-    chrome.storage.local.set({ preferMusicOnly: preferMusicOnlyToggle.checked });
-  });
-
-  // Automix's analysis cache (IndexedDB 'vivi-automix', kept by automix/host.js
-  // in the extension's own origin, which this popup shares).
-  const automixCacheCount = document.getElementById('automixCacheCount');
-  const automixCacheClearBtn = document.getElementById('automixCacheClearBtn');
-  const withAnalysisStore = (mode, fn) => new Promise((resolve) => {
-    try {
-      const open = indexedDB.open('vivi-automix', 1);
-      open.onupgradeneeded = () => open.result.createObjectStore('analysis', { keyPath: 'fileKey' });
-      open.onerror = () => resolve(null);
-      open.onsuccess = () => {
-        const db = open.result;
-        try {
-          const tx = db.transaction('analysis', mode);
-          const req = fn(tx.objectStore('analysis'));
-          tx.oncomplete = () => { db.close(); resolve(req ? req.result : true); };
-          tx.onerror = tx.onabort = () => { db.close(); resolve(null); };
-        } catch { db.close(); resolve(null); }
-      };
-    } catch { resolve(null); }
-  });
-  const showAutomixCache = async () => {
-    if (!automixCacheCount) return;
-    const n = await withAnalysisStore('readonly', (s) => s.count());
-    automixCacheCount.textContent = n == null ? '' : `${n} song${n === 1 ? '' : 's'}`;
-    if (automixCacheClearBtn) automixCacheClearBtn.disabled = !n;
-  };
-  showAutomixCache();
-  automixCacheClearBtn?.addEventListener('click', async () => {
-    automixCacheClearBtn.disabled = true;
-    const ok = await withAnalysisStore('readwrite', (s) => { s.clear(); return null; });
-    // The analysis frames in open YouTube Music tabs clear theirs too, in case
-    // the browser keeps a separate copy for a frame inside a site. (A tab keeps
-    // the few songs it holds in memory until it is reloaded.)
-    chrome.storage.local.set({ automixCacheClearedAt: Date.now() });
-    if (automixCacheCount) automixCacheCount.textContent = ok ? 'cleared' : 'could not clear';
-    setTimeout(showAutomixCache, 1500);
-  });
-
-  automixBarsSelect?.addEventListener('change', () => {
-    const v = automixBarsSelect.value;
-    chrome.storage.local.set({ automixBars: v === 'auto' ? 'auto' : (Number(v) || 8) });
-    if (automixBarsVal) automixBarsVal.textContent = v === 'auto' ? 'Auto' : 'Up to ' + v + ' bars';
-  });
-
-  const nerdStatsToggle = document.getElementById('nerdStatsToggle');
-  const wheelVolumeToggle = document.getElementById('wheelVolumeToggle');
-  const appleArtistArtToggle = document.getElementById('appleArtistArtToggle');
-
-  chrome.storage.local.get({
-    nerdStatsEnabled: false,
-    wheelVolumeEnabled: true,
-    appleArtistArtEnabled: true,
-  }, (r) => {
-    if (nerdStatsToggle) nerdStatsToggle.checked = r.nerdStatsEnabled === true;
-    if (wheelVolumeToggle) wheelVolumeToggle.checked = r.wheelVolumeEnabled !== false;
-    if (appleArtistArtToggle) appleArtistArtToggle.checked = r.appleArtistArtEnabled !== false;
-  });
-
-  nerdStatsToggle?.addEventListener('change', () => {
-    chrome.storage.local.set({ nerdStatsEnabled: nerdStatsToggle.checked });
-  });
-
-  wheelVolumeToggle?.addEventListener('change', () => {
-    chrome.storage.local.set({ wheelVolumeEnabled: wheelVolumeToggle.checked });
-  });
-
-  appleArtistArtToggle?.addEventListener('change', () => {
-    chrome.storage.local.set({ appleArtistArtEnabled: appleArtistArtToggle.checked });
-  });
-
-
   crossfadeToggle.addEventListener('change', () => {
     paintCrossfade(crossfadeToggle.checked, crossfadeSeconds.value);
     chrome.storage.local.set({ crossfadeEnabled: crossfadeToggle.checked });
@@ -658,6 +517,7 @@
   localizationToggle.addEventListener('change', () => {
     chrome.storage.local.set({ localizationEnabled: localizationToggle.checked });
   });
+
 
   // Layout compatibility toggle
   {
@@ -1199,15 +1059,12 @@
 
   currentVersionEl.textContent = chrome.runtime.getManifest().version;
 
-  const FIREFOX_ADDON_URL = 'https://addons.mozilla.org/en-US/firefox/addon/vivimusicweb/';
-
   function renderUpdateResult(result) {
     if (!result) return;
     updateStatus.className = 'update-status show';
     if (!result.ok) {
       updateStatus.classList.add('error');
-      updateStatus.innerHTML = `Couldn't check for updates (${esc(result.error || 'network error')}).` +
-        (result.releaseUrl ? ` <a href="${esc(result.releaseUrl)}" target="_blank" rel="noopener">Releases</a>` : '');
+      updateStatus.innerHTML = `Couldn't check for updates (${esc(result.error || 'network error')}).`;
       return;
     }
     if (result.updateAvailable) {
@@ -1222,12 +1079,12 @@
         `<div class="update-hero uh-t${theme}" style="--uh-hue:${hue}deg;--uh-speed:${speed}">` +
         `<span class="uh-bg"><i></i><i></i><i></i></span><span class="uh-glass"></span>` +
         `<img class="uh-logo" src="../icons/icon128.png" alt="">` +
-        `<span class="uh-eyebrow">VIVIMUSIC WEB+</span>` +
+        `<span class="uh-eyebrow">VIVIMUSIC XTEN</span>` +
         `<span class="uh-badge">New update available</span>` +
         `<span class="uh-version">v${esc(ver)}</span>` +
-        `<span class="uh-sub">You're on v${esc(chrome.runtime.getManifest().version)}</span>` +
+        `<span class="uh-sub">You're on v${esc(chrome.runtime.getManifest().version)} · Download and Load Unpack again for best experience</span>` +
         `<a class="uh-btn" href="${esc(result.releaseUrl)}" target="_blank" rel="noopener">Download update <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v12M6.5 11.5 12 17l5.5-5.5M5 20h14"/></svg></a>` +
-        `<span class="uh-note">Firefox: open the .xpi to update. Edge/Chrome: unzip over the old folder, then Reload it in the extensions page.</span></div>`;
+        `<span class="uh-note">No need to remove the already installed one — just Load unpacked again and it will update on top of the existing install.</span></div>`;
     } else {
       updateStatus.classList.add('uptodate');
       updateStatus.textContent = "You're on the latest version.";
@@ -1250,7 +1107,6 @@
   const spotifyStatus = document.getElementById('spotifyStatus');
   const canvasPrioritySelect = document.getElementById('canvasPrioritySelect');
   const SPOTIFY_DEFAULTS = { spotifyCanvasEnabled: true, canvasPriority: 'apple' };
-  const SPOTIFY_ORIGINS = ['https://open.spotify.com/*', 'https://*.spotify.com/*', 'https://spotify.com/*'];
 
   function refreshSpotifyStatus() {
     chrome.runtime.sendMessage({ type: 'VIVI_SPOTIFY_STATUS' }, (resp) => {
@@ -1277,47 +1133,6 @@
     relay({ spotifyCanvasEnabled: enabled });
   });
 
-  // Placement of the Spotify Canvas; "Off" is the same as the switch above.
-  const placementSelect = document.getElementById('spotifyCanvasPlacement');
-  const canvasBlurPx = document.getElementById('canvasBlurPx');
-  const canvasBlurPxVal = document.getElementById('canvasBlurPxVal');
-  chrome.storage.local.get({ spotifyCanvasPlacement: 'cover', spotifyCanvasEnabled: true, canvasBlurPx: 3 }, (s) => {
-    placementSelect.value = s.spotifyCanvasEnabled === false ? 'off' : (['lyrics', 'side'].includes(s.spotifyCanvasPlacement) ? s.spotifyCanvasPlacement : 'cover');
-    canvasBlurPx.value = s.canvasBlurPx;
-    canvasBlurPxVal.textContent = s.canvasBlurPx + ' px';
-  });
-  placementSelect.addEventListener('change', () => {
-    const v = placementSelect.value;
-    if (v === 'off') {
-      spotifyCanvasEnabled.checked = false;
-      chrome.storage.local.set({ spotifyCanvasEnabled: false });
-      relay({ spotifyCanvasEnabled: false });
-      return;
-    }
-    spotifyCanvasEnabled.checked = true;
-    chrome.storage.local.set({ spotifyCanvasEnabled: true, spotifyCanvasPlacement: v });
-    relay({ spotifyCanvasEnabled: true, spotifyCanvasPlacement: v });
-  });
-  spotifyCanvasEnabled.addEventListener('change', () => {
-    if (!spotifyCanvasEnabled.checked) placementSelect.value = 'off';
-    else if (placementSelect.value === 'off') {
-      chrome.storage.local.get({ spotifyCanvasPlacement: 'cover' }, (s) => { placementSelect.value = s.spotifyCanvasPlacement; });
-    }
-  });
-  canvasBlurPx.addEventListener('input', () => {
-    const px = Number(canvasBlurPx.value);
-    canvasBlurPxVal.textContent = px + ' px';
-    chrome.storage.local.set({ canvasBlurPx: px });
-    relay({ canvasBlurPx: px });
-  });
-
-  const lyricsLineBlurSelect = document.getElementById('lyricsLineBlurSelect');
-  chrome.storage.local.get({ lyricsLineBlur: 'low' }, (s) => { lyricsLineBlurSelect.value = s.lyricsLineBlur; });
-  lyricsLineBlurSelect.addEventListener('change', () => {
-    chrome.storage.local.set({ lyricsLineBlur: lyricsLineBlurSelect.value });
-    relay({ lyricsLineBlur: lyricsLineBlurSelect.value });
-  });
-
   canvasPrioritySelect.addEventListener('change', () => {
     const canvasPriority = canvasPrioritySelect.value === 'apple' ? 'apple' : 'spotify';
     chrome.storage.local.set({ canvasPriority });
@@ -1328,25 +1143,6 @@
     spotifyConnectBtn.disabled = true;
     spotifyConnectBtn.textContent = 'Opening Spotify…';
     spotifyStatus.textContent = 'Log in to Spotify in the opened tab, then return here.';
-    // Firefox lets the user withhold host permissions of MV3 add-ons; without
-    // the Spotify ones the cookie API sees no sp_dc and Connect waits forever.
-    // permissions.request must run straight from the click, before any await.
-    const api = globalThis.browser?.permissions || chrome.permissions;
-    const ask = api?.request
-      ? Promise.resolve(api.request({ origins: SPOTIFY_ORIGINS })).catch(() => false)
-      : Promise.resolve(true);
-    ask.then((granted) => {
-      if (!granted) {
-        spotifyConnectBtn.disabled = false;
-        spotifyConnectBtn.textContent = 'Connect Spotify';
-        spotifyStatus.textContent = 'Spotify access was not allowed. Allow it to connect (about:addons → Vivimusic Web+ → Permissions).';
-        return;
-      }
-      connectSpotify();
-    });
-  });
-
-  function connectSpotify() {
     chrome.runtime.sendMessage({ type: 'VIVI_SPOTIFY_CONNECT' }, (resp) => {
       spotifyConnectBtn.disabled = false;
       spotifyConnectBtn.textContent = 'Connect Spotify';
@@ -1355,7 +1151,7 @@
       }
       refreshSpotifyStatus();
     });
-  }
+  });
 
   spotifySaveCookieBtn.addEventListener('click', () => {
     const value = spotifySpDc.value.trim();
@@ -1543,81 +1339,6 @@
         return;
       }
       renderUpdateResult(result);
-    });
-  });
-
-  /* -------------------------------------------------------------------------
-   * ListenBrainz Scrobbling
-   * ------------------------------------------------------------------------- */
-  const lbEnabledToggle    = document.getElementById('listenbrainzEnabledToggle');
-  const lbLoginBlock       = document.getElementById('listenbrainzLoginBlock');
-  const lbConnectedBlock   = document.getElementById('listenbrainzConnectedBlock');
-  const lbConnectedAs      = document.getElementById('listenbrainzConnectedAs');
-  const lbToken            = document.getElementById('listenbrainzToken');
-  const lbLoginBtn         = document.getElementById('listenbrainzLoginBtn');
-  const lbLoginForm        = document.getElementById('listenbrainzLoginForm');
-  const lbLoginError       = document.getElementById('listenbrainzLoginError');
-  const lbLogoutBtn        = document.getElementById('listenbrainzLogoutBtn');
-  const lbNowPlayingToggle = document.getElementById('listenbrainzNowPlayingToggle');
-
-  function refreshListenbrainzStatus() {
-    chrome.runtime.sendMessage({ type: 'VIVI_LISTENBRAINZ_STATUS' }, (resp) => {
-      if (chrome.runtime.lastError || !resp) return;
-      if (resp.loggedIn) {
-        if (lbLoginBlock) lbLoginBlock.style.display = 'none';
-        if (lbConnectedBlock) lbConnectedBlock.style.display = 'block';
-        if (lbConnectedAs) lbConnectedAs.textContent = `Connected as ${resp.username || 'user'}`;
-      } else {
-        if (lbLoginBlock) lbLoginBlock.style.display = 'flex';
-        if (lbConnectedBlock) lbConnectedBlock.style.display = 'none';
-      }
-    });
-  }
-
-  chrome.storage.local.get({
-    listenbrainzEnabled: false,
-    listenbrainzSendNowPlaying: true,
-  }, (s) => {
-    if (lbEnabledToggle) lbEnabledToggle.checked = s.listenbrainzEnabled === true;
-    if (lbNowPlayingToggle) lbNowPlayingToggle.checked = s.listenbrainzSendNowPlaying !== false;
-    refreshListenbrainzStatus();
-  });
-
-  lbEnabledToggle?.addEventListener('change', () => {
-    const listenbrainzEnabled = lbEnabledToggle.checked;
-    chrome.storage.local.set({ listenbrainzEnabled });
-    relay({ listenbrainzEnabled });
-  });
-
-  lbNowPlayingToggle?.addEventListener('change', () => {
-    const listenbrainzSendNowPlaying = lbNowPlayingToggle.checked;
-    chrome.storage.local.set({ listenbrainzSendNowPlaying });
-    relay({ listenbrainzSendNowPlaying });
-  });
-
-  lbLoginForm?.addEventListener('submit', (e) => {
-    e.preventDefault();
-    const token = lbToken.value.trim();
-    if (!token) return;
-    if (lbLoginBtn) lbLoginBtn.disabled = true;
-    if (lbLoginError) lbLoginError.style.display = 'none';
-    chrome.runtime.sendMessage({ type: 'VIVI_LISTENBRAINZ_LOGIN', token }, (resp) => {
-      if (lbLoginBtn) lbLoginBtn.disabled = false;
-      if (chrome.runtime.lastError || !resp?.ok) {
-        if (lbLoginError) {
-          lbLoginError.textContent = resp?.error || chrome.runtime.lastError?.message || 'Login failed';
-          lbLoginError.style.display = 'block';
-        }
-      } else {
-        if (lbToken) lbToken.value = '';
-        refreshListenbrainzStatus();
-      }
-    });
-  });
-
-  lbLogoutBtn?.addEventListener('click', () => {
-    chrome.runtime.sendMessage({ type: 'VIVI_LISTENBRAINZ_LOGOUT' }, () => {
-      refreshListenbrainzStatus();
     });
   });
 })();

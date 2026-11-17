@@ -4,7 +4,7 @@
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <link rel="stylesheet" href="lyrics-fonts.css">
-  <title>Vivimusic Web+</title>
+  <title>ViviMusic Xten</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -908,7 +908,6 @@
     .home-card[data-feature="appearance"] { --card-accent: #bd82ff; }
     .home-card[data-feature="artwork-cache"] { --card-accent: #51b5ff; }
     .home-card[data-feature="lastfm"] { --card-accent: #ff405b; }
-      .home-card[data-feature="listenbrainz"] { --card-accent: #eb743b; }
     .home-card[data-feature="updates"] { --card-accent: #5ed6bd; }
     .home-card[data-feature="updates"] .home-card-icon img { filter: brightness(0) invert(1); }
     .home-card[data-feature="spotify-canvas"] .home-card-icon img { inset: auto; left: 50%; top: 50%; width: 54px; height: 54px; max-width: none; transform: translate(-50%, -50%); }
@@ -958,7 +957,6 @@
     .view-settings[data-feature="appearance"] { --panel-accent: #bd82ff; }
     .view-settings[data-feature="artwork-cache"] { --panel-accent: #51b5ff; }
     .view-settings[data-feature="lastfm"] { --panel-accent: #ff405b; }
-      .view-settings[data-feature="listenbrainz"] { --panel-accent: #eb743b; }
     .view-settings[data-feature="updates"] { --panel-accent: #5ed6bd; }
     .settings-content > .section { position: relative; margin: 0; padding: 17px; background: radial-gradient(ellipse at 100% 0%, color-mix(in srgb, var(--panel-accent, #9585ff), transparent 93%), transparent 58%), linear-gradient(155deg, rgba(24,24,33,.98), rgba(17,17,23,.98)); border-color: color-mix(in srgb, var(--panel-accent, #9585ff), transparent 80%); box-shadow: inset 0 1px rgba(255,255,255,.065), 0 18px 40px -30px color-mix(in srgb, var(--panel-accent, #9585ff), transparent 48%); }
     .settings-content > .section > .section-title { display: none; }
@@ -1478,6 +1476,7 @@
     .settings-content select:focus, .settings-content input:focus { box-shadow: inset 0 1px 0 rgba(255,255,255,.4), inset 0 0 0 1px rgba(255,255,255,.35), 0 0 0 4px rgba(255,255,255,.08) !important; }
     .gs-btn:focus-visible, .gs.open .gs-btn { box-shadow: inset 0 1px 0 rgba(255,255,255,.45), inset 0 0 0 1px rgba(255,255,255,.35), 0 0 0 4px rgba(255,255,255,.08); }
     .gs-item.selected { background: linear-gradient(160deg, rgba(255,255,255,.2), rgba(255,255,255,.08)); box-shadow: inset 0 1px 0 rgba(255,255,255,.3), inset 0 0 0 1px rgba(255,255,255,.14); }
+
     /* Layout compatibility card */
     .compat-card { margin-top: 14px; padding: 13px 13px 12px; border-radius: 13px; border: 1px solid rgba(196,138,84,.42); background: radial-gradient(ellipse at 0% 0%, rgba(176,112,60,.30), transparent 68%), linear-gradient(145deg, rgba(74,46,26,.88), rgba(44,28,18,.94)); box-shadow: inset 0 1px rgba(255,214,170,.10), 0 8px 22px -16px rgba(176,112,60,.8); }
     .compat-head { display: flex; align-items: center; gap: 10px; }
@@ -1498,12 +1497,15 @@
   <!-- Header -->
   <div class="header">
     <div class="logo-wrap">
-      <img src="../icons/icon128.png" alt="Vivimusic Web+" />
+      <img src="../icons/icon128.png" alt="ViviMusic Xten" />
     </div>
     <div class="brand">
-      <h1>Vivimusic Web+</h1>
+      <h1>ViviMusic Xten</h1>
       <p>The most powerful &amp; feature rich extension ever created for YouTube Music.</p>
     </div>
+    <a class="issue-button" href="https://github.com/Archimetrix/VIVIMUSIC_XTEN/issues/new" target="_blank" rel="noopener noreferrer" aria-label="Report an issue on GitHub" title="Report an issue on GitHub">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
+    </a>
     <button class="announcement-button" type="button" aria-label="Announcements" title="Announcements">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10 21h4"/></svg>
       <span class="announcement-badge" hidden>0</span>
@@ -1639,95 +1641,6 @@
       <div class="kw-label-row"><span>Crossfade length</span><span class="kw-val" id="crossfadeSecondsVal">6 s</span></div>
       <input type="range" id="crossfadeSeconds" min="1" max="12" step="1" value="6"/>
     </div>
-    <div style="margin-top:10px; display:flex; flex-direction:column; gap:8px;">
-      <div class="row">
-        <span class="row-label">Crossfade on manual skip</span>
-        <label class="switch">
-          <input type="checkbox" id="crossfadeManualSkipToggle" checked/>
-          <span class="slider"></span>
-        </label>
-      </div>
-      <div class="row">
-        <span class="row-label">Crossfade on auto-advance</span>
-        <label class="switch">
-          <input type="checkbox" id="crossfadeAutoAdvanceToggle" checked/>
-          <span class="slider"></span>
-        </label>
-      </div>
-      <div class="row" style="margin-top:6px; padding-top:6px; border-top:1px solid rgba(255,255,255,0.08);">
-        <span class="row-label">Automix / Auto-DJ <span class="beta-tag" style="background:#ff4b8b;color:#fff;">AI DJ</span></span>
-        <label class="switch">
-          <input type="checkbox" id="automixToggle" checked/>
-          <span class="slider"></span>
-        </label>
-      </div>
-      <p class="theme-sub" style="margin-top:2px;">Needs Crossfade on. BitChord's automix: the playing and the next song are downloaded and analysed on your device (tempo, downbeats, intro, outro, where it is sung). When a song ends on its own it loops an instrumental bar into the next song, or blends on a phrase with the next song matched to its tempo, or uses a filter mix or a 12 s crossfade when the pair can't be beatmatched.</p>
-      <div class="kawarp-slider-row" id="automixVersionRow" style="margin-top:4px;">
-        <div class="kw-label-row"><span>Automix version</span><span class="kw-val" id="automixVersionVal">Original</span></div>
-        <select id="automixVersionSelect" style="width:100%;background:rgba(255,255,255,0.06);color:var(--text-1);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:5px 8px;font-size:12.5px;margin-top:4px;">
-          <option value="1" selected>Original AutoDJ</option>
-          <option value="2">Advanced AutoDJ</option>
-        </select>
-        <p class="theme-sub" style="margin-top:4px;"><b>Original AutoDJ</b>: BitChord web's automix. Beat-matched blends on a phrase, loop mixes, a filter mix or a plain crossfade when a pair can't be matched; a gentle bass and treble cross, equal-power fade.</p>
-        <p class="theme-sub" style="margin-top:4px;"><b>Advanced AutoDJ</b>: the same, plus ideas from the BitChord phone app. It looks (with synced lyrics, or the vocal model) for a blend point where the two songs don't sing over each other, and moves the blend there when it finds a clearly better one. The bass swaps in one quick step at the middle, the old song's highs fade away while the new one opens up, and the new song is at full volume by the middle (levels kept in check). A filter mix sweeps the old song down to a muffle. Blends end where a song's music ends, not in its trailing silence or applause, and the next song never starts more than a quarter of the way in. You can switch back any time.</p>
-      </div>
-      <div class="row" id="automixKeyAwareRow" style="margin-top:6px;">
-        <span class="row-label">Shorter blend when keys clash <span class="beta-tag" style="background:rgba(255,255,255,0.15);color:#fff;">Test</span></span>
-        <label class="switch">
-          <input type="checkbox" id="automixKeyAwareToggle"/>
-          <span class="slider"></span>
-        </label>
-      </div>
-      <p class="theme-sub" style="margin-top:2px;">Advanced AutoDJ only, off by default. Every song is in a musical key (C major, A minor…). Two songs in keys that don't go together can sound out of tune while they play on top of each other. With this on, such a pair gets a short blend (2 bars, about 4–6 s) instead of the usual length, so the out-of-tune moment is brief. Keys that go together (the same key, its relative major/minor, or a neighbour on the Camelot wheel) keep the normal blend. Off: every pair gets the normal length, whatever the keys.</p>
-      <div class="kawarp-slider-row" id="automixBarsRow" style="margin-top:4px;">
-        <div class="kw-label-row"><span>Blend length</span><span class="kw-val" id="automixBarsVal">Auto</span></div>
-        <select id="automixBarsSelect" style="width:100%;background:rgba(255,255,255,0.06);color:var(--text-1);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:5px 8px;font-size:12.5px;margin-top:4px;">
-          <option value="auto" selected>Auto (picks per song, like BitChord phone)</option>
-          <option value="4">Up to 4 bars</option>
-          <option value="8">Up to 8 bars</option>
-          <option value="16">Up to 16 bars (BitChord web default)</option>
-          <option value="32">Up to 32 bars</option>
-        </select>
-        <p class="theme-sub" style="margin-top:4px;">Auto follows the BitChord phone: usually 4 bars, 8 when both songs are calm there, never over 12–16 s. Each blend ends a bar before the song does. Up to N bars is BitChord web's setting; a weak beat grid or a filter mix shortens it.</p>
-      </div>
-      <div class="row" style="margin-top:6px;">
-        <span class="row-label">Prefer music-only version</span>
-        <label class="switch">
-          <input type="checkbox" id="preferMusicOnlyToggle"/>
-          <span class="slider"></span>
-        </label>
-      </div>
-      <p class="theme-sub" style="margin-top:2px;">Music videos play as their song: YouTube Music's Song / Video switch is set to Song whenever it shows Video. Switch a video back by hand and it stays a video.</p>
-      <div class="row" style="margin-top:6px;">
-        <span class="row-label">Saved song analyses <span class="kw-val" id="automixCacheCount" style="margin-left:4px;"></span></span>
-        <button type="button" id="automixCacheClearBtn" class="clear-btn">Clear</button>
-      </div>
-      <p class="theme-sub" style="margin-top:2px;">Each analysed song is kept on your device so it is never analysed twice. Clearing frees that space; songs are analysed again as they play.</p>
-      <div class="row" style="margin-top:6px; padding-top:6px; border-top:1px solid rgba(255,255,255,0.08);">
-        <span class="row-label">Stats for Nerds Overlay <span class="beta-tag" style="background:rgba(255,255,255,0.15);color:#fff;">HUD</span></span>
-        <label class="switch">
-          <input type="checkbox" id="nerdStatsToggle"/>
-          <span class="slider"></span>
-        </label>
-      </div>
-      <p class="theme-sub" style="margin-top:2px;">Floating HUD with the current song, Web Audio state and live crossfade / Automix status. Shortcut: <code>Shift + D</code>.</p>
-      <div class="row" style="margin-top:6px; padding-top:6px; border-top:1px solid rgba(255,255,255,0.08);">
-        <span class="row-label">Mouse Wheel Volume</span>
-        <label class="switch">
-          <input type="checkbox" id="wheelVolumeToggle" checked/>
-          <span class="slider"></span>
-        </label>
-      </div>
-      <p class="theme-sub" style="margin-top:2px;">Scroll mouse wheel over the bottom player bar or album artwork to adjust volume smoothly in ±5% steps.</p>
-      <div class="row" style="margin-top:6px; padding-top:6px; border-top:1px solid rgba(255,255,255,0.08);">
-        <span class="row-label">Apple Artist Art & Palette</span>
-        <label class="switch">
-          <input type="checkbox" id="appleArtistArtToggle" checked/>
-          <span class="slider"></span>
-        </label>
-      </div>
-      <p class="theme-sub" style="margin-top:2px;">Fetches high-res artist photography and dynamic color palettes from Apple Music to tint backgrounds and panels.</p>
-    </div>
   </div>
 
   <!-- Lyrics -->
@@ -1794,16 +1707,6 @@
       </select>
     </div>
     <p class="theme-sub">Fill sweep: karaoke-style left-to-right fill on the current word. Glow up: the current word lights up with a soft glow instead. Word bounce: each word pops with a little spring as it's sung. Smooth zoom: the current line scales up while the others shrink back. Apple Music: big bold lines with the others softly blurred. Smooth zoom and Apple Music are always left-aligned. Fluid flow: modelled on Better Lyrics' engine. Lines glide up together with a soft ease and the scroll starts just before a line is sung; the word being sung lights up letter by letter, each letter floating up as the colour reaches it.</p>
-
-    <div class="row" style="margin-top:8px;">
-      <span class="row-label">Blur around the current line</span>
-      <select id="lyricsLineBlurSelect" style="background:rgba(255,255,255,0.06); color:var(--text-1); border:1px solid rgba(255,255,255,0.12); border-radius:8px; padding:5px 8px; font-size:12.5px;">
-        <option value="off">Off</option>
-        <option value="low" selected>Low</option>
-        <option value="normal">Normal</option>
-      </select>
-    </div>
-    <p class="theme-sub">How much the lines before and after the sung one are blurred (Apple Music style).</p>
 
     <div class="row" style="margin-top:8px;">
       <span class="row-label">Lyrics font</span>
@@ -1889,18 +1792,6 @@
       <div class="provider-row">
         <span>LRCLIB</span><span class="lvls"><i class="lvl lvl-line">LINE</i></span>
         <label class="switch small"><input type="checkbox" id="prov-lrclib" checked/><span class="slider"></span></label>
-      </div>
-      <div class="provider-row">
-        <span>LyricsPlus</span><span class="lvls"><i class="lvl lvl-syllable">SYLLABLE</i><i class="lvl lvl-word">WORD</i><i class="lvl lvl-line">LINE</i></span>
-        <label class="switch small"><input type="checkbox" id="prov-lyricsplus" checked/><span class="slider"></span></label>
-      </div>
-      <div class="provider-row">
-        <span>Paxsenix (Apple Music)</span><span class="lvls"><i class="lvl lvl-syllable">SYLLABLE</i><i class="lvl lvl-word">WORD</i><i class="lvl lvl-line">LINE</i></span>
-        <label class="switch small"><input type="checkbox" id="prov-paxsenix" checked/><span class="slider"></span></label>
-      </div>
-      <div class="provider-row">
-        <span class="pname">Genius<small>Fallback</small></span><span class="lvls"><i class="lvl lvl-line" style="background:rgba(255,255,255,0.15);color:#fff;">PLAIN</i></span>
-        <label class="switch small"><input type="checkbox" id="prov-genius" checked/><span class="slider"></span></label>
       </div>
       <div class="provider-row">
         <span class="pname">Spotify<small>Needs Spotify account connected</small></span><span class="lvls"><i class="lvl lvl-line">LINE</i></span>
@@ -1991,6 +1882,7 @@
     </div>
     <p class="theme-sub">Makes lyrics and the player tabs work when YouTube Music is not in English (Japanese, Korean, Spanish, etc.). Turn off only if it causes problems.</p>
 
+
     <div class="compat-card" id="compatCard">
       <div class="compat-head">
         <div class="compat-sign" aria-hidden="true">
@@ -2067,22 +1959,6 @@
       </select>
     </div>
     <p class="theme-sub">If a track has both a Spotify Canvas and Apple Music-style artwork: picking Spotify always prefers it. Picking Apple Music only shows it instantly if that track's artwork is already cached — otherwise Spotify Canvas plays immediately while Apple Music's artwork downloads quietly in the background, ready for instant playback the next time you play that song.</p>
-
-    <div class="row" style="margin-top:10px;">
-      <span class="row-label">Show the Spotify Canvas</span>
-      <select id="spotifyCanvasPlacement" style="background:rgba(255,255,255,0.06); color:var(--text-1); border:1px solid rgba(255,255,255,0.12); border-radius:8px; padding:5px 8px; font-size:12.5px;">
-        <option value="cover" selected>On the cover</option>
-        <option value="lyrics">Behind the lyrics</option>
-        <option value="side">Behind the side panel</option>
-        <option value="off">Off</option>
-      </select>
-    </div>
-    <p class="theme-sub">On the cover: the original. Behind the lyrics: plays blurred behind the lyrics while the Lyrics tab is open. Behind the side panel: the same, on every tab (Up next, Lyrics, Related). With either of those, the cover shows Apple Music's animated artwork when the song has it, otherwise the normal cover.</p>
-
-    <div class="kawarp-slider-row" style="margin-top:10px;">
-      <div class="kw-label-row"><span>Blur behind the panel</span><span class="kw-val" id="canvasBlurPxVal">3 px</span></div>
-      <input type="range" id="canvasBlurPx" min="0" max="20" step="1" value="3"/>
-    </div>
 
     <div id="spotifyDisconnected" style="margin-top:11px; display:flex; flex-direction:column; gap:7px;">
       <button id="spotifyConnectBtn" class="update-btn primary" style="width:100%;">Connect Spotify</button>
@@ -2179,42 +2055,6 @@
     </div>
   </div>
 
-  <!-- ListenBrainz -->
-  <div class="section">
-    <div class="section-title"><span class="dot-ico"></span>ListenBrainz</div>
-    <div class="row">
-      <span class="row-label">ListenBrainz scrobbling</span>
-      <label class="switch">
-        <input type="checkbox" id="listenbrainzEnabledToggle"/>
-        <span class="slider"></span>
-      </label>
-    </div>
-
-    <div id="listenbrainzLoginBlock" style="margin-top:11px; display:flex; flex-direction:column; gap:7px;">
-      <p class="theme-sub" style="margin:0;">Enter your User Token from <a href="https://listenbrainz.org/profile/" target="_blank" rel="noopener noreferrer" style="color:#bdabff;">listenbrainz.org/profile</a>.</p>
-      <form id="listenbrainzLoginForm" autocomplete="off" style="margin-top:4px; display:flex; flex-direction:column; gap:7px;">
-        <input id="listenbrainzToken" type="password" placeholder="ListenBrainz User Token" style="width:100%;"/>
-        <button id="listenbrainzLoginBtn" type="submit" class="update-btn primary" style="width:100%;">Connect ListenBrainz</button>
-      </form>
-      <div id="listenbrainzLoginError" style="display:none; font-size:11px; color:#f87171;"></div>
-    </div>
-
-    <div id="listenbrainzConnectedBlock" style="display:none; margin-top:11px;">
-      <div class="status-row" style="margin-top:0;">
-        <div class="dot active"></div>
-        <span id="listenbrainzConnectedAs">Connected</span>
-      </div>
-      <button id="listenbrainzLogoutBtn" class="clear-btn" style="margin-top:7px;">Disconnect</button>
-    </div>
-
-    <div style="margin-top:14px; display:flex; flex-direction:column; gap:10px;">
-      <div class="row">
-        <span class="row-label">Send Now Playing</span>
-        <label class="switch"><input type="checkbox" id="listenbrainzNowPlayingToggle" checked/><span class="slider"></span></label>
-      </div>
-    </div>
-  </div>
-
   <!-- Updates -->
   <div class="section">
     <div class="section-title"><span class="dot-ico"></span>Updates</div>
@@ -2225,6 +2065,12 @@
     <div class="update-status" id="updateStatus"></div>
   </div>
 
+  <div class="footer">
+    <div class="home-support"><span class="home-support-copy">Enjoying Xten?</span><span class="home-support-actions">
+      <a class="support-pill tea" href="https://buymeatea.online/archimetrix" target="_blank" rel="noopener noreferrer" title="For Indian users — support via UPI"><img src="../icons/support-upi.png" alt="" aria-hidden="true">Support via UPI</a>
+      <a class="support-pill coffee" href="https://buymeacoffee.com/archimetrix" target="_blank" rel="noopener noreferrer"><img src="../icons/support-coffee.png" alt="" aria-hidden="true">Buy me a coffee</a>
+    </span></div>
+  </div>
 
   <div class="cache-preview-overlay" id="cachePreviewOverlay">
     <button class="cache-preview-close" id="cachePreviewClose" title="Close" aria-label="Close preview">
@@ -2276,6 +2122,7 @@
     </div>
   </div>
 
+  <script src="plus/popup-plus.js"></script><!-- Vivimusic Web+ -->
   <script src="popup-ui.js"></script>
   <script src="popup-info.js"></script>
   <script src="popup.js"></script>

@@ -191,6 +191,13 @@ For quick tests without installing: `about:debugging#/runtime/this-firefox` → 
 
 - Not a GitHub fork (forks of public repos cannot be private), just a repo with `upstream` as a second remote.
 - `.github/README.md` is the repo landing page; upstream's `readme.md` is left untouched so merges stay clean.
+- Our additions live outside upstream's files, so merges stay clean:
+  - `src/plus/plus.css` (after `canvas.css`): our rules and the overrides of upstream rules (RTL lyrics margins, line blur, pill bar). `canvas.css` stays exactly upstream's.
+  - `src/plus/theme-plus.css`: our font stack and the Firefox additions; the background's `VIVI_THEME_CSS` injects it after `theme.css`, which stays upstream's.
+  - `src/plus/bg-plus.js`: Spotify header rule, ListenBrainz, Paxsenix, Genius, Apple artist art. Loaded by `importScripts` (Chrome) and `background.scripts` (Firefox).
+  - `src/plus/popup-plus.js`: our popup rows, placed next to upstream elements found by id (a row whose anchor is gone lands at the end of the popup with a console warning), plus branding and the Spotify Connect permission request. Upstream's popup files keep four one-line hooks marked `// Vivimusic Web+`.
+  - `manifest-plus.json`: our manifest changes as operations. After a merge, rebuild with `python scripts/apply_manifest.py --ref <upstream tag>`; `--check` only compares. Exit 1 means an anchor is gone.
+  - `NOTICES-PLUS.md`: notices for what we bundle; `THIRD_PARTY_NOTICES.md` stays upstream's.
 - `scripts/merge_upstream.py` auto-resolves only routine conflicts: files deleted here on purpose (star gate, `.github/FUNDING.yml`) and `manifest.json` hunks that differ only in `version`. It never commits a file with conflict markers.
 
 ---

@@ -23,7 +23,6 @@
     'equalizer': 'The equalizer and crossfade are paused while Optimized & resource saving mode is on.',
     'lyrics': 'SponsorBlock and the "no lyrics" dancer are paused while Optimized & resource saving mode is on.',
     'lastfm': 'Last.fm scrobbling is paused while Optimized & resource saving mode is on.',
-    'listenbrainz': 'ListenBrainz scrobbling is paused while Optimized & resource saving mode is on.',
     'artwork-cache': 'Apple Music artwork fetching and caching are paused while Optimized & resource saving mode is on.'
   };
   const rsNotice = settings.querySelector('.rs-notice');
@@ -35,11 +34,11 @@
     'Artwork Cache': ['Artwork Cache', 'Browse, import, and export saved artwork', 'artwork-cache'],
     'Spotify Canvas': ['Spotify Canvas', 'Connect Spotify and manage Canvas', 'spotify-canvas'],
     'Last.fm': ['Last.fm', 'Scrobbling and account settings', 'lastfm', 'static'],
-    ListenBrainz: ['ListenBrainz', 'Open-source scrobbling to ListenBrainz', 'listenbrainz', 'static'],
     Updates: ['Updates', 'Check your installed version', 'updates']
   };
   const sectionKey = section => section.querySelector('.section-title, .cache-title')?.textContent.trim() || '';
-  const desiredOrder = ['Artwork', 'Spotify Canvas', 'Audio playback', 'Lyrics', 'Appearance', 'Artwork Cache', 'Last.fm', 'ListenBrainz', 'Updates'];
+  const desiredOrder = ['Artwork', 'Spotify Canvas', 'Audio playback', 'Lyrics', 'Appearance', 'Artwork Cache', 'Last.fm', 'Updates'];
+  window.viviPlusPopup?.extendCards(RS_NOTES, meta, desiredOrder); // Vivimusic Web+
   sections.sort((a, b) => desiredOrder.indexOf(sectionKey(a)) - desiredOrder.indexOf(sectionKey(b)));
   sections.forEach(section => {
     const heading = section.querySelector('.section-title, .cache-title');

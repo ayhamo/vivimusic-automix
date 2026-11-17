@@ -1,0 +1,80 @@
+{
+  "_about": "Vivimusic Web+ changes to upstream's manifest.json. scripts/apply_manifest.py builds manifest.json from upstream's manifest plus these operations. Edit this file, not manifest.json.",
+  "set": {
+    "name": "Vivimusic Web+",
+    "description": "YouTube Music with Automix (beatmatched blends and loop mixes), synced lyrics, Canvas artwork, crossfade, Last.fm, ListenBrainz.",
+    "content_security_policy": {
+      "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
+    },
+    "browser_specific_settings": {
+      "gecko": {
+        "id": "vivimusic-automix@ayhamo",
+        "strict_min_version": "142.0",
+        "data_collection_permissions": { "required": ["none"] }
+      }
+    }
+  },
+  "permissions": {
+    "remove": ["declarativeNetRequestWithHostAccess"],
+    "add": ["webRequest", "webRequestBlocking"]
+  },
+  "host_permissions": {
+    "add": [
+      "https://lyricsplus.prjktla.my.id/*",
+      "https://lyricsplus.binimum.org/*",
+      "https://api.listenbrainz.org/*",
+      "https://*.googlevideo.com/*",
+      "https://*.googleusercontent.com/*",
+      "https://lyrics.paxsenix.org/*",
+      "https://api.paxsenix.org/*",
+      "https://genius.com/*",
+      "https://*.genius.com/*",
+      "https://*.spotify.com/*",
+      "https://spotify.com/*",
+      "https://accounts.spotify.com/*",
+      "https://itunes.apple.com/*",
+      "https://music.apple.com/*",
+      "https://www.last.fm/*",
+      "https://*.scdn.co/*",
+      "https://*.spotifycdn.com/*",
+      "https://*.ggpht.com/*",
+      "https://*.ytimg.com/*"
+    ]
+  },
+  "background_scripts": {
+    "_about": "Firefox runs the background as an event page from this list (Chrome uses service_worker and importScripts). Upstream's importScripts helpers are added in their order; these are our additions.",
+    "drop": ["src/stargate.js"],
+    "before_background": ["src/listenbrainz.js", "src/fx-headers.js"],
+    "after_background": ["src/plus/bg-plus.js"]
+  },
+  "content_scripts": [
+    {
+      "match_js": "src/announcements-toast.js",
+      "js": {
+        "remove": ["src/gate.js", "src/loader.js"],
+        "insert": [{ "item": "src/fx-storage.js", "first": true }]
+      },
+      "css": { "remove": ["src/gate.css"] }
+    },
+    {
+      "match_js": "src/content.js",
+      "js": {
+        "insert": [
+          { "item": "src/fx-storage.js", "first": true },
+          { "item": "src/fx-compat.js", "after": "src/net.js" },
+          { "item": "src/automix/automix.js", "before": "src/crossfade.js" },
+          { "item": "src/vendor/signalsmith-stretch.js", "before": "src/crossfade.js" },
+          { "item": "src/automix-overview.js", "after": "src/crossfade.js" },
+          { "item": "src/music-only.js", "after": "src/automix-overview.js" }
+        ]
+      },
+      "css": {
+        "insert": [{ "item": "src/plus/plus.css", "after": "src/canvas.css" }]
+      }
+    }
+  ],
+  "web_accessible_resources": {
+    "remove": ["icons/custom-logo-full.png", "icons/custom-logo-icon.png"],
+    "add": ["src/vendor/automix/*", "src/vendor/signalsmith-stretch.js", "src/automix/*"]
+  }
+}
