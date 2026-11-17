@@ -10,7 +10,7 @@
 if (typeof importScripts === 'function') {
   // fx-headers.js holds the keep-alive and the VIVI_FETCH proxy; its
   // webRequest header rewrite is Firefox-only and skips itself in Chrome.
-  importScripts('fx-headers.js', 'md5.js', 'lastfm.js', 'listenbrainz.js', 'spotify.js', 'apple-canvas.js', 'lrcred.js', 'plus/bg-plus.js');
+  importScripts('fx-headers.js', 'md5.js', 'lastfm.js', 'listenbrainz.js', 'spotify.js', 'apple-canvas.js', 'lrcred.js', 'discord-rpc.js', 'smooth-update.js', 'plus/bg-plus.js');
 }
 
 /* -------------------------------------------------------------------------
@@ -201,12 +201,20 @@ async function checkForUpdate() {
     // (fork-v10.2.0-amo10.2.0-<sha>) carries upstream's version, not ours.
     const latestVersion = (String(data.name || '').match(/\d+(?:\.\d+)+/) || [data.tag_name || ''])[0];
     const updateAvailable = latestVersion ? isNewer(latestVersion, currentVersion) : false;
+    // Release ZIP for the "Smoother Updates Process" (prefer an uploaded .zip
+    // asset; fall back to GitHub's auto-generated source zipball).
+    const assets = Array.isArray(data.assets) ? data.assets : [];
+    const zipAsset = assets.find((a) => /edge-chrome\.zip$/i.test(a.name)) /* Vivimusic Web+: our releases also carry a Firefox zip */ || assets.find((a) => /\.zip$/i.test(a.name) && /vivi/i.test(a.name)) || assets.find((a) => /\.zip$/i.test(a.name));
+    const digest = zipAsset && /^sha256:/i.test(zipAsset.digest || '') ? zipAsset.digest.slice(7) : '';
     result = {
       ok: true,
       currentVersion,
       latestVersion: latestVersion.replace(/^v/i, ''),
       updateAvailable,
       releaseUrl: data.html_url || RELEASES_PAGE,
+      zipUrl: (zipAsset && zipAsset.browser_download_url) || data.zipball_url || '',
+      sha256: digest,
+      zipSize: (zipAsset && zipAsset.size) || 0,
       checkedAt: Date.now(),
     };
   } catch (e) {
@@ -324,6 +332,41 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   }
 });
 
+/* ── Smoother Updates Process ───────────────────────────────────────────────
+ * VIVI_SMOOTH_STATUS : folder/permission state for the popup.
+ * VIVI_SMOOTH_APPLY  : try to install the pending update silently. If the
+ *                      user must act first (pick folder / re-allow access),
+ *                      replies { needsUser: true } and the popup opens
+ *                      src/updater.html instead.
+ */
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (sender.id !== chrome.runtime.id) return;
+  if (msg.type === 'VIVI_SMOOTH_STATUS') {
+    (async () => {
+      const { smoothUpdatesEnabled } = await chrome.storage.local.get({ smoothUpdatesEnabled: true });
+      sendResponse({ enabled: smoothUpdatesEnabled !== false, ...(await ViviSmoothUpdate.status()) });
+    })().catch(() => sendResponse({ enabled: true, hasFolder: false, folderName: '', permission: 'none' }));
+    return true;
+  }
+  if (msg.type === 'VIVI_SMOOTH_APPLY') {
+    (async () => {
+      const { vivi_update_check: info } = await chrome.storage.local.get('vivi_update_check');
+      if (!info || !info.ok || !info.updateAvailable) return sendResponse({ ok: false, error: 'No update available.' });
+      try {
+        const r = await ViviSmoothUpdate.applyUpdate({
+          zipUrl: info.zipUrl, sha256: info.sha256, expectedVersion: info.latestVersion, sizeHint: info.zipSize,
+          onProgress: (p) => { chrome.storage.session.set({ vivi_smooth_progress: p }).catch(() => {}); },
+        });
+        sendResponse({ ok: true, version: r.version });
+        setTimeout(() => chrome.runtime.reload(), 700);
+      } catch (e) {
+        const needsUser = ['NO_FOLDER', 'NEEDS_PERMISSION', 'WRONG_FOLDER'].includes(e.code);
+        sendResponse({ ok: false, needsUser, code: e.code, error: e.message });
+      }
+    })();
+    return true;
+  }
+});
 
 async function lastfmGetSession() {
   const { lastfmSession } = await chrome.storage.local.get('lastfmSession');

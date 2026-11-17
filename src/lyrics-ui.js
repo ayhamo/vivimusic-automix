@@ -15,7 +15,7 @@
   const EXCLUDED_DB_PFX = 'vivi_lyrics_excluded_';
   let isRefetchingLyrics = false;
 
-  let settings = { lyricsEnabled: true, autoSwitchLyrics: true, lyricsShowForVideos: false, dancerOnNotFound: true };
+  let settings = { lyricsEnabled: true, autoSwitchLyrics: true, lyricsShowForVideos: false, dancerOnNotFound: true, dancerForVideos: true };
   let currentTrackKey = null;
   let currentResult = null;  
   let isLoadingLyrics = false;
@@ -91,7 +91,7 @@
   }
 
   chrome.storage.local.get(
-    { lyricsEnabled: true, autoSwitchLyrics: true, lyricsShowForVideos: false, dancerOnNotFound: true, resourceSaverEnabled: false, lyricsAlign: 'center', lyricsAnimationStyle: 'apple', lyricsFont: 'default', lyricsRoman: 'off', lyricsRomanJa: true, lyricsRomanLangs: false },
+    { lyricsEnabled: true, autoSwitchLyrics: true, lyricsShowForVideos: false, dancerOnNotFound: true, dancerForVideos: true, resourceSaverEnabled: false, lyricsAlign: 'center', lyricsAnimationStyle: 'apple', lyricsFont: 'default', lyricsRoman: 'off', lyricsRomanJa: true, lyricsRomanLangs: false },
     (s) => {
       if (s) settings = s;
       if (settings.lyricsAnimationStyle === 'fluidglow' || settings.lyricsAnimationStyle === 'spring') settings.lyricsAnimationStyle = 'fluid';
@@ -133,13 +133,14 @@
         w.classList.remove('vivi-lyrics-word-glowing', 'vivi-lyrics-word-bouncing', 'vivi-lyrics-syl-swell');
       });
     }
-    if ('dancerOnNotFound' in msg || 'resourceSaverEnabled' in msg) {
+    if ('dancerOnNotFound' in msg || 'dancerForVideos' in msg || 'resourceSaverEnabled' in msg) {
       if ('dancerOnNotFound' in msg) settings.dancerOnNotFound = msg.dancerOnNotFound;
+      if ('dancerForVideos' in msg) settings.dancerForVideos = msg.dancerForVideos !== false;
       if ('resourceSaverEnabled' in msg) settings.resourceSaverEnabled = msg.resourceSaverEnabled === true;
       // If the panel is currently showing the "no lyrics found" state,
       // re-render it immediately so the toggle takes effect without
       // waiting for the next track.
-      if (currentTrack && !isLoadingLyrics && !currentResult) {
+      if (currentTrack && !isLoadingLyrics && (!currentResult || currentResult.videoBlocked)) {
         contentDirty = true;
         syncPanelVisibility();
       }
@@ -441,11 +442,56 @@
   }
 
   function seekTo(ms) {
+    if (!Number.isFinite(ms)) return;
+    // Lyric time -> video time: the highlighter uses
+    //   lyricMs = videoMs - sponsorOffsetMs + manualOffsetMs
+    // so invert that here, otherwise a click lands off by the offsets.
+    const sec = Math.max(0, (ms + sponsorOffsetMs - manualOffsetMs) / 1000);
+    // Ask YouTube Music's own player to seek (handled in seek-page.js)...
+    try { window.postMessage({ ch: 'vivi-seek', t: sec }, window.location.origin); } catch (_) {}
+    // ...and set the element directly as a fallback.
     const video = getVideoEl();
-    if (!video || Number.isNaN(ms)) return;
-    video.currentTime = ms / 1000;
+    if (!video) return;
+    video.currentTime = sec;
     if (video.paused) video.play().catch(() => {});
   }
+
+  // Overlay-proof click-to-seek. If something sits above the lyrics (or the
+  // layers above pass the click through), a line never receives the click
+  // itself. So, in the capture phase, hit-test the lines by screen position and
+  // seek from here; the click is then consumed so the player underneath does
+  // not also react to it (e.g. play/pause). Real controls are never hijacked.
+  let lyricPress = null;
+  window.addEventListener('mousedown', (e) => { lyricPress = { x: e.clientX, y: e.clientY }; }, true);
+  window.addEventListener('click', (e) => {
+    if (e.button !== 0) return;
+    const t = e.target;
+    if (t instanceof Element) {
+      if (t.closest('.vivi-lyrics-line')) return; // the line's own handler runs
+      if (t.closest(
+        'button, a, input, textarea, select, [role="button"], yt-icon-button, tp-yt-paper-icon-button, ' +
+        'tp-yt-paper-item, tp-yt-paper-tab, yt-tab-shape, tp-yt-paper-slider, ytmusic-player-bar, ytmusic-miniplayer, #player-bar-background, ' +
+        'ytmusic-popup-container, tp-yt-iron-dropdown, tp-yt-paper-dialog, ytmusic-menu-popup-renderer, ' +
+        '#vivi-lyrics-offset-panel, .vivi-lyrics-info-wrap, .av'
+      )) return;
+    }
+    // A drag (text selection / scroll) is not a click.
+    if (lyricPress && Math.hypot(e.clientX - lyricPress.x, e.clientY - lyricPress.y) > 6) return;
+    const panel = document.getElementById(PANEL_ID);
+    if (!panel) return;
+    const host = panel.closest('#tab-renderer') || panel.parentElement || panel;
+    const hr = host.getBoundingClientRect();
+    if (e.clientX < hr.left || e.clientX > hr.right || e.clientY < hr.top || e.clientY > hr.bottom) return;
+    for (const line of panel.querySelectorAll('.vivi-lyrics-clickable')) {
+      const r = line.getBoundingClientRect();
+      if (e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom) {
+        e.stopPropagation();
+        e.preventDefault();
+        seekTo(Number(line.dataset.start));
+        return;
+      }
+    }
+  }, true);
 
   // Only fade an edge when there's actually more content hidden past it —
   // otherwise the very first/last line sits right at the mask's transparent
@@ -556,12 +602,13 @@
     return dancerUrl;
   }
 
-  function renderDancerState(panel, caption, sub) {
+  // withDancer=false renders the same caption/sub text without the animation.
+  function renderDancerState(panel, caption, sub, withDancer = true) {
     panel.innerHTML = '';
     const wrap = document.createElement('div');
     wrap.className = 'vivi-lyrics-video-blocked';
 
-    const url = settings.resourceSaverEnabled ? null : getDancerUrl(); // no looping video in resource saving mode
+    const url = (withDancer && !settings.resourceSaverEnabled) ? getDancerUrl() : null; // no looping video in resource saving mode
     if (url) {
       const video = document.createElement('video');
       video.className = 'vivi-lyrics-dancer';
@@ -594,12 +641,15 @@
     renderDancerState(
       panel,
       "Lyrics are off for video songs",
-      'Turn this back on under Lyrics → "Show lyrics for video songs".'
+      'Turn this back on under Lyrics → "Show lyrics for video songs".',
+      settings.dancerForVideos !== false // "Show dancer on video songs"
     );
   }
 
   function renderNotFoundState(panel) {
-    if (settings.dancerOnNotFound && !settings.resourceSaverEnabled) {
+    // "Show dancer on video songs" off: video songs get the plain text only.
+    const dancerOffForThisTrack = currentIsVideo && settings.dancerForVideos === false;
+    if (settings.dancerOnNotFound && !settings.resourceSaverEnabled && !dancerOffForThisTrack) {
       renderDancerState(panel, "No lyrics found for this track.", null);
     } else {
       panel.innerHTML = `<div class="vivi-lyrics-empty">No lyrics found for this track.</div>`;

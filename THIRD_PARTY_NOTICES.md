@@ -1,8 +1,8 @@
 # Third-Party Notices
 
-ViviMusic Xten's own source code is proprietary (see `LICENSE.txt`). It includes or relies on the third-party
+ViviMusic Xten's own source code is licensed under the GNU Affero General Public License v3.0 (see `LICENSE`). It includes or relies on the third-party
 components and services listed below. Components that are bundled in this package remain under their own
-licenses, reproduced here. Nothing in `LICENSE.txt` limits the rights those licenses grant you for those components.
+licenses, reproduced here. Nothing in `LICENSE` limits the rights those licenses grant you for those components.
 
 ViviMusic Xten is an independent project and is **not affiliated with, endorsed by, or sponsored by** Google / YouTube /
 YouTube Music, Spotify, Apple, Last.fm, Musixmatch, Deezer, GitHub, SponsorBlock, Better Lyrics, or any other service
@@ -18,7 +18,13 @@ named in this file. All product names, logos and trademarks belong to their resp
 | pinyin-pro | `src/vendor/pinyin-pro.min.js` (unmodified) | MIT | © 2022-present zh-lx — https://github.com/zh-lx/pinyin-pro |
 | Kawarp (`@kawarp/core`) | `src/kawarp.js` (modified) | MIT | © 2026 Better Lyrics — https://github.com/better-lyrics/kawarp |
 | `@braccato/core` (animation timing values and technique only; code is an independent reimplementation) | `src/lyrics-ui.js` (Fluid flow), `src/canvas.css` | MIT | © 2026 Boidushya Bhattacharya — https://github.com/better-lyrics |
+| Neurobox (approach and activity format only; independent implementation, no code copied verbatim) | `src/discord-rpc.js`, `src/discord-presence.js` | AGPL-3.0 | © 2026 Sheathed — https://github.com/Sheathed/Neurobox |
+| reCover theme (fullscreen layout idea and styling approach; ported to YouTube Music's fullscreen player) | `src/fullscreen-mode.css`, `src/fullscreen-mode.js` | MIT | © mukeenanyafiq and contributors — https://github.com/mukeenanyafiq/recover-theme |
 | Lyrics fonts (12 families) | `src/fonts/*.woff2` (Latin subsets via Fontsource) | SIL OFL 1.1 | see section 3 |
+
+### 1.x Neurobox — AGPL-3.0
+
+ViviMusic Xten's Discord Rich Presence feature is based on the approach demonstrated by **Neurobox** (© 2026 Sheathed, https://github.com/Sheathed/Neurobox, GNU AGPL v3): authorizing with the Discord OAuth scopes `openid sdk.social_layer_presence` and publishing activities through `POST /users/@me/headless-sessions`, with the same activity shape. The code in this project was written for ViviMusic Xten's architecture, but because it follows Neurobox's design, it is distributed under the same license (AGPL-3.0), which is the license of the entire project (see `LICENSE`).
 
 ### 1.1 hls.js — Apache License 2.0
 
@@ -90,6 +96,37 @@ extension's background layer). The original copyright and license notice is reta
 MIT License
 
 Copyright (c) 2026 Better Lyrics
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+### 1.4 reCover theme — MIT License
+
+The "Full screen mode" layout (`src/fullscreen-mode.css`) is a port of the **reCover** theme by mukeenanyafiq
+(https://github.com/mukeenanyafiq/recover-theme), limited to YouTube Music's fullscreen player and adapted for
+ViviMusic Xten. reCover is released under the MIT License, whose terms are reproduced below. The upstream
+copyright notice is retained: Copyright (c) mukeenanyafiq and contributors.
+
+```
+MIT License
+
+Copyright (c) mukeenanyafiq and contributors
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

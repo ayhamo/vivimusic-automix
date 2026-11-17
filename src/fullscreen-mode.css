@@ -1,0 +1,303 @@
+/* VIVIMUSIC XTEN — fullscreen-mode.css
+
+   1) The icon button on the player thumbnail's top-right corner ("Enter full
+      screen" / minimize) is hidden for everyone. Double-clicking the
+      thumbnail still toggles fullscreen.
+
+   2) "Full screen mode" (Appearance setting) — a port of the reCover theme
+      (https://github.com/mukeenanyafiq/recover-theme, MIT) limited to
+      YouTube Music's fullscreen player.
+        - Songs: the album art fills the full screen height on the left and
+          fades out towards the lyrics on the right. Only lyrics are shown on
+          the right (no tabs, no Up next / Comments / Related, and nothing at
+          all when there are no lyrics).
+        - Videos: a normal full-screen landscape video.
+        - The homepage / page content never shows behind the player.
+
+      Everything in section 2 is gated by html.vivi-fs-mode (set by
+      fullscreen-mode.js only while the setting is on) and by
+      [player-fullscreened], so nothing outside fullscreen is touched. The
+      vinyl-disc option and YTM's "modernized" layout are left alone.
+
+      --vivi-fs-x / -y / -r / -b are measured by fullscreen-mode.js: they cancel
+      any offset of the containing block that position:fixed resolves against
+      inside YTM's player page, so the layout lines up with the real screen
+      edges. They default to 0. */
+
+/* ── 1b) Pill player bar, fullscreen: keep the seek bar off the thumbnail ───
+   The pill centres a short seek bar under the whole pill. In fullscreen the
+   song info sits further left, so the bar started underneath the thumbnail.
+   fullscreen-mode.js measures where the thumbnail ends and sets
+   --vivi-prog-left on the bar; the bar then starts there and keeps its right end. */
+html.vivi-pill-player ytmusic-app-layout[player-fullscreened] ytmusic-player-bar #progress-bar.ytmusic-player-bar {
+  left: var(--vivi-prog-left, calc(50% + 40px)) !important;
+  margin-left: 0 !important;
+  width: max(120px, calc(50% + min(320px, 34%) / 2 - var(--vivi-prog-left, calc(50% + 40px)))) !important;
+}
+
+/* ── 1c) Pill player bar, fullscreen: give the title area room ──────────────
+   In fullscreen the pill's side controls took so much width that the song
+   title collapsed (for videos it vanished completely). Let the side groups
+   shrink to their content and let the middle group take the rest. */
+html.vivi-pill-player ytmusic-app-layout[player-fullscreened] ytmusic-player-bar .left-controls,
+html.vivi-pill-player ytmusic-app-layout[player-fullscreened] ytmusic-player-bar .right-controls {
+  flex: 0 0 auto !important;
+  width: auto !important;
+}
+
+html.vivi-pill-player ytmusic-app-layout[player-fullscreened] ytmusic-player-bar .middle-controls {
+  flex: 1 1 0 !important;
+  min-width: 0 !important;
+}
+
+html.vivi-pill-player ytmusic-app-layout[player-fullscreened] ytmusic-player-bar .content-info-wrapper {
+  flex: 1 1 auto !important;
+  min-width: 0 !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+}
+
+/* ── 2) Full screen mode ────────────────────────────────────────────────── */
+
+/* Never show the page underneath (Home, playlists, …) while fullscreen.
+   theme.css forces this slot visible in fullscreen. */
+html.vivi-fs-mode ytmusic-app-layout[player-fullscreened] > [slot="content"],
+html.vivi-fs-mode ytmusic-app-layout[player-fullscreened] > #content {
+  display: none !important;
+}
+
+/* Song / Video switcher: top right, in both song and video mode */
+html.vivi-fs-mode:not(.vivi-disc-style) ytmusic-player-page:not([is-mweb-modernization-enabled])[player-fullscreened] .av.ytmusic-player-page {
+  position: fixed !important;
+  top: calc(var(--vivi-fs-y, 0px) + 1.5rem) !important;
+  right: calc(var(--vivi-fs-r, 0px) + 2rem) !important;
+  left: auto !important;
+  bottom: auto !important;
+  transform: none !important;
+  transition: opacity 0.1s;
+  z-index: 3;
+}
+
+/* Keep YTM's panel-centering transform from shifting the fixed children */
+html.vivi-fs-mode:not(.vivi-disc-style) ytmusic-player-page:not([is-mweb-modernization-enabled])[player-fullscreened] #main-panel {
+  transform: none !important;
+  transition: none !important;
+  padding: 0 !important;
+}
+
+/* ---- Songs: album art left, lyrics only on the right ---- */
+
+html.vivi-fs-mode:not(.vivi-disc-style) ytmusic-player-page:not([is-mweb-modernization-enabled])[player-fullscreened]:not([video-mode]) #player.ytmusic-player-page {
+  position: fixed !important;
+  top: var(--vivi-fs-y, 0px) !important;
+  left: var(--vivi-fs-x, 0px) !important;
+  right: auto !important;
+  bottom: auto !important;
+  width: min(100vh, 100vw) !important;
+  max-width: none !important;
+  min-width: 0 !important;
+  height: 100vh !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  transform: none !important;
+  transition: none !important;
+  background: transparent !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  overflow: hidden !important;
+  z-index: 0;
+}
+
+html.vivi-fs-mode:not(.vivi-disc-style) ytmusic-player-page:not([is-mweb-modernization-enabled])[player-fullscreened]:not([video-mode]) #player.ytmusic-player-page .player-wrapper {
+  border-radius: 0 !important;
+}
+
+html.vivi-fs-mode:not(.vivi-disc-style) ytmusic-player-page:not([is-mweb-modernization-enabled])[player-fullscreened]:not([video-mode]) #player.ytmusic-player-page #song-media-window {
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+html.vivi-fs-mode:not(.vivi-disc-style) ytmusic-player-page:not([is-mweb-modernization-enabled])[player-fullscreened]:not([video-mode]) #player.ytmusic-player-page .song-media-controls.ytmusic-player {
+  background: transparent !important;
+}
+
+/* Edge fade: opaque on the left, transparent on the right (covers the
+   thumbnail and any Apple Music / Spotify canvas layered inside it) */
+html.vivi-fs-mode:not(.vivi-disc-style) ytmusic-player-page:not([is-mweb-modernization-enabled])[player-fullscreened]:not([video-mode]) #player.ytmusic-player-page #song-image {
+  -webkit-mask-image: linear-gradient(to right, rgba(0, 0, 0, 1), rgba(0, 0, 0, 0));
+  mask-image: linear-gradient(to right, rgba(0, 0, 0, 1), rgba(0, 0, 0, 0));
+}
+
+html.vivi-fs-mode:not(.vivi-disc-style) ytmusic-player-page:not([is-mweb-modernization-enabled])[player-fullscreened]:not([video-mode]) #player.ytmusic-player-page #song-image img:not(.vivi-canvas-media) {
+  object-fit: cover !important;
+}
+
+html.vivi-fs-mode:not(.vivi-disc-style) ytmusic-player-page:not([is-mweb-modernization-enabled])[player-fullscreened]:not([video-mode]) #side-panel.ytmusic-player-page {
+  position: fixed !important;
+  top: var(--vivi-fs-y, 0px) !important;
+  left: calc(var(--vivi-fs-x, 0px) + 45vw) !important;
+  right: auto !important;
+  bottom: auto !important;
+  width: 55vw !important;
+  min-width: 0 !important;
+  max-width: none !important;
+  height: 100vh !important;
+  margin: 0 !important;
+  padding: 3rem 2rem calc(var(--ytmusic-player-bar-height, 72px) + 1.5rem) 1rem !important;
+  box-sizing: border-box !important;
+  transform: none !important;
+  overflow: hidden !important;
+  z-index: 5;
+}
+
+/* The lyrics must always receive the pointer (click a line to seek). */
+html.vivi-fs-mode:not(.vivi-disc-style) ytmusic-player-page:not([is-mweb-modernization-enabled])[player-fullscreened]:not([video-mode]) #side-panel.ytmusic-player-page,
+html.vivi-fs-mode:not(.vivi-disc-style) ytmusic-player-page:not([is-mweb-modernization-enabled])[player-fullscreened]:not([video-mode]) #side-panel ytmusic-tab-renderer,
+html.vivi-fs-mode:not(.vivi-disc-style) ytmusic-player-page:not([is-mweb-modernization-enabled])[player-fullscreened]:not([video-mode]) #side-panel #tab-renderer,
+html.vivi-fs-mode:not(.vivi-disc-style) ytmusic-player-page:not([is-mweb-modernization-enabled])[player-fullscreened]:not([video-mode]) #vivi-lyrics-panel,
+html.vivi-fs-mode:not(.vivi-disc-style) ytmusic-player-page:not([is-mweb-modernization-enabled])[player-fullscreened]:not([video-mode]) .vivi-lyrics-line {
+  pointer-events: auto !important;
+}
+
+/* Lyrics only: collapse the tab strip (it stays in the DOM so the lyrics tab
+   can still be selected by script) ... */
+html.vivi-fs-mode:not(.vivi-disc-style) ytmusic-player-page:not([is-mweb-modernization-enabled])[player-fullscreened]:not([video-mode]) #side-panel :is(tp-yt-paper-tabs, yt-tab-group-shape),
+html.vivi-fs-mode:not(.vivi-disc-style) ytmusic-player-page:not([is-mweb-modernization-enabled])[player-fullscreened]:not([video-mode]) #side-panel :is(div, nav, ytmusic-tabs):has(> tp-yt-paper-tab),
+html.vivi-fs-mode:not(.vivi-disc-style) ytmusic-player-page:not([is-mweb-modernization-enabled])[player-fullscreened]:not([video-mode]) #side-panel :is(div, nav, ytmusic-tabs):has(> yt-tab-shape) {
+  visibility: hidden !important;
+  height: 0 !important;
+  min-height: 0 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  overflow: hidden !important;
+}
+
+/* ... and show nothing but our lyrics panel in the tab content */
+html.vivi-fs-mode:not(.vivi-disc-style) ytmusic-player-page:not([is-mweb-modernization-enabled])[player-fullscreened]:not([video-mode]) #side-panel #tab-renderer > :not(#vivi-lyrics-panel) {
+  display: none !important;
+}
+
+/* No "no lyrics" text, no loading text, no dancer, no offset editor */
+html.vivi-fs-mode:not(.vivi-disc-style) ytmusic-player-page:not([is-mweb-modernization-enabled])[player-fullscreened]:not([video-mode]) #vivi-lyrics-panel :is(.vivi-lyrics-empty, .vivi-lyrics-loading, .vivi-lyrics-video-blocked),
+html.vivi-fs-mode:not(.vivi-disc-style) ytmusic-player-page:not([is-mweb-modernization-enabled])[player-fullscreened]:not([video-mode]) #vivi-lyrics-offset-panel,
+html.vivi-fs-mode:not(.vivi-disc-style) ytmusic-player-page:not([is-mweb-modernization-enabled])[player-fullscreened]:not([video-mode]) .vivi-lyrics-info-wrap {
+  display: none !important;
+}
+
+/* ---- Videos: a normal full-screen landscape video ---- */
+
+html.vivi-fs-mode:not(.vivi-disc-style) ytmusic-player-page:not([is-mweb-modernization-enabled])[player-fullscreened][video-mode] #side-panel.ytmusic-player-page {
+  display: none !important;
+}
+
+html.vivi-fs-mode:not(.vivi-disc-style) ytmusic-player-page:not([is-mweb-modernization-enabled])[player-fullscreened][video-mode] #player.ytmusic-player-page {
+  position: fixed !important;
+  top: var(--vivi-fs-y, 0px) !important;
+  left: var(--vivi-fs-x, 0px) !important;
+  right: auto !important;
+  bottom: auto !important;
+  width: 100vw !important;
+  max-width: none !important;
+  min-width: 0 !important;
+  height: 100vh !important;
+  max-height: none !important;
+  aspect-ratio: auto !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  transform: none !important;
+  transition: none !important;
+  background: #000 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  overflow: hidden !important;
+  z-index: 0;
+}
+
+html.vivi-fs-mode:not(.vivi-disc-style) ytmusic-player-page:not([is-mweb-modernization-enabled])[player-fullscreened][video-mode] #player.ytmusic-player-page #song-media-window {
+  width: 100% !important;
+  height: 100% !important;
+  max-width: none !important;
+  max-height: none !important;
+  border-radius: 0 !important;
+  /* This overlay sits above the <video>; it must stay see-through. */
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+html.vivi-fs-mode:not(.vivi-disc-style) ytmusic-player-page:not([is-mweb-modernization-enabled])[player-fullscreened][video-mode] #player.ytmusic-player-page #song-video,
+html.vivi-fs-mode:not(.vivi-disc-style) ytmusic-player-page:not([is-mweb-modernization-enabled])[player-fullscreened][video-mode] #player.ytmusic-player-page #song-video .html5-video-player {
+  width: 100% !important;
+  height: 100% !important;
+  max-width: none !important;
+  max-height: none !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+
+html.vivi-fs-mode:not(.vivi-disc-style) ytmusic-player-page:not([is-mweb-modernization-enabled])[player-fullscreened][video-mode] #player.ytmusic-player-page #song-video video {
+  object-fit: contain !important;
+}
+
+
+/* ---- Player bar: auto-hide in fullscreen, reveal when hovering the bottom ----
+   fullscreen-mode.js sets html.vivi-fs-autohide while fullscreen (and the
+   "Auto-hide player bar" setting is on) and html.vivi-fs-bar-show while the
+   pointer is near the bottom edge / over the bar, the bar has focus, a menu is
+   open or the seek bar is being dragged. Everything returns to normal on
+   leaving fullscreen. No transform is used, so the bar's own layout is
+   untouched. */
+html.vivi-fs-autohide ytmusic-player-bar:not([hidden]),
+html.vivi-fs-autohide #player-bar-background {
+  transition: opacity 0.25s ease, visibility 0s linear 0s !important;
+}
+
+html.vivi-fs-autohide:not(.vivi-fs-bar-show) ytmusic-player-bar:not([hidden]):not(:hover),
+html.vivi-fs-autohide:not(.vivi-fs-bar-show) #player-bar-background {
+  opacity: 0 !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+  transition: opacity 0.25s ease, visibility 0s linear 0.25s !important;
+}
+
+/* ---- Leaving fullscreen: never flash the page underneath ----
+   fullscreen-mode.js sets html.vivi-fs-exit for a moment after fullscreen ends
+   after fullscreen ends, on the watch page (see the explanation there). */
+html.vivi-fs-exit:not([vivi-player-closed]) ytmusic-app-layout > [slot="content"],
+html.vivi-fs-exit:not([vivi-player-closed]) ytmusic-app-layout > #content,
+html.vivi-fs-exit:not([vivi-player-closed]) #layout > #content,
+html.vivi-fs-exit:not([vivi-player-closed]) #layout #content.ytmusic-app-layout,
+html.vivi-fs-exit:not([vivi-player-closed]) ytmusic-app-layout #content.ytmusic-app-layout {
+  visibility: hidden !important;
+  transition: none !important;
+}
+
+
+/* ---- Player bar: normal-theme glass blur in fullscreen ----
+   theme.css gives the bottom bar `background: var(--ui-color)` +
+   `backdrop-filter: blur(var(--ui-blur))`, but switches both off while the
+   full player is open (#layout[player-page-open] / [player-ui-state=
+   PLAYER_PAGE_OPEN], both !important). In fullscreen mode the bar sits over the
+   artwork and lyrics, so bring the same glass back there. The #layout id is
+   what lets this out-rank those rules. The pill style (html.vivi-pill-player)
+   has its own, stronger glass and is left alone. */
+html.vivi-fs-mode:not(.vivi-pill-player) #layout[player-fullscreened] ytmusic-player-bar:not([hidden]) {
+  background: var(--ui-color, transparent) !important;
+  -webkit-backdrop-filter: blur(var(--ui-blur, 10px)) !important;
+  backdrop-filter: blur(var(--ui-blur, 10px)) !important;
+}
+
+
+/* ---- Player bar auto-hide: new-layout miniplayer ----
+   Same behaviour as the classic bar above (fullscreen-mode.js treats
+   <ytmusic-miniplayer> as the bar when there is no <ytmusic-player-bar>). */
+html.vivi-fs-autohide ytmusic-miniplayer:not([hidden]) {
+  transition: opacity 0.25s ease, visibility 0s linear 0s !important;
+}
+html.vivi-fs-autohide:not(.vivi-fs-bar-show) ytmusic-miniplayer:not([hidden]):not(:hover) {
+  opacity: 0 !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+  transition: opacity 0.25s ease, visibility 0s linear 0.25s !important;
+}

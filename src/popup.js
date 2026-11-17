@@ -22,11 +22,14 @@
   const setDiscShineVisible = (on) => { if (discShineGroup) discShineGroup.style.display = on ? '' : 'none'; };
   const playerTabIconsToggle = document.getElementById('playerTabIconsToggle');
   const pillPlayerToggle = document.getElementById('pillPlayerToggle');
+  const fullscreenModeToggle = document.getElementById('fullscreenModeToggle');
+  const fullscreenAutoHideToggle = document.getElementById('fullscreenAutoHideToggle');
   const localizationToggle = document.getElementById('localizationToggle');
   const lyricsToggle = document.getElementById('lyricsToggle');
   const autoSwitchToggle = document.getElementById('autoSwitchToggle');
   const videoLyricsToggle = document.getElementById('videoLyricsToggle');
   const dancerNotFoundToggle = document.getElementById('dancerNotFoundToggle');
+  const dancerForVideosToggle = document.getElementById('dancerForVideosToggle');
   const lyricsAlignSelect = document.getElementById('lyricsAlignSelect');
   const lyricsRomanSelect = document.getElementById('lyricsRomanSelect');
   const ROMAN_LANGS = [
@@ -177,8 +180,8 @@
   };
 
   chrome.storage.local.get(
-    { enabled: true, themeEnabled: true, imageOnlyMode: false, kawarpEnabled: false, eqEnabled: false, crossfadeEnabled: false, crossfadeSeconds: 6, lyricsEnabled: true, autoSwitchLyrics: true, sponsorBlockEnabled: true, lyricsShowForVideos: false, dancerOnNotFound: true, lyricsAlign: 'center', lyricsAnimationStyle: 'apple', lyricsFont: 'default', lyricsRoman: 'off', lyricsRomanJa: true, lyricsRomanLangs: null, lyricsProviders: DEFAULT_PROVIDERS, ...KAWARP_DEFAULTS },
-    ({ enabled, themeEnabled, imageOnlyMode, kawarpEnabled, eqEnabled, crossfadeEnabled, crossfadeSeconds, lyricsEnabled, autoSwitchLyrics, sponsorBlockEnabled, lyricsShowForVideos, dancerOnNotFound, lyricsAlign, lyricsAnimationStyle, lyricsFont, lyricsRoman, lyricsRomanJa, lyricsRomanLangs, lyricsProviders,
+    { enabled: true, themeEnabled: true, imageOnlyMode: false, kawarpEnabled: false, eqEnabled: false, crossfadeEnabled: false, crossfadeSeconds: 6, lyricsEnabled: true, autoSwitchLyrics: true, sponsorBlockEnabled: true, lyricsShowForVideos: false, dancerOnNotFound: true, dancerForVideos: true, lyricsAlign: 'center', lyricsAnimationStyle: 'apple', lyricsFont: 'default', lyricsRoman: 'off', lyricsRomanJa: true, lyricsRomanLangs: null, lyricsProviders: DEFAULT_PROVIDERS, ...KAWARP_DEFAULTS },
+    ({ enabled, themeEnabled, imageOnlyMode, kawarpEnabled, eqEnabled, crossfadeEnabled, crossfadeSeconds, lyricsEnabled, autoSwitchLyrics, sponsorBlockEnabled, lyricsShowForVideos, dancerOnNotFound, dancerForVideos, lyricsAlign, lyricsAnimationStyle, lyricsFont, lyricsRoman, lyricsRomanJa, lyricsRomanLangs, lyricsProviders,
        kawarpPauseWhenInactive, kawarpOpacity, kawarpWarpIntensity, kawarpBlurPasses, kawarpSaturation, kawarpBrightness, kawarpDithering, kawarpAnimationSpeed, kawarpTransitionDuration }) => {
       enableToggle.checked = enabled;
       imageOnlyToggle.checked = imageOnlyMode;
@@ -191,6 +194,7 @@
       sponsorBlockToggle.checked = sponsorBlockEnabled;
       videoLyricsToggle.checked = lyricsShowForVideos;
       dancerNotFoundToggle.checked = dancerOnNotFound;
+      dancerForVideosToggle.checked = dancerForVideos !== false;
       lyricsAlignSelect.value = lyricsAlign;
       lyricsRomanSelect.value = lyricsRoman;
       if (lyricsRomanSelect.value !== lyricsRoman) lyricsRomanSelect.value = 'off';
@@ -508,6 +512,23 @@
     relay({ pillPlayerEnabled });
   });
 
+  // Full screen mode: always ON and locked (greyed out, cannot be turned off).
+  fullscreenModeToggle.checked = true;
+  fullscreenModeToggle.disabled = true;
+  fullscreenModeToggle.closest('.switch')?.classList.add('locked');
+  chrome.storage.local.set({ fullscreenModeEnabled: true });
+
+  // Auto-hide player bar in fullscreen (default ON).
+  chrome.storage.local.get({ fullscreenAutoHideBar: true }, ({ fullscreenAutoHideBar }) => {
+    fullscreenAutoHideToggle.checked = fullscreenAutoHideBar !== false;
+  });
+
+  fullscreenAutoHideToggle.addEventListener('change', () => {
+    const fullscreenAutoHideBar = fullscreenAutoHideToggle.checked;
+    chrome.storage.local.set({ fullscreenAutoHideBar });
+    relay({ fullscreenAutoHideBar });
+  });
+
   // Language localization (default ON). Content scripts pick this up through
   // chrome.storage.onChanged in tab-locale.js, so no relay message is needed.
   chrome.storage.local.get({ localizationEnabled: true }, ({ localizationEnabled }) => {
@@ -522,8 +543,8 @@
   // Layout compatibility toggle
   {
     const layoutCompatToggle = document.getElementById('layoutCompatToggle');
-    chrome.storage.local.get({ layoutCompatEnabled: false }, ({ layoutCompatEnabled }) => {
-      layoutCompatToggle.checked = layoutCompatEnabled === true;
+    chrome.storage.local.get({ layoutCompatEnabled: true }, ({ layoutCompatEnabled }) => {
+      layoutCompatToggle.checked = layoutCompatEnabled !== false;
     });
     layoutCompatToggle.addEventListener('change', () => {
       const layoutCompatEnabled = layoutCompatToggle.checked;
@@ -656,6 +677,12 @@
     const dancerOnNotFound = dancerNotFoundToggle.checked;
     chrome.storage.local.set({ dancerOnNotFound });
     relay({ dancerOnNotFound });
+  });
+
+  dancerForVideosToggle.addEventListener('change', () => {
+    const dancerForVideos = dancerForVideosToggle.checked;
+    chrome.storage.local.set({ dancerForVideos });
+    relay({ dancerForVideos });
   });
 
   
@@ -1059,8 +1086,82 @@
 
   currentVersionEl.textContent = chrome.runtime.getManifest().version;
 
+  // "Smoother Updates Process" — default ON.
+  const smoothToggle     = document.getElementById('smoothUpdatesToggle');
+  const smoothFolderRow  = document.getElementById('smoothFolderRow');
+  const smoothFolderState = document.getElementById('smoothFolderState');
+  const smoothSetupBtn   = document.getElementById('smoothSetupBtn');
+  const smoothSupported = typeof window.showDirectoryPicker === 'function';
+  let smoothEnabled = true;
+  let lastUpdateResult = null;
+  const openUpdaterTab = (auto) => chrome.tabs.create({ url: chrome.runtime.getURL('src/updater.html') + (auto ? '?auto=1' : '') });
+
+  function refreshSmoothStatus() {
+    smoothFolderRow.style.display = smoothEnabled ? '' : 'none';
+    if (!smoothEnabled) return;
+    if (!smoothSupported) {
+      smoothFolderState.textContent = 'Needs a browser flag (Brave: brave://flags/#file-system-access-api)';
+      smoothSetupBtn.textContent = 'How?';
+      return;
+    }
+    chrome.runtime.sendMessage({ type: 'VIVI_SMOOTH_STATUS' }, (st) => {
+      void chrome.runtime.lastError;
+      if (!st) return;
+      if (!st.hasFolder) { smoothFolderState.textContent = 'Not set up yet (asked once, on first update)'; smoothSetupBtn.textContent = 'Set up'; }
+      else if (st.permission !== 'granted') { smoothFolderState.textContent = `Folder “${st.folderName}” — needs re-allow`; smoothSetupBtn.textContent = 'Re-allow'; }
+      else { smoothFolderState.textContent = `Folder “${st.folderName}” connected`; smoothSetupBtn.textContent = 'Manage'; }
+    });
+  }
+
+  chrome.storage.local.get({ smoothUpdatesEnabled: true }, ({ smoothUpdatesEnabled }) => {
+    smoothEnabled = smoothUpdatesEnabled !== false;
+    smoothToggle.checked = smoothEnabled;
+    if (lastUpdateResult) renderUpdateResult(lastUpdateResult);
+    refreshSmoothStatus();
+  });
+  smoothToggle.addEventListener('change', () => {
+    smoothEnabled = smoothToggle.checked;
+    chrome.storage.local.set({ smoothUpdatesEnabled: smoothEnabled });
+    if (lastUpdateResult) renderUpdateResult(lastUpdateResult);
+    refreshSmoothStatus();
+  });
+  smoothSetupBtn.addEventListener('click', () => openUpdaterTab(false));
+
+  function startSmoothInstall(btn) {
+    const errEl = updateStatus.querySelector('.uh-err');
+    btn.disabled = true;
+    btn.firstChild.textContent = 'Updating… 0% ';
+    if (errEl) errEl.textContent = '';
+    const bar = document.getElementById('smoothBar');
+    const stepEl = document.getElementById('smoothStep');
+    if (bar) bar.classList.add('on');
+    if (stepEl) { stepEl.classList.add('on'); stepEl.textContent = 'Starting…'; }
+    const onProg = (changes, area) => {
+      if (area !== 'session' || !changes.vivi_smooth_progress) return;
+      const p = changes.vivi_smooth_progress.newValue;
+      if (!p) return;
+      btn.firstChild.textContent = `Updating… ${p.pct}% `;
+      if (bar) bar.firstElementChild.style.width = `${p.pct}%`;
+      if (stepEl) stepEl.textContent = p.text;
+    };
+    chrome.storage.onChanged.addListener(onProg);
+    const stop = () => chrome.storage.onChanged.removeListener(onProg);
+    chrome.runtime.sendMessage({ type: 'VIVI_SMOOTH_APPLY' }, (r) => {
+      if (chrome.runtime.lastError) return; // extension is reloading — popup will close
+      stop();
+      if (r && r.ok) { btn.firstChild.textContent = 'Updated — reloading… '; if (bar) bar.firstElementChild.style.width = '100%'; if (stepEl) stepEl.textContent = `Now on v${r.version}`; return; }
+      if (bar) { bar.classList.remove('on'); bar.firstElementChild.style.width = '0'; }
+      if (stepEl) stepEl.classList.remove('on');
+      if (r && r.needsUser) { openUpdaterTab(true); btn.disabled = false; btn.firstChild.textContent = 'Update now '; return; }
+      btn.disabled = false;
+      btn.firstChild.textContent = 'Try again ';
+      if (errEl) errEl.textContent = (r && r.error) || 'Update failed.';
+    });
+  }
+
   function renderUpdateResult(result) {
     if (!result) return;
+    lastUpdateResult = result;
     updateStatus.className = 'update-status show';
     if (!result.ok) {
       updateStatus.classList.add('error');
@@ -1082,9 +1183,18 @@
         `<span class="uh-eyebrow">VIVIMUSIC XTEN</span>` +
         `<span class="uh-badge">New update available</span>` +
         `<span class="uh-version">v${esc(ver)}</span>` +
-        `<span class="uh-sub">You're on v${esc(chrome.runtime.getManifest().version)} · Download and Load Unpack again for best experience</span>` +
-        `<a class="uh-btn" href="${esc(result.releaseUrl)}" target="_blank" rel="noopener">Download update <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v12M6.5 11.5 12 17l5.5-5.5M5 20h14"/></svg></a>` +
-        `<span class="uh-note">No need to remove the already installed one — just Load unpacked again and it will update on top of the existing install.</span></div>`;
+        `<span class="uh-sub">You're on v${esc(chrome.runtime.getManifest().version)} · ${smoothEnabled && smoothSupported ? 'One-click update' : 'Download and Load Unpack again for best experience'}</span>` +
+        (smoothEnabled && smoothSupported
+          ? `<button class="uh-btn" id="smoothInstallBtn" type="button"><span>Update now </span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v12M6.5 11.5 12 17l5.5-5.5M5 20h14"/></svg></button>` +
+            `<span class="uh-bar" id="smoothBar"><i></i></span><span class="uh-step" id="smoothStep" aria-live="polite"></span>` +
+            `<span class="uh-err" aria-live="polite"></span>` +
+            `<a class="uh-alt" href="${esc(result.releaseUrl)}" target="_blank" rel="noopener">Download manually instead</a>` +
+            `<span class="uh-note">Replaces files in your extension folder and reloads Xten. First time only, you'll pick that folder once. Refresh YouTube Music tabs afterwards.</span>`
+          : `<a class="uh-btn" href="${esc(result.releaseUrl)}" target="_blank" rel="noopener">Download update <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v12M6.5 11.5 12 17l5.5-5.5M5 20h14"/></svg></a>` +
+            `<span class="uh-note">No need to remove the already installed one — just Load unpacked again and it will update on top of the existing install.</span>`) +
+        `</div>`;
+      const smoothBtn = document.getElementById('smoothInstallBtn');
+      if (smoothBtn) smoothBtn.addEventListener('click', () => startSmoothInstall(smoothBtn));
     } else {
       updateStatus.classList.add('uptodate');
       updateStatus.textContent = "You're on the latest version.";

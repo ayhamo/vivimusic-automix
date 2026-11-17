@@ -109,6 +109,12 @@
     .issue-button:hover, .issue-button:focus-visible { color: #fff; transform: translateY(-1px); border-color: rgba(255,255,255,.34); background: rgba(255,255,255,.1); box-shadow: 0 5px 15px -9px rgba(255,255,255,.5); }
     .issue-button svg { width: 17px; height: 17px; }
     .issue-button + .announcement-button { margin-left: 0; }
+    .update-badge { position: absolute; top: -5px; right: -5px; min-width: 16px; height: 16px; padding: 0 4px; display: grid; place-items: center; border: 2px solid #171720; border-radius: 99px; background: #ff4f83; color: white; font: 700 9px/1 system-ui,sans-serif; }
+    .update-badge[hidden] { display: none; }
+    #discordCallbackForm:not([hidden]) { display: flex; flex-direction: column; gap: 7px; margin-top: 10px; }
+    .beta-badge { display: inline-block; margin-left: 4px; padding: 1px 7px; border-radius: 99px; vertical-align: middle; font: 700 9px/1.6 system-ui, sans-serif; letter-spacing: .08em; text-transform: uppercase; color: #cfd4ff; background: rgba(88,101,242,.24); border: 1px solid rgba(88,101,242,.5); }
+    .issue-button.update-button { margin-left: 0; }
+    .update-button + .announcement-button { margin-left: 0; }
     @media (prefers-reduced-motion: reduce) { .issue-button { transition: none; } }
     .announcement-button:hover, .announcement-button:focus-visible { color: #fff; border-color: rgba(149,133,255,.55); background: rgba(149,133,255,.14); box-shadow: 0 5px 15px -9px #9585ff; }
     .announcement-button svg { width: 17px; height: 17px; }
@@ -419,6 +425,8 @@
       transition: color .15s, background .15s;
     }
     .icon-btn:hover { color: var(--text-1); background: rgba(255,255,255,0.06); }
+    .switch.locked { opacity: .45; cursor: not-allowed; }
+    .switch.locked input, .switch.locked .slider { cursor: not-allowed; pointer-events: none; }
     .icon-btn:disabled { opacity: .4; cursor: default; background: none; color: var(--text-3); }
     .icon-btn svg { width: 13px; height: 13px; }
     .cache-io-error {
@@ -908,6 +916,9 @@
     .home-card[data-feature="appearance"] { --card-accent: #bd82ff; }
     .home-card[data-feature="artwork-cache"] { --card-accent: #51b5ff; }
     .home-card[data-feature="lastfm"] { --card-accent: #ff405b; }
+    .home-card[data-feature="discord"] { --card-accent: #5865f2; }
+    .home-card[data-feature="discord"] .home-card-icon { overflow: hidden; }
+    .home-card[data-feature="discord"] .home-card-icon img, .panel-icon[data-feature="discord"] img { inset: 0; width: 100%; height: 100%; object-fit: cover; }
     .home-card[data-feature="updates"] { --card-accent: #5ed6bd; }
     .home-card[data-feature="updates"] .home-card-icon img { filter: brightness(0) invert(1); }
     .home-card[data-feature="spotify-canvas"] .home-card-icon img { inset: auto; left: 50%; top: 50%; width: 54px; height: 54px; max-width: none; transform: translate(-50%, -50%); }
@@ -957,6 +968,7 @@
     .view-settings[data-feature="appearance"] { --panel-accent: #bd82ff; }
     .view-settings[data-feature="artwork-cache"] { --panel-accent: #51b5ff; }
     .view-settings[data-feature="lastfm"] { --panel-accent: #ff405b; }
+    .view-settings[data-feature="discord"] { --panel-accent: #5865f2; }
     .view-settings[data-feature="updates"] { --panel-accent: #5ed6bd; }
     .settings-content > .section { position: relative; margin: 0; padding: 17px; background: radial-gradient(ellipse at 100% 0%, color-mix(in srgb, var(--panel-accent, #9585ff), transparent 93%), transparent 58%), linear-gradient(155deg, rgba(24,24,33,.98), rgba(17,17,23,.98)); border-color: color-mix(in srgb, var(--panel-accent, #9585ff), transparent 80%); box-shadow: inset 0 1px rgba(255,255,255,.065), 0 18px 40px -30px color-mix(in srgb, var(--panel-accent, #9585ff), transparent 48%); }
     .settings-content > .section > .section-title { display: none; }
@@ -1406,6 +1418,16 @@
     .uh-btn:hover svg { transform: translateY(2px); }
     .update-hero:hover .uh-btn { transform: none; }
     .uh-btn:hover { transform: translateY(-2px) !important; }
+    button.uh-btn { width: 100%; border: 0; font-family: inherit; }
+    button.uh-btn:disabled { opacity: .65; cursor: default; transform: none !important; }
+    .uh-alt { display: block; margin-top: 8px; text-align: center; font-size: 10.5px; opacity: .7; color: inherit; text-decoration: underline; }
+    .uh-alt:hover { opacity: 1; }
+    .uh-bar { display: none; height: 4px; margin-top: 10px; border-radius: 99px; background: rgba(255,255,255,.22); overflow: hidden; }
+    .uh-bar.on { display: block; }
+    .uh-bar i { display: block; height: 100%; width: 0; border-radius: 99px; background: #fff; transition: width .2s ease; }
+    .uh-step { display: none; margin-top: 6px; font-size: 10.5px; text-align: center; opacity: .85; }
+    .uh-step.on { display: block; }
+    .uh-err { display: block; margin-top: 8px; font-size: 10.5px; line-height: 1.4; text-align: center; color: #ffb4b4; }
     .uh-note { display: block; margin-top: 10px; font-size: 10.5px; line-height: 1.4; opacity: .72; text-align: center; }
     .update-hero .uh-btn, .update-status .uh-btn { color: #111 !important; text-decoration: none !important; }
 
@@ -1490,6 +1512,19 @@
     .compat-card ul { margin: 6px 0 0; padding-left: 16px; color: #cdb199; font-size: 10.5px; line-height: 1.5; }
     .compat-card ul li { margin-bottom: 2px; }
     .compat-card .switch input:checked + .slider { background: #c4813f; }
+    /* ── v11.2.0 header: brand title larger than the "Dive into…" heading ── */
+    .header { gap: 12px; }
+    .brand { min-width: 0; }
+    .brand h1 { font-size: 18px; letter-spacing: .05em; line-height: 1.1; white-space: nowrap; }
+    .home-intro h2 { font-size: 15px; letter-spacing: -.015em; }
+    .home-intro p { font-size: 10.5px; }
+    @media (max-width: 430px) {
+      .header { gap: 8px; }
+      .logo-wrap, .logo-wrap img { width: 38px; height: 38px; }
+      .issue-button, .announcement-button { width: 30px; height: 30px; }
+      .issue-button svg, .announcement-button svg { width: 15px; height: 15px; }
+      .brand h1 { font-size: 16.5px; letter-spacing: .03em; }
+    }
   </style>
 </head>
 <body>
@@ -1501,11 +1536,14 @@
     </div>
     <div class="brand">
       <h1>ViviMusic Xten</h1>
-      <p>The most powerful &amp; feature rich extension ever created for YouTube Music.</p>
     </div>
     <a class="issue-button" href="https://github.com/Archimetrix/VIVIMUSIC_XTEN/issues/new" target="_blank" rel="noopener noreferrer" aria-label="Report an issue on GitHub" title="Report an issue on GitHub">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
     </a>
+    <button class="issue-button update-button" type="button" aria-label="Updates" title="Updates">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 12a8 8 0 0 1-14.3 4.9"/><path d="M4 12A8 8 0 0 1 18.3 7.1"/><path d="M18 3v4.5h-4.5"/><path d="M6 21v-4.5h4.5"/></svg>
+      <span class="update-badge" hidden>1</span>
+    </button>
     <button class="announcement-button" type="button" aria-label="Announcements" title="Announcements">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10 21h4"/></svg>
       <span class="announcement-badge" hidden>0</span>
@@ -1756,6 +1794,15 @@
     <p class="theme-sub">When lyrics genuinely can't be found for a track (video or not), show the dancer animation instead of a plain "No lyrics found" message.</p>
 
     <div class="row" style="margin-top:8px;">
+      <span class="row-label">Show dancer on video songs</span>
+      <label class="switch">
+        <input type="checkbox" id="dancerForVideosToggle" checked/>
+        <span class="slider"></span>
+      </label>
+    </div>
+    <p class="theme-sub">Turn off to never show the dancer on video songs — both on the "Lyrics are off for video songs" screen and when no lyrics are found for a video. Those screens then show just the text. Songs that aren't videos are unaffected.</p>
+
+    <div class="row" style="margin-top:8px;">
       <span class="row-label">Skip non-music sections (SponsorBlock)</span>
       <label class="switch">
         <input type="checkbox" id="sponsorBlockToggle" checked/>
@@ -1838,7 +1885,6 @@
         <span class="slider"></span>
       </label>
     </div>
-    <p class="theme-sub">By Chengggit</p>
     <div class="row" style="margin-top:10px;">
       <span class="row-label">Vinyl disc artwork</span>
       <label class="switch">
@@ -1874,6 +1920,22 @@
     </div>
     <p class="theme-sub">Turns the bottom player bar into a centred, rounded liquid-glass pill that floats above the page.</p>
     <div class="row" style="margin-top:10px;">
+      <span class="row-label">Full screen mode</span>
+      <label class="switch">
+        <input type="checkbox" id="fullscreenModeToggle" checked disabled/>
+        <span class="slider"></span>
+      </label>
+    </div>
+    <p class="theme-sub">In fullscreen, the album art fills the whole screen height on the left and fades into the lyrics on the right. Based on the reCover theme. Does not change anything outside fullscreen. Always on.</p>
+    <div class="row" style="margin-top:10px;">
+      <span class="row-label">Auto-hide player bar in fullscreen</span>
+      <label class="switch">
+        <input type="checkbox" id="fullscreenAutoHideToggle"/>
+        <span class="slider"></span>
+      </label>
+    </div>
+    <p class="theme-sub">In fullscreen the player bar fades away and comes back when you move the mouse to the bottom of the screen.</p>
+    <div class="row" style="margin-top:10px;">
       <span class="row-label">Language localization</span>
       <label class="switch">
         <input type="checkbox" id="localizationToggle" checked/>
@@ -1888,16 +1950,16 @@
         <div class="compat-sign" aria-hidden="true">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 2.4 17.5A2 2 0 0 0 4.1 20.5h15.8a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><line x1="12" y1="9.5" x2="12" y2="13.5"/><circle cx="12" cy="16.8" r=".6" fill="currentColor"/></svg>
         </div>
-        <div class="compat-title"><b>Layout compatibility mode</b><span>Turn on only if broken</span></div>
+        <div class="compat-title"><b>Layout compatibility mode</b><span>On by default</span></div>
         <label class="switch">
           <input type="checkbox" id="layoutCompatToggle"/>
           <span class="slider"></span>
         </label>
       </div>
-      <p class="theme-sub" style="margin-top:9px;"><b>Turn this on only if Theme, Canvas, Lyrics, or the Mini player stop working.</b> YouTube Music sometimes tests a new layout on a few accounts first (an A/B test), so a different account can see different page internals than you do. If you switch to one of those accounts, ViviMusic may not find the parts of the page it attaches to, and several features can fail at once.</p>
+      <p class="theme-sub" style="margin-top:9px;"><b>Keep this on. Turn it off only if it causes a problem.</b> YouTube Music sometimes tests a new layout on a few accounts first (an A/B test), so a different account can see different page internals than you do. If you switch to one of those accounts, ViviMusic may not find the parts of the page it attaches to, and several features can fail at once.</p>
       <ul>
         <li>Teaches ViviMusic to read the song, background and player state from YouTube's new mini player, and styles that mini player (including the floating pill).</li>
-        <li>Leave it <b>off</b> if everything already works. It is not needed on the normal layout.</li>
+        <li>It does nothing on the normal layout, so it is safe to leave on.</li>
       </ul>
     </div>
   </div>
@@ -1995,6 +2057,34 @@
     <p class="theme-sub transfer-note" data-info-for=".transfer-beta">Choose liked songs and playlists in a separate transfer window.</p>
   </div>
 
+  <!-- Discord Rich Presence -->
+  <div class="section">
+    <div class="section-title"><span class="dot-ico"></span>Discord</div>
+    <div class="row">
+      <span class="row-label">Show what I'm listening to</span>
+      <label class="switch">
+        <input type="checkbox" id="discordEnabledToggle"/>
+        <span class="slider"></span>
+      </label>
+    </div>
+    <p class="theme-sub" id="discordStatus" style="margin-top:10px;">Checking…</p>
+    <div style="display:flex; flex-direction:column; gap:7px;">
+      <button id="discordLoginBtn" type="button" class="update-btn primary" style="width:100%;">Connect Discord</button>
+      <button id="discordLogoutBtn" type="button" class="update-btn" style="width:100%; display:none;">Disconnect</button>
+    </div>
+    <form id="discordCallbackForm" hidden>
+      <p class="theme-sub">Did Discord say <b>"Invalid OAuth2 redirect_uri"</b>? Then this exact address is missing under OAuth2 → Redirects in the Discord Developer Portal (add it, press Save Changes, then Connect again):</p>
+      <code id="discordRedirectUri" style="display:block; word-break:break-all; user-select:all; font-size:11px; padding:8px 10px; border-radius:10px; background:rgba(255,255,255,.06);"></code>
+      <p class="theme-sub">Firefox didn't hand the login back automatically. In the Discord window, copy the full address (it starts with https:// and contains .extensions.allizom.org/discord?code=) and paste it here:</p>
+      <input id="discordCallbackUrl" type="text" autocomplete="off" spellcheck="false" placeholder="https://….extensions.allizom.org/discord?code=…" style="width:100%; box-sizing:border-box; padding:8px 10px; border-radius:10px; border:1px solid rgba(255,255,255,.14); background:rgba(255,255,255,.05); color:inherit; font:inherit;"/>
+      <button type="submit" class="update-btn primary" style="width:100%;">Finish connecting</button>
+    </form>
+    <p class="theme-sub" style="margin-top:10px;">Shows your song, artist, cover art and progress as "Listening to VIVIMUSIC-XTEN" on your Discord profile. No desktop app needed.</p>
+    <p class="theme-sub"><b>Before you connect:</b> sign in to Discord in this browser first (<a href="https://discord.com/login" target="_blank" rel="noopener">discord.com/login</a>). The authorization page uses that session. Then press <b>Connect Discord</b> and approve.</p>
+    <p class="theme-sub">About the permission screen: Discord bundles activity updates together with other social features in one permission, so its consent screen lists friends, invites and more. ViviMusic only uses it to set your Listening status. It never reads your friends, messages or servers, never sees your Discord password or account token, and your login stays in this browser. <b>Disconnect</b> here also revokes access, or remove it any time in Discord → Settings → Authorized Apps.</p>
+    <p class="theme-sub"><b>Beta &amp; disclaimer:</b> VIVIMUSIC-XTEN is an independent project and is not affiliated with or endorsed by Discord. This feature uses Discord's normal sign-in, but it relies on a Discord interface that is not part of Discord's public API. Discord may change or block it at any time, and it cannot be guaranteed to be free of any effect on your account. Use it at your own discretion.</p>
+  </div>
+
   <!-- Last.fm -->
   <div class="section">
     <div class="section-title"><span class="dot-ico"></span>Last.fm</div>
@@ -2063,6 +2153,19 @@
       <button class="update-btn" id="checkUpdateBtn">Check for updates</button>
     </div>
     <div class="update-status" id="updateStatus"></div>
+
+    <div class="row" style="margin-top:14px;">
+      <span class="row-label">Smoother Updates Process</span>
+      <label class="switch">
+        <input type="checkbox" id="smoothUpdatesToggle" checked/>
+        <span class="slider"></span>
+      </label>
+    </div>
+    <p class="theme-sub">Install updates with one click: Xten replaces its own files in the folder you loaded it from, then reloads. Off = download and Load unpacked manually.</p>
+    <div class="update-row" id="smoothFolderRow" style="margin-top:8px;">
+      <span class="update-version" id="smoothFolderState">—</span>
+      <button class="update-btn" id="smoothSetupBtn">Set up</button>
+    </div>
   </div>
 
   <div class="footer">
@@ -2126,6 +2229,7 @@
   <script src="popup-ui.js"></script>
   <script src="popup-info.js"></script>
   <script src="popup.js"></script>
+  <script src="popup-discord.js"></script>
   <script src="glass-select.js"></script>
 </body>
 </html>

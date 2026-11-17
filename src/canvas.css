@@ -633,9 +633,9 @@ ytmusic-player .vivi-canvas-slot {
    independent of YouTube Music's square artwork container.
 */
 :root {
-  --vivi-canvas-frame-color: rgba(255, 255, 255, 0.92);
-  --vivi-canvas-frame-width: 2px;
-  --vivi-canvas-frame-glow: rgba(0, 0, 0, 0.42);
+  --vivi-canvas-frame-color: transparent;
+  --vivi-canvas-frame-width: 0px;
+  --vivi-canvas-frame-glow: transparent;
   --vivi-canvas-fixed-ar: 0.5625;
 }
 
@@ -1072,6 +1072,18 @@ html.vivi-disc-style.vivi-disc-full-player ytmusic-player .player-minimize-butto
   display: none !important;
 }
 
+/* The vinyl replaces the artwork, so YouTube's "Full screen" button floating
+   over it looks wrong. Hide it while the vinyl is on (double-click still works,
+   and while fullscreen the exit control is left alone). */
+html.vivi-disc-style.vivi-disc-full-player ytmusic-app-layout:not([player-fullscreened]) ytmusic-player :is(
+  [class*="ullscreen-button" i], [class*="ullscreenButton" i],
+  button[aria-label*="ull screen" i], button[aria-label*="ullscreen" i],
+  yt-icon-button[aria-label*="ull screen" i], yt-icon-button[aria-label*="ullscreen" i],
+  tp-yt-paper-icon-button[aria-label*="ull screen" i], [role="button"][aria-label*="ull screen" i]
+) {
+  display: none !important;
+}
+
 html.vivi-disc-style.vivi-disc-full-player ytmusic-player #song-media-window::before,
 html.vivi-disc-style.vivi-disc-full-player ytmusic-player #song-media-window::after {
   content: none !important;
@@ -1405,3 +1417,24 @@ html.vivi-pill-player ytmusic-player-bar #hover-time-info.ytmusic-player-bar {
     background: rgba(28,28,32,0.92) !important;
   }
 }
+
+
+/* ── Blended / dissolved Canvas player ─────────────────────────────────────
+   No frame: the video's edges are feathered into the page background with a
+   mask (horizontal x vertical gradients, intersected), so it looks like part
+   of the scene. Tune with --vivi-canvas-fade (bigger = softer, more dissolved). */
+.vivi-canvas-player {
+  --vivi-canvas-fade: 4%;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  -webkit-mask-image:
+    linear-gradient(to right, transparent 0, #000 var(--vivi-canvas-fade), #000 calc(100% - var(--vivi-canvas-fade)), transparent 100%),
+    linear-gradient(to bottom, transparent 0, #000 var(--vivi-canvas-fade), #000 calc(100% - var(--vivi-canvas-fade)), transparent 100%) !important;
+  -webkit-mask-composite: source-in !important;
+  mask-image:
+    linear-gradient(to right, transparent 0, #000 var(--vivi-canvas-fade), #000 calc(100% - var(--vivi-canvas-fade)), transparent 100%),
+    linear-gradient(to bottom, transparent 0, #000 var(--vivi-canvas-fade), #000 calc(100% - var(--vivi-canvas-fade)), transparent 100%) !important;
+  mask-composite: intersect !important;
+}
+.vivi-canvas-player::before { display: none !important; }
+.vivi-canvas-player-media { background: transparent !important; }

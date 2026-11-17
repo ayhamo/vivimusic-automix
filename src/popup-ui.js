@@ -34,12 +34,15 @@
     'Artwork Cache': ['Artwork Cache', 'Browse, import, and export saved artwork', 'artwork-cache'],
     'Spotify Canvas': ['Spotify Canvas', 'Connect Spotify and manage Canvas', 'spotify-canvas'],
     'Last.fm': ['Last.fm', 'Scrobbling and account settings', 'lastfm', 'static'],
+    Discord: ['Discord', 'Rich Presence — show your song on Discord', 'discord', 'static'],
     Updates: ['Updates', 'Check your installed version', 'updates']
   };
   const sectionKey = section => section.querySelector('.section-title, .cache-title')?.textContent.trim() || '';
-  const desiredOrder = ['Artwork', 'Spotify Canvas', 'Audio playback', 'Lyrics', 'Appearance', 'Artwork Cache', 'Last.fm', 'Updates'];
+  const desiredOrder = ['Artwork', 'Spotify Canvas', 'Audio playback', 'Lyrics', 'Appearance', 'Artwork Cache', 'Discord', 'Last.fm', 'Updates'];
   window.viviPlusPopup?.extendCards(RS_NOTES, meta, desiredOrder); // Vivimusic Web+
   sections.sort((a, b) => desiredOrder.indexOf(sectionKey(a)) - desiredOrder.indexOf(sectionKey(b)));
+  let updatesCardRef = null;
+  const BETA = new Set(['discord']);
   sections.forEach(section => {
     const heading = section.querySelector('.section-title, .cache-title');
     const key = heading?.textContent.trim() || '';
@@ -85,7 +88,9 @@
     card.addEventListener('focus', startAnimation);
     card.addEventListener('blur', () => { if (!card.matches(':hover')) stopAnimation(); });
     card.addEventListener('click', () => {
-      settings.querySelector('.panel-heading').textContent = title;
+      const panelHeading = settings.querySelector('.panel-heading');
+      panelHeading.textContent = title;
+      if (BETA.has(feature)) { const b = document.createElement('span'); b.className = 'beta-badge'; b.textContent = 'Beta'; panelHeading.append(' ', b); }
       settings.querySelector('.panel-caption').textContent = description;
       settings.dataset.feature = feature;
       rsNotice.textContent = RS_NOTES[feature] ? RS_NOTES[feature] + ' Your settings are kept and apply again when you turn it off.' : '';
@@ -97,7 +102,8 @@
       document.body.classList.add('settings-open');
       settings.querySelector('.back-btn').focus();
     });
-    home.querySelector('.home-grid').appendChild(card);
+    // Updates lives in a header button now; its card stays detached and is opened via card.click().
+    if (feature === 'updates') updatesCardRef = card; else home.querySelector('.home-grid').appendChild(card);
     store.appendChild(section);
   });
   header.after(home, settings, announcements, store);
@@ -106,15 +112,17 @@
   // The background worker checks GitHub twice a day and stores the result in
   // vivi_update_check. If a newer version exists, show a red "1" on the
   // corner of the Updates card so users know to open it.
-  const updatesCard = home.querySelector('.home-card[data-feature="updates"]');
-  const updateBadge = document.createElement('span');
-  updateBadge.className = 'home-card-badge'; updateBadge.textContent = '1'; updateBadge.hidden = true;
-  updateBadge.setAttribute('aria-label', 'Update available');
-  if (updatesCard) updatesCard.appendChild(updateBadge);
+  const updatesCard = updatesCardRef;
+  const updateButton = header.querySelector('.update-button');
+  const updateBadge = header.querySelector('.update-badge');
+  updateButton?.addEventListener('click', () => updatesCard?.click());
   function applyUpdateResult(result) {
     const available = !!(result && result.ok && result.updateAvailable);
     updateBadge.hidden = !available;
-    if (updatesCard) updatesCard.title = available ? `Update available — v${result.latestVersion}` : '';
+    if (updateButton) {
+      updateButton.title = available ? `Update available — v${result.latestVersion}` : 'Updates';
+      updateButton.setAttribute('aria-label', available ? `Updates, v${result.latestVersion} available` : 'Updates');
+    }
   }
   try {
     chrome.storage.local.get('vivi_update_check', ({ vivi_update_check: cached }) => {
@@ -132,7 +140,7 @@
     });
   } catch { /* ignore */ }
   const announcementButton = header.querySelector('.announcement-button');
-  const announcementBadge = header.querySelector('.announcement-badge');
+  const announcementBadge = header.querySelector('.announcement-button .announcement-badge');
   let announcementState = { announcements: [], seenIds: [], unreadCount: 0 };
   const checkAnnouncements = new Promise(resolve => {
     try { chrome.runtime.sendMessage({ type: 'VIVI_ANNOUNCEMENTS_CHECK' }, resolve); }

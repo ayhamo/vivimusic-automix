@@ -1105,11 +1105,6 @@ ytmusic-app[is-guide-persistent][guide-collapsed] #mini-guide {
   display: none !important;
 }
 
-/* Remove the "Enter full screen" button from the mini/floating player controls */
-ytmusic-player yt-icon-button.fullscreen-button {
-  display: none !important;
-}
-
 ytmusic-immersive-header-renderer .gradient-container,ytmusic-visual-header-renderer .content-container {
   transition: padding var(--anim-drawer-duration) var(--anim-drawer-timing);
 }

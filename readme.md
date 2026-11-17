@@ -4,22 +4,22 @@
 
 # ViviMusic Xten
 
-**Apple Music–style Canvas artwork, Spotify Canvas, synced lyrics with romanization, a built-in equalizer, crossfade between songs, Last.fm scrobbling, Spotify → YouTube Music playlist transfer tool for YouTube Music and many more.**
+**Apple Music–style Canvas artwork, Spotify Canvas, synced lyrics with romanization, a built-in equalizer, crossfade between songs, Discord Rpc, Last.fm scrobbling, Spotify → YouTube Music playlist transfer tool for YouTube Music and many more.**
 
 [![Manifest](https://img.shields.io/badge/Manifest-V3-ff6b6b?style=flat-square)](#)
-[![Version](https://img.shields.io/badge/Version-11.1-4ecdc4?style=flat-square)](#)
+[![Version](https://img.shields.io/badge/Version-11.5.0-4ecdc4?style=flat-square)](#)
 [![Browsers](https://img.shields.io/badge/Chrome%20%7CFirefox%20%7C%20All%20Firefox%20Based%20Browsers%20%7cAll%20Chromium%20Browsers-supported-6c5ce7?style=flat-square)](#)
-[![Copyright](https://img.shields.io/badge/Copyright-%C2%A9%202026%20Archimetrix.%20All%20rights%20reserved-f39c12?style=flat-square)](LICENSE)
+[![License](https://img.shields.io/badge/License-AGPL_v3-blue?style=flat-square)](LICENSE)
 </div>
 
 ---
 
-ViviMusic Xten is a browser extension that reskins **[music.youtube.com](https://music.youtube.com)** with animated Canvas-style backgrounds (like Apple Music/Spotify Canvas), word-synced lyrics, an audio equalizer with crossfade between songs, SponsorBlock skipping, Last.fm scrobbling, and a dark, glassy theme — without needing a separate desktop app .
+ViviMusic Xten is a browser extension that reskins **[music.youtube.com](https://music.youtube.com)** with animated Canvas-style backgrounds (like Apple Music/Spotify Canvas), word-synced lyrics, an audio equalizer with crossfade between songs, SponsorBlock skipping, Discord Rpc, Last.fm scrobbling, and a dark, glassy theme — without needing a separate desktop app .
 
 This extension is **not published on the Chrome Web Store**. It's distributed as source from this repository and loaded manually as an "unpacked" extension. Follow the installation guide below — it takes about a minute.
 
 
-**🔴This extension require good amount of ram and some graphics  for example if you have a littlebit gpu even windows intregated gpu thats also can run this just make sure that graphics acceleration is turn on in your browser its very important .its actively themeing live website so system resource is essential-think of it like you running a software basically**
+**💠This extension require some amount of ram and some graphics for example if you have a littlebit gpu even windows intregated gpu thats also can run this just make sure that graphics acceleration is turn on in your browser.**
 
 ---
 
@@ -28,7 +28,7 @@ This extension is **not published on the Chrome Web Store**. It's distributed as
 <div align="center">
 
 <a href="https://youtu.be/d4SHceAjRGk">
-  <img src="https://github.com/Archimetrix/storage-project-files/blob/main/random-share/vivimusicdemo.gif" alt="ViviMusic Xten demo — click to watch the full video" width="720" />
+  <img src="https://raw.githubusercontent.com/Archimetrix/storage-project-files/main/random-share/vivimusicdemo.gif" alt="ViviMusic Xten demo — click to watch the full video" width="800" />
 </a>
 
 **Click the preview above to watch the full video** 
@@ -75,6 +75,12 @@ This extension is **not published on the Chrome Web Store**. It's distributed as
 
 <br />
 
+<img src="https://raw.githubusercontent.com/Archimetrix/storage-project-files/main/random-share/fullscreen.gif" alt="Full screen mode" width="800" />
+
+<sub><b>Full screen mode</b> — In fullscreen the album art fills the whole screen height on the left and fades into the synced lyrics on the right, with an auto-hiding player bar. Always on.</sub>
+
+<br />
+
 <img src="https://raw.githubusercontent.com/Archimetrix/storage-project-files/main/vivimusicwebfiles/Spotify%20to%20YTmusic%20playlists%20transfer.png" alt="Spotify → YouTube Music transfer" width="800" />
 
 <sub><b>Spotify → YouTube Music transfer</b> — Move liked songs and playlists from Spotify to YouTube Music in a few clicks from a dedicated transfer window.</sub>
@@ -94,9 +100,12 @@ This extension is **not published on the Chrome Web Store**. It's distributed as
   - [Chrome / Brave / Vivaldi / Opera](#chrome--edge--brave--vivaldi--opera)
   - [Firefox](#firefox)
 - [Updating](#updating)
+  - [Smoother Updates Process (Beta)](#smoother-updates-process-beta)
+  - [Manual update](#manual-update)
 - [Settings](#settings)
 - [Spotify Canvas Login](#spotify-canvas-login)
 - [Spotify → YouTube Music Playlist Transfer](#spotify--youtube-music-playlist-transfer)
+- [Discord Rich Presence](#discord-rich-presence)
 - [Last.fm Scrobbling](#lastfm-scrobbling)
 - [SponsorBlock](#sponsorblock)
 - [Star Verification](#star-verification)
@@ -115,6 +124,7 @@ This extension is **not published on the Chrome Web Store**. It's distributed as
 - 🎨 **THEME** — A full dark, glassy visual reskin of YouTube Music, toggleable independently of Canvas and Lyrics.
 - 🌊 **Kawarp Background Engine** — The animated Canvas background is fully tunable from the popup: opacity, warp intensity, blur passes, saturation, brightness, dithering, animation speed, and transition duration all have live sliders, plus a "pause when inactive" toggle and a one-click **Reset to defaults** button. There's also an "artwork/image-only" mode if you'd rather skip the warped background animation entirely and just show static art.
 - 💿 **Vinyl Disc Artwork** — Show the player artwork as a rotating record. The tonearm parks when playback pauses and returns when it resumes. (Turning this on switches off Apple Music artwork and Spotify Canvas.)
+- 🖥️ **Full Screen Mode** — A reCover-style fullscreen player: the album art fills the whole screen height on the left and fades into the synced lyrics on the right, with no tabs or side lists in the way. Videos play as a normal full-screen landscape video. The player bar keeps the theme's glass blur and can auto-hide, returning when you move the mouse to the bottom of the screen. It is always on and cannot be turned off. Nothing outside fullscreen is changed.
 - 🏷️ **Icons-only Player Tabs** — Replace the Up next / Lyrics / Comments / Related labels with icons; the active tab glows.
 - 🎶 **Crossfade (Beta)** — Blend the end of one song into the start of the next instead of a hard cut. Choose a length from 1 to 12 seconds in the **Audio playback** card. It is off by default, uses smooth equal-power fades, and is automatically skipped for ads, repeat-one and very short tracks.
 - 🎚️ **Built-in Equalizer** — A toggleable 3-band equalizer (low / mid / high) with a room-reverb send and one-click presets (Bass Boost, Clear Vocals, Empty Room), available from the full player screen.
@@ -131,11 +141,12 @@ This extension is **not published on the Chrome Web Store**. It's distributed as
 - ✨ **Lyrics Alignment & Highlight Animations** — Align lyrics left, center or right, and pick the current-word animation: Fill sweep, Glow up, Word bounce, Smooth zoom, Apple Music style, or Fluid flow (modelled on the Better Lyrics engine: lines glide up together with a soft ease, and the current word lights up letter by letter).
 - 💃 **REZE Dance** — An animated dancer plays when no lyrics can be found for a track, toggleable in the popup.
 - ⏭️ **SponsorBlock** — Automatically skips non-music segments (spoken intros, skits, outros) of music videos using community data from [SponsorBlock](https://sponsor.ajay.app/), and keeps the lyrics timeline in sync after each skip. See [SponsorBlock](#sponsorblock) for how it works and the required attribution.
+- 💬 **Discord Rich Presence (Beta)** — Show what you're playing on your Discord profile ("Listening to VIVIMUSIC-XTEN") with song, artist, album cover and a live progress bar — straight from the browser, with **no Discord desktop app, local helper or extra software**. Chromium and Firefox. See [Discord Rich Presence](#discord-rich-presence).
 - 🎧 **Last.fm Scrobbling** — Sign in through Last.fm's browser authorization page (or with username and password), scrobble what you listen to, send Now Playing status, and sync Likes/Unlikes as Loves/Unloves.
 - 💾 **Local Artwork Cache** — Previously fetched artwork/Canvas links are cached locally so repeat plays load instantly. View, search, preview, export, import and clear them from the popup.
 - ⌨️ **Cache Overlay Shortcut** — Press **Alt+C** on the YouTube Music tab to see the artwork cache and the current track's live cache status without opening the popup.
 - 🔋 **Optimized & Resource Saving Mode** — One switch on the popup's home screen that pauses the heaviest effects and background work: the fluid background and Apple Music artwork lookups, the equalizer and crossfade, SponsorBlock and the no-lyrics dancer, Last.fm scrobbling, and artwork fetching/caching. Your settings are kept and apply again when you switch it off.
-- 🔔 **Update Checker** — Since this isn't on the Web Store, the popup can check this GitHub repo's [Releases](../../releases) page and let you know when a newer version is out. It does not auto-install updates.
+- 🔔 **Update Checker & Smoother Updates Process (Beta)** — Since this isn't on the Web Store, the popup checks this GitHub repo's [Releases](../../releases) page and tells you when a newer version is out. With **Smoother Updates Process** (on by default) you can then install it with one click: no ZIP, no extracting, no re-loading by hand. See [Updating](#updating).
 
 
 ---
@@ -169,12 +180,43 @@ Firefox addon is currently available in official firefox addon store install the
 
 ## Updating
 
- To update ViviMusic Xten **For Chromium Builds Specially** :
+The popup checks this repository's [Releases](../../releases) automatically (twice a day), or on demand via **Check for updates**. When a newer version exists you'll see an **Update available** notice with an **Update now** button.
 
-1. Open the extension popup — if a newer version is available, you'll see an **"Update available"** notice (checked automatically twice a day, or manually via **Check for updates** in the popup).
-2. Download the latest release from the [Releases page](../../releases) (or pull the latest `main` branch).
-3. Extract it and again load unpack it then it will be updated .
-That's it — no need to remove and re-add the extension.
+### Smoother Updates Process (Beta)
+
+> **Beta.** From version (11.4.0+) This one-click updater is new. If anything goes wrong your previous files are restored automatically, and the manual method below always still works.
+
+Because the extension is loaded "unpacked", Chrome can't update it by itself. **Smoother Updates Process** (Popup → Updates panel, **on by default**) fills that gap: it replaces the extension's own files inside the folder you loaded it from, then reloads the extension.
+
+**First update only (about 30 seconds):**
+
+1. Click **Update now**. A setup tab opens.
+2. Open `chrome://extensions` → ViviMusic Xten → **Details** and note the folder path.
+3. Click **Choose folder & update**, pick that exact folder (the one containing `manifest.json`), and click **Allow / Edit files** when your browser asks.
+
+ViviMusic checks that it really is the folder your browser loaded; if you pick the wrong one it tells you and nothing is changed.
+
+**Every update after that:** click **Update now** in the popup. You'll see a progress bar with the current step (Check folder → Download → Verify → Unpack → Install), then the extension reloads on the new version. Refresh your YouTube Music tab afterwards.
+
+**What to expect:**
+
+- **Your settings are kept.** They live in your browser profile's extension storage, not in the extension folder, so replacing the files never touches them.
+- **Re-allow after a restart.** Browsers sometimes pause folder access after a restart. If so, the next update shows an **Allow access & update** button, one extra click. If your browser offers **Allow on every visit**, choose it.
+- **Safe by design.** The update is downloaded from this project's GitHub release, checked against its SHA-256 checksum when the release publishes one, confirmed to be this same extension and a newer version, fully unpacked in memory, and only then written to disk with `manifest.json` last. If any step fails, the files are rolled back to the previous version.
+- **Only your extension folder is touched.** ViviMusic can only write inside the one folder you chose. You can disconnect it any time from the setup tab (Popup → Updates → **Manage**).
+- **Wrong or moved folder?** If you move or rename the extension folder, reload it once via **Load unpacked** and run the setup again.
+
+**Browser support:** Chrome, Edge, Opera, Vivaldi and other Chromium browsers work out of the box. **Brave** ships with the needed feature switched off: open `brave://flags/#file-system-access-api`, set it to **Enabled**, relaunch Brave, then try again. Firefox isn't affected (it uses the Add-ons store), and Safari isn't supported. On a browser where the feature isn't available, the popup automatically falls back to the manual method.
+
+### Manual update
+
+If you'd rather not use the one-click updater, switch **Smoother Updates Process** off in the Updates panel (or use this if your browser doesn't support it):
+
+1. Click **Download update** in the popup (or grab the latest ZIP from the [Releases page](../../releases)).
+2. Extract it over your existing folder, or to a new one.
+3. Open `chrome://extensions` and click **Load unpacked** (or the reload icon if you replaced the files in place).
+
+No need to remove and re-add the extension; your settings are kept.
 
 ---
 
@@ -205,10 +247,13 @@ All settings live in the extension popup (click the ViviMusic Xten icon in your 
 | **Vinyl disc artwork** | Shows the player artwork as a rotating record with a tonearm. Turns off Apple Music artwork and Spotify Canvas while on. |
 | **Player tabs: icons only** | Replaces the Up next, Lyrics, Comments and Related labels with icons. |
 | **Floating pill player bar** | Turns the bottom player bar into a floating liquid-glass pill. |
+| **Full screen mode** | Always on and locked (the switch is greyed out). Reskins YouTube Music's fullscreen player: album art on the left fading into lyrics on the right. Does not change anything outside fullscreen. |
+| **Auto-hide player bar in fullscreen** | Fades the player bar away in fullscreen and brings it back when you move the mouse to the bottom of the screen. On by default. |
 | **Language localization** | On by default. Lets lyrics and the player tabs work when YouTube Music is not in English. |
 | **Spotify Canvas** | Enables Spotify Canvas videos for YT Music tracks; connect via login or `sp_dc` cookie. |
 | **When both are available, prefer** | Chooses Apple Music artwork or Spotify Canvas when a track has both. |
 | **Playlist transfer** | Opens the client-side Spotify → YouTube Music transfer tool (Beta). Select playlists and/or Liked Songs and transfer them into private YouTube Music playlists. |
+| **Discord (Beta) → Show what I'm listening to** | Turns Discord Rich Presence on or off. Connect once with **Connect Discord**; **Disconnect** also revokes access at Discord. |
 | **Last.fm scrobbling** | Turns Last.fm integration on or off entirely. |
 | **Send Now Playing** | Sends a "Now Playing" update to Last.fm as soon as a track starts. |
 | **Send Likes/Unlikes** | Mirrors the YouTube Music like button to Last.fm Love/Unlove. |
@@ -217,7 +262,9 @@ All settings live in the extension popup (click the ViviMusic Xten icon in your 
 | **Scrobble delay (min)** | Or once this many minutes have played — whichever threshold is reached first. |
 | **Artwork Cache** | Shows how many songs are cached locally, with search, preview, **Export**, **Import** and a one-click **Clear all**. |
 | **Check for updates** | Manually checks this repo's latest release against your installed version. |
+| **Smoother Updates Process (Beta)** | One-click, in-place updates (on by default). Shows whether your extension folder is connected, with **Set up / Re-allow / Manage** to connect, re-allow or disconnect it. Turn it off to use the manual download flow. |
 | **Optimized & resource saving mode** | Pauses heavy effects and background activity (see the feature description above). Settings are kept. |
+| **Updates (refresh icon)** | Opens the Updates panel. A red 1 appears on it when a newer release exists. |
 | **Notification bell** | Opens developer announcements. |
 | **Report an issue (warning icon)** | Opens a new GitHub issue for this project. |
 
@@ -289,6 +336,70 @@ The extension does not upload your Spotify library to a ViviMusic Xten backend. 
 ### Transfer safety
 
 Keep the transfer page open until the operation finishes. Do not close the YouTube Music tab, switch apps, or intentionally interrupt the browser while matching and playlist updates are running. The current implementation uses a page bridge inside the logged-in YouTube Music tab, so keeping that environment intact reduces the chance of an interrupted transfer. The browser will warn you if you try to close the transfer page while a transfer is running.
+
+---
+
+## Discord Rich Presence
+
+> 🧪 **Beta.** This feature relies on a Discord endpoint that is not part of Discord's public API (see [Limitations](#limitations-and-honesty-notes)), so it may change or break without notice. Feedback and bug reports are welcome.
+
+ViviMusic Xten can show your current song on your Discord profile as **"Listening to VIVIMUSIC-XTEN"**, with the title, artist, album cover, a progress bar, the ViviMusic Xten logo as a small badge on the cover, and two buttons: **Listen on YouTube Music** and **Get VIVIMUSIC-XTEN** (this repository). Discord never shows you your own buttons, only other people see them; the logo and cover appear on your own profile too. It works from the browser alone: **no Discord desktop client, no local bridge, no native helper.** It doesn't depend on the Discord app running on that computer.
+
+> **Browser support:** Chromium browsers (Chrome, Brave, Edge, Vivaldi, Opera…) and Firefox 128+ (the Firefox build uses the add-on ID `vivimusic-web@archimetrix.app`).
+
+### Using it
+
+0. Make sure you are **signed in to Discord in the same browser** (<https://discord.com/login>); the authorization page uses that session.
+1. Open the popup → **Discord** → **Connect Discord**.
+2. Approve the Discord authorization page.
+3. Switch on **Show what I'm listening to** and play a song on [music.youtube.com](https://music.youtube.com).
+
+*Firefox only:* Firefox occasionally fails to hand Discord's login result back to the extension. If that happens, the popup shows a box: copy the full address from the Discord window (it starts with `https://` and contains `.extensions.allizom.org/discord?code=`), paste it there and press **Finish connecting**. The pasted address is only used once, to finish your own login.
+
+Presence updates on track change, pause/resume and seeking, and is cleared when you close the tab, stop playing for 5 minutes, or turn the feature off. Ads are never shown as songs.
+
+### About the permission screen
+
+Discord's consent screen looks long (friends list, game invites, profile…). That is not ViviMusic asking for more. Discord's only open way for a third-party app to set a user's activity is the scope **`sdk.social_layer_presence`**, which Discord's Social SDK defines as one bundle: account linking, friends list, rich presence. The narrower presence scopes (`activities.write`, `rpc.activities.write`) are restricted by Discord to approved partners.
+
+What ViviMusic Xten actually does with it:
+
+- reads your Discord username (to show "Connected as …" in the popup);
+- sends your *Listening* activity to Discord;
+- nothing else. It does not read your friends, servers, messages or invites, and the code contains no calls that do (see `src/discord-rpc.js`).
+
+Your Discord login token is stored **only in your browser's extension storage** and sent only to `discord.com`. **Disconnect** revokes the token at Discord. You can also remove ViviMusic any time in Discord → **Settings → Authorized Apps**.
+
+### How it works
+
+```text
+music.youtube.com tab  ──►  discord-presence.js (content script: reads player, sends changes)
+                                   │  runtime message
+                                   ▼
+                      discord-rpc.js (background service worker)
+                       • OAuth2 + PKCE via chrome.identity (Public Client, no secret)
+                       • cover art: iTunes lookup → YouTube thumbnail fallback
+                       • POST discord.com/api/v10/users/@me/headless-sessions
+                                   ▼
+                              Discord profile
+```
+
+It uses the same OAuth scope and "headless session" endpoint that Discord's own Social SDK uses to publish presence without a running client. Nothing is spoofed, and it never touches your Discord account token. It uses a scoped OAuth authorization that you grant and can revoke.
+
+### Limitations and honesty notes
+
+**Disclaimer.** ViviMusic Xten is an independent project, not affiliated with or endorsed by Discord. The feature uses Discord's normal OAuth sign-in (it never sees your Discord password or account token and can only set your Listening status), but it depends on an interface that is not part of Discord's public API. Discord may change or block it at any time, and no guarantee can be given that using it has no effect on your account. Use it at your own discretion.
+
+- **Clean-up behaviour.** The activity is removed when you pause for 3 minutes, 10 seconds after a song ends with nothing queued, when you close the music tab, or if the tab stops reporting for ~2.5 minutes (a watchdog), and any leftover session is deleted at the next browser start. If the browser is killed outright, nothing can run; Discord then drops the idle session by itself. Community API documentation says headless sessions expire about 20 minutes after their last update, so the activity can linger up to that long (it also shows on your phone, because activity belongs to your account, not to one device).
+- The `headless-sessions` endpoint is **not part of Discord's public, documented REST API**. Discord can change or restrict it, or lock the scope, at any time, which would break this feature without any change to ViviMusic.
+- Discord's activity "name" is set by the extension (`VIVIMUSIC-XTEN`), and Discord decides how it prioritises overlapping activities (for example, a game outranks a listening status on your card, but stays visible on your full profile).
+- Cover art comes from an iTunes search (only used when artist, title and album match closely) with the YouTube Music thumbnail as fallback; Discord shows an image only if it accepts the URL.
+
+
+
+### Credit
+
+The idea of using `sdk.social_layer_presence` and a headless session to publish Rich Presence from a browser extension comes from **[Neurobox](https://github.com/Sheathed/Neurobox)** by **Sheathed** (AGPL-3.0), which proved the approach works. ViviMusic Xten's implementation is written for this project (MV3 service-worker-safe state, YouTube Music player tracking, artwork resolution, popup UI), but it follows Neurobox's approach and activity format, which is also why this project is licensed under the same AGPL-3.0. Thanks also to Discord for documenting the Social SDK scopes.
 
 ---
 
@@ -364,6 +475,7 @@ ViviMusic Xten's content scripts only run on `music.youtube.com`. Everything els
 | `cookies` | Used only for Spotify login (reading/managing the `sp_dc` session cookie needed for Spotify Canvas, Spotify lyrics and the playlist transfer). |
 | `declarativeNetRequestWithHostAccess` | Adds the request headers (such as `Origin`/`Referer`) that Apple Music's and Spotify's web players require for the artwork, Canvas and playlist requests the extension makes on your behalf. |
 | `scripting` | Runs the YouTube Music page bridge used by the playlist transfer inside your logged-in YouTube Music tab. |
+| `identity` | Opens Discord's authorization page for Discord Rich Presence (`chrome.identity.launchWebAuthFlow`). Only used when you press **Connect Discord**. |
 
 | Host access | Why it's needed |
 |---|---|
@@ -374,8 +486,11 @@ ViviMusic Xten's content scripts only run on `music.youtube.com`. Everything els
 | `code.thetadev.de` | Community-maintained Spotify web-player secrets ([ThetaDev/spotify-secrets](https://code.thetadev.de/ThetaDev/spotify-secrets)) needed to obtain a Spotify web-player session. |
 | `sponsor.ajay.app` | SponsorBlock's API — used only if SponsorBlock is enabled, to fetch skip segments for the currently playing video. |
 | `translate.googleapis.com` | Optional romanization lookups for scripts that can't be converted on-device. Used only for languages you tick, and only the lyric text is sent. |
-| `api.github.com`, `github.com`, `raw.githubusercontent.com`, `avatars.githubusercontent.com` | Update check (read-only release lookup), developer announcements (a read-only JSON file in this project's repository), and [star verification](#star-verification) (GitHub's device flow, your token, and your avatar on the verification screen). |
+| `api.github.com`, `github.com`, `codeload.github.com`, `objects.githubusercontent.com`, `release-assets.githubusercontent.com`, `raw.githubusercontent.com`, `avatars.githubusercontent.com` | Update check (read-only release lookup), downloading the release ZIP when you press **Update now** (including the redirect hosts GitHub serves release files from), developer announcements (a read-only JSON file in this project's repository), and [star verification](#star-verification) (GitHub's device flow, your token, and your avatar on the verification screen). |
+| `discord.com` (`/api/*`, `/oauth2/*`) | Discord Rich Presence: sign-in, and sending your current song as your activity. Used only if you connect Discord. Your Discord token stays in your browser. |
 | `ws.audioscrobbler.com` | Last.fm's API — used only if you enable and log in to Last.fm scrobbling. Sends the current artist/track (and your login once, to establish a session) directly to Last.fm. |
+
+**Folder access (Smoother Updates Process):** if you use it, your browser's folder-access feature lets the extension write to the single folder you picked, and only after you approve the browser's prompt. The folder handle is stored locally in the extension's own browser storage; you can disconnect it at any time. It is not a manifest permission and nothing outside that folder is accessible.
 
 Nothing is sent to a ViviMusic Xten-owned server. The extension communicates directly with the external services needed by the enabled features: Spotify, YouTube Music, Apple Music and Deezer, the lyrics providers, GitHub (updates, announcements and star verification), SponsorBlock if enabled, Google Translate if you enable romanization lookups, and Last.fm if you opt in to scrobbling. For the Spotify → YouTube Music transfer, Spotify playlist data is read locally by the extension and YouTube Music receives the search/playlist-update requests needed to perform the transfer. No analytics and no tracking.
 
@@ -391,6 +506,18 @@ You selected the wrong folder — make sure you pick the folder that directly co
 
 **Extension disappeared / shows an error icon after a browser restart.**
 The folder you extracted the extension to was moved, renamed, or deleted. Re-extract it somewhere permanent and reload it via `chrome://extensions`.
+
+**Update now says "showDirectoryPicker is not defined" / "Not available in this browser setting".**
+Your browser has the File System Access API switched off. In Brave, open `brave://flags/#file-system-access-api`, set it to **Enabled** and relaunch. Otherwise use the [manual update](#manual-update).
+
+**"That isn't the folder Chrome loaded ViviMusic from."**
+Pick the folder shown under `chrome://extensions` → ViviMusic Xten → **Details**, the one that directly contains `manifest.json` (not its parent or the `src` subfolder).
+
+**Update asks to "Allow access" again.**
+Normal after a browser restart. Click it once; choose **Allow on every visit** if your browser offers it.
+
+**An update failed.**
+The message says why (download, checksum, or write error). Your previous version is restored automatically. Try again, or use the [manual update](#manual-update).
 
 **Spotify → YouTube Music says Spotify is not connected.**
 Open Spotify and make sure you are fully signed in. Then return to the transfer page and click **Refresh**. Vivimusic uses the existing Spotify Web Player session rather than a separate Spotify developer login.
@@ -430,6 +557,7 @@ YouTube Music's own layout changes occasionally, which can break selectors this 
 
 - Built and maintained by **Archimetrix**
 - Theme design foundation: the **"Dynamic Background"** theme by **chengggit**
+- Full Screen Immersive mode : **Recover Theme** by **Mukeenanyafiq**
 
 **Data and services**
 
@@ -439,13 +567,15 @@ YouTube Music's own layout changes occasionally, which can break selectors this 
 - **Scrobbling** — **[Last.fm](https://www.last.fm)**
 - **Romanization lookups** — **Google Translate**
 - **Spotify web-player secrets** — **[ThetaDev/spotify-secrets](https://code.thetadev.de/ThetaDev/spotify-secrets)**
-- Special thanks to **[VIVIMUSIC](https://github.com/vivizzz007/vivi-music)** for providing the Musixmatch foundation and artwork-fetching path.
+- **Discord Rich Presence (no desktop app)** — approach and idea from **[Neurobox](https://github.com/Sheathed/Neurobox)** by **Sheathed** (AGPL-3.0). See [Discord Rich Presence](#discord-rich-presence).
+- Musixmatch module-artwork fetching directly from apple-- **[VIVIMUSIC](https://github.com/vivizzz007/vivi-music)** 
 
 **Open-source components bundled with the extension**
 
 - **Kawarp** (fluid background engine, `@kawarp/core`) — © 2026 Better Lyrics, MIT License
 - **hls.js** — © 2017 Dailymotion, Apache License 2.0
 - **pinyin-pro** (Chinese pinyin romanization) — © 2022-present zh-lx, MIT License
+- **reCover** (fullscreen player layout) — © mukeenanyafiq and contributors, MIT License
 - **Lyrics fonts** — Playfair Display, Cormorant, DM Serif Display, Lora, Poppins, Montserrat, Outfit, Space Grotesk, Caveat, Dancing Script, Pacifico and Bebas Neue, SIL Open Font License 1.1, Latin subsets via [Fontsource](https://fontsource.org)
 
 Full copyright notices and license texts for the bundled components are in [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
@@ -458,12 +588,18 @@ ViviMusic Xten is an independent project and is **not affiliated with, endorsed 
 
 ## License
 
-Copyright (c) 2026 [Archimetrix]. All rights reserved.
+ViviMusic Xten is free software, licensed under the **GNU Affero General Public License v3.0** (AGPL-3.0-only). The full text is in [`LICENSE`](LICENSE).
 
-This software and associated documentation files (the "Software") are proprietary 
-and confidential. No part of this Software may be reproduced, distributed, 
-transmitted, transcribed, stored in a retrieval system, or translated into 
-any human or computer language, in any form or by any means, without the 
-prior written permission of the copyright owner.
+Copyright (c) 2026 Archimetrix
 
-**Third-party components.** The terms above apply only to the original code and assets of ViviMusic Xten. The bundled third-party components listed under [Credits](#credits) remain under their own licenses (Apache-2.0, MIT and SIL OFL 1.1), and nothing above restricts the rights those licenses grant. Services the extension connects to — including SponsorBlock, whose data is licensed CC BY-NC-SA 4.0 — are not part of the Software and are governed by their own terms. See [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
+This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General Public License as published by the Free Software Foundation, version 3.
+
+This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+**In short:** you may use, study, modify and share it, including commercially, as long as any version you distribute, or offer to users over a network, stays under the AGPL with its complete source available and with the original copyright and attribution notices kept.
+
+**Third-party components.** The bundled third-party components listed under [Credits](#credits) stay under their own licenses (Apache-2.0, MIT and SIL OFL 1.1), and nothing above restricts the rights those licenses grant. Apache-2.0, MIT and OFL components are compatible with distribution inside an AGPL-3.0 package. Services the extension connects to, including SponsorBlock (data licensed CC BY-NC-SA 4.0) and Discord, are not part of the software and are governed by their own terms. See [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
+
+**Source code.** The complete source is in this repository: <https://github.com/Archimetrix/VIVIMUSIC_XTEN>.

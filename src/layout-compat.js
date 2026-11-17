@@ -3,21 +3,23 @@
  *
  * Support for YouTube Music's layout A/B test: some accounts get no
  * <ytmusic-player-bar> and a <ytmusic-miniplayer> instead. Nothing here does
- * anything unless "Layout compatibility mode" is switched on in the popup
- * (Appearance) AND the page really has that layout. Otherwise every function
+ * anything unless "Layout compatibility mode" is on in the popup
+ * (Appearance, on by default) AND the page really has that layout. Otherwise every function
  * below answers "no opinion" and the main code behaves exactly as usual.
+ * The setting is ON by default: on the classic layout (a <ytmusic-player-bar>
+ * exists) active() is always false, so nothing changes for those accounts.
  */
 (() => {
   'use strict';
 
   const CLASS = 'vivi-layout-compat';
 
-  const state = { on: false };
+  const state = { on: true }; // default ON: harmless on the classic layout (active() needs no classic bar)
   function setOn(v) {
-    state.on = v === true;
+    state.on = v !== false;
     syncClass();
   }
-  try { chrome.storage.local.get({ layoutCompatEnabled: false }, (r) => setOn(r.layoutCompatEnabled)); } catch { /* no-op */ }
+  try { chrome.storage.local.get({ layoutCompatEnabled: true }, (r) => setOn(r.layoutCompatEnabled !== false)); } catch { /* no-op */ }
 
   const hasClassicBar = () => !!document.querySelector('ytmusic-player-bar');
   // true only when the setting is on AND this account really has the new layout
@@ -121,10 +123,103 @@
   function removeTimeLabel() {
     document.querySelectorAll('.vivi-compat-time').forEach((el) => el.remove());
   }
+
+  // ── Fullscreen: minimize button + click safety ───────────────────────────
+  // The new miniplayer has no way to leave Vivi's fullscreen view, so add one
+  // while fullscreen is active. It is removed again as soon as fullscreen ends.
+  const isFs = () => !!document.fullscreenElement ||
+    !!document.querySelector('ytmusic-app-layout[player-fullscreened], ytmusic-player-page[player-fullscreened]');
+
+  function exitFullscreen() {
+    try { if (document.fullscreenElement) { document.exitFullscreen(); return; } } catch { /* fall through */ }
+    // Not real DOM fullscreen: use YouTube's own control if one exists.
+    const native = Array.from(document.querySelectorAll('button, yt-icon-button, tp-yt-paper-icon-button'))
+      .find((b) => !b.closest('.vivi-compat-minimize') &&
+        /exit\s*full\s*-?\s*screen|minimi[sz]e|collapse/i.test(b.getAttribute('aria-label') || b.getAttribute('title') || ''));
+    if (native) { native.click(); return; }
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', keyCode: 27, bubbles: true }));
+  }
+
+  const MIN_ICON =
+    '<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor" aria-hidden="true">' +
+    '<path d="M5 16h3v3h2v-5H5v2zm3-8H5v2h5V5H8v3zm6 11h2v-3h3v-2h-5v5zm2-11V5h-2v5h5V8h-3z"/></svg>';
+
+  function removeMinimizeBtn() {
+    document.querySelectorAll('.vivi-compat-minimize').forEach((el) => el.remove());
+  }
+  function syncMinimizeBtn(mini) {
+    if (!isFs() || !mini) { removeMinimizeBtn(); return; }
+    const right = mini.querySelector('.ytMusicMiniPlayerRightSection') || mini;
+    if (right.querySelector('.vivi-compat-minimize')) return;
+    removeMinimizeBtn();
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'vivi-compat-minimize';
+    btn.title = 'Minimize (exit fullscreen)';
+    btn.setAttribute('aria-label', 'Minimize (exit fullscreen)');
+    btn.innerHTML = MIN_ICON;
+    btn.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); exitFullscreen(); });
+    right.appendChild(btn); // last, so it sits at the far right
+  }
+
+  // The theme makes the full-player layer ([slot=player-page]) a fixed,
+  // full-viewport box. In the new layout that box covers the whole bottom bar,
+  // and raising only <ytmusic-miniplayer>'s own z-index cannot beat it because
+  // the miniplayer lives inside a lower stacking context. So raise the whole
+  // chain of containers from the miniplayer up to the app layout. Then the real
+  // buttons get hover + clicks, and a click on empty space reaches YouTube's own
+  // "collapse the full player" handler again.
+  const Z = '100000';
+  function ensureClickable(mini) {
+    if (!mini) return;
+    const host = document.querySelector('ytmusic-app-layout') || document.getElementById('layout');
+    let top = mini;
+    for (let n = mini; n && n !== host && n !== document.body && n !== document.documentElement; n = n.parentElement) {
+      top = n;
+      const cs = getComputedStyle(n);
+      if (cs.position !== 'static' || n === mini) {
+        if (n.style.getPropertyValue('z-index') !== Z) n.style.setProperty('z-index', Z, 'important');
+      }
+    }
+    // The container that is a direct child of the app layout is what competes
+    // with the player-page slot: make sure it takes part in stacking.
+    if (top !== document.body && top !== host && getComputedStyle(top).position === 'static') {
+      top.style.setProperty('position', 'relative', 'important');
+      top.style.setProperty('z-index', Z, 'important');
+    }
+    if (mini.style.getPropertyValue('pointer-events') !== 'auto') mini.style.setProperty('pointer-events', 'auto', 'important');
+    passThroughOverlays(mini);
+  }
+
+  // Generic safety net for the same problem: any EMPTY <div> (no children, no
+  // text) that sits above the miniplayer at a few points along the bar is a
+  // decorative background layer, so make it click-through.
+  function passThroughOverlays(mini) {
+    if (mini.hidden) return;
+    const r = mini.getBoundingClientRect();
+    if (r.width < 40 || r.height < 20) return;
+    const y = r.top + r.height / 2;
+    for (const fx of [0.08, 0.5, 0.92]) {
+      let stack;
+      try { stack = document.elementsFromPoint(r.left + r.width * fx, y); } catch { continue; }
+      for (const el of stack) {
+        if (mini.contains(el)) break;                 // reached the miniplayer: done
+        if (el.contains(mini)) continue;              // an ancestor of it: fine
+        if (el.tagName === 'DIV' && el.childElementCount === 0 && !(el.textContent || '').trim() &&
+            el.style.getPropertyValue('pointer-events') !== 'none') {
+          el.style.setProperty('pointer-events', 'none', 'important');
+          el.setAttribute('data-vivi-passthru', '1');
+        }
+      }
+    }
+  }
+
   function tickTime() {
     syncClass();
-    if (!active()) { removeTimeLabel(); return; }
+    if (!active()) { removeTimeLabel(); removeMinimizeBtn(); return; }
     const mini = document.querySelector('ytmusic-miniplayer');
+    syncMinimizeBtn(mini);
+    ensureClickable(mini);
     const right = mini && mini.querySelector('.ytMusicMiniPlayerRightSection');
     if (!right) { removeTimeLabel(); return; }
     const own = right.querySelector('.ytMusicMiniPlayerTimeInfo');
@@ -142,7 +237,42 @@
     const text = fmt(video.currentTime) + ' / ' + fmt(video.duration);
     if (label.textContent !== text) label.textContent = text;
   }
+
+  // ── Click forwarding (stock miniplayer) ──────────────────────────────────
+  // If a transparent layer inside/over the miniplayer (e.g. its "click anywhere
+  // to open/close the player" surface) receives the click instead of the button
+  // drawn under the pointer, the button seems dead while a click on the body
+  // still toggles the full player. Hit-test the buttons by screen position in
+  // the capture phase and click the right one ourselves. Normal clicks (target
+  // already inside a button) and the body click are left completely alone.
+  const BTN_SEL = 'button, [role="button"], yt-icon-button, tp-yt-paper-icon-button, a[href]';
+  window.addEventListener('click', (e) => {
+    if (!e.isTrusted || e.button !== 0 || !active()) return;
+    const mini = document.querySelector('ytmusic-miniplayer');
+    if (!mini || mini.hidden) return;
+    const t = e.target instanceof Element ? e.target : null;
+    if (t && t.closest(BTN_SEL) && mini.contains(t.closest(BTN_SEL))) return; // works already
+    const mr = mini.getBoundingClientRect();
+    if (e.clientX < mr.left || e.clientX > mr.right || e.clientY < mr.top || e.clientY > mr.bottom) return;
+    let best = null, bestArea = Infinity;
+    mini.querySelectorAll(BTN_SEL).forEach((b) => {
+      if (b.closest('.vivi-compat-minimize') || b.disabled || b.getAttribute('aria-disabled') === 'true') return;
+      const r = b.getBoundingClientRect();
+      if (r.width < 8 || r.height < 8 || r.width > mr.width * 0.6) return; // skip full-size tap surfaces
+      if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) return;
+      const cs = getComputedStyle(b);
+      if (cs.visibility === 'hidden' || cs.display === 'none') return;
+      const area = r.width * r.height;
+      if (area < bestArea) { best = b; bestArea = area; }
+    });
+    if (!best) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    best.click();
+  }, true);
+
   setInterval(tickTime, 500);
+  document.addEventListener('fullscreenchange', tickTime);
 
   try {
     chrome.runtime.onMessage.addListener((msg) => {

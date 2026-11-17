@@ -153,7 +153,7 @@ Then test in Firefox (crossfade, manual skip, automix, lyrics), bump `version` i
 git push
 ```
 
-Last synced: GitHub v10.1.1 + AMO 10.1.1 (2026-11-03).
+Last synced: GitHub v11.5.0 (2026-11-17); manifest rebuilt with `python scripts/apply_manifest.py --ref v11.5.0`.
 
 ### B. The daily workflow (`.github/workflows/fork-sync-release.yml`)
 

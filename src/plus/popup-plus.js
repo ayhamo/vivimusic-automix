@@ -36,6 +36,15 @@
   `;
   document.head.appendChild(style);
 
+  // Upstream's in-place updater (smooth-update.js) needs folder access, which
+  // Firefox does not give extensions; there updates come signed from AMO.
+  if (typeof window.showDirectoryPicker !== 'function' && globalThis.browser?.runtime?.getBrowserInfo) {
+    const row = document.getElementById('smoothUpdatesToggle')?.closest('.row');
+    const note = row?.nextElementSibling?.matches('p.theme-sub') ? row.nextElementSibling : null;
+    for (const el of [row, note, document.getElementById('smoothFolderRow')]) el?.classList.add('vivi-plus-hidden');
+    style.textContent += '.vivi-plus-hidden { display: none !important; }';
+  }
+
   // ── Our settings rows, placed next to upstream elements found by id ──
   // A row whose anchor is gone (upstream moved things) is put at the end of the
   // popup, so it still works and the problem is visible.
