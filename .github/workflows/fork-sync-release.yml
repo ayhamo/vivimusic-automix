@@ -112,10 +112,15 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: lint with addons-linter (fails on errors)
+        env:
+          UPDATE_URL: ${{ vars.UPDATE_URL }}
         run: |
           set -euo pipefail
-          npx --yes addons-linter "out/vivimusic-automix-${{ steps.build.outputs.version }}-firefox.zip" --output json > lint.json || true
+          # with an update_url the add-on updates from our own releases: lint it as self-hosted
+          self=""; if [ -n "${UPDATE_URL}" ]; then self="--self-hosted"; fi
+          npx --yes addons-linter "out/vivimusic-automix-${{ steps.build.outputs.version }}-firefox.zip" $self --output json > lint.json || true
           jq '.summary' lint.json
+          jq -r '.errors[] | "ERROR \(.code): \(.message) \(.file // "")"' lint.json
           test "$(jq '.summary.errors' lint.json)" = "0"
 
       # Unlisted signing on AMO with the add-on's API key (repo secrets
