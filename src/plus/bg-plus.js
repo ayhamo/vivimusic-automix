@@ -111,21 +111,16 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   }
 });
 
-// Inject / remove theme.css for the sending tab. Done from here (not with a
-// <link> in the page) so the browser's page-side extension-URL check is never
-// involved.
+// Inject / remove our theme additions (theme-plus.css) for the sending tab,
+// next to upstream's theme.css.
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  if (msg?.type !== 'VIVI_THEME_CSS') return undefined;
-  if (!sender?.tab?.id) { sendResponse({ ok: false }); return undefined; }
+  // Upstream's own listener (background.js, registered first) adds theme.css and
+  // answers; this one only adds our additions after it, without answering.
+  if (msg?.type !== 'VIVI_THEME_CSS' || !sender?.tab?.id) return undefined;
   const target = { tabId: sender.tab.id, frameIds: [sender.frameId || 0] };
-  const files = ['src/theme.css', 'src/plus/theme-plus.css'];
-  const job = msg.on
-    ? chrome.scripting.insertCSS({ target, files })
-    : chrome.scripting.removeCSS({ target, files });
-  Promise.resolve(job)
-    .then(() => sendResponse({ ok: true }))
-    .catch((e) => sendResponse({ ok: false, error: String(e?.message || e) }));
-  return true;
+  const files = ['src/plus/theme-plus.css'];
+  Promise.resolve(msg.on ? chrome.scripting.insertCSS({ target, files }) : chrome.scripting.removeCSS({ target, files })).catch(() => {});
+  return undefined;
 });
 
 // ── Title & Artist Cleaners for Lyrics & Artwork Search (from BitChord) ──

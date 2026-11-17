@@ -177,6 +177,28 @@
         engine: a?.getLiveState(),
         crossfade: window.__viviCrossfade?.status(),
       }));
+    } else if (d.type === 'vivi-automix-fixture') {
+      // Debug helper for spec/automix/pairs (the test Firefox's capture scenario): both songs'
+      // analysis, where they are sung (synced lyrics), and their loudness at
+      // 20 Hz, the way the planner reads it (rms() on channel 0, every 16th sample).
+      const A = window.__viviAutomix, ids = Array.isArray(d.ids) ? d.ids.slice(0, 2) : [];
+      const reply = (data) => window.postMessage({ ch: CHANNEL, dir: 'fixture', reqId: d.reqId, ...data }, window.location.origin);
+      (async () => {
+        const songsOut = [];
+        for (const id of ids) {
+          const analysis = A?.get(id);
+          if (!analysis) throw new Error('not analysed yet: ' + id);
+          const buf = await new OfflineAudioContext(1, 1, 48000).decodeAudioData(await A.audioBytes(id));
+          const data = buf.getChannelData(0), per = Math.round(buf.sampleRate / 20), loud = [];
+          for (let w = 0; w * per < data.length; w++) {
+            let ss = 0, n = 0;
+            for (let i = w * per; i < Math.min(data.length, (w + 1) * per); i += 16) { ss += data[i] * data[i]; n++; }
+            loud.push(n ? Math.round(Math.sqrt(ss / n) * 1e4) / 1e4 : 0);
+          }
+          songsOut.push({ id, analysis, sung: await A.sungSpans(id), loudness20Hz: loud, decodedSec: buf.duration });
+        }
+        reply({ ok: true, songs: songsOut });
+      })().catch((e) => reply({ ok: false, error: String(e?.message || e) }));
     }
   });
 
@@ -1247,55 +1269,17 @@
   //   the next song's high-pass opens from 1.2 kHz; the same bass swap.
   // clash (the share both sing, from the plan) deepens the filters and
   // moves the fader towards a vocal-safe pair.
-  const glide = (a, b, x) => a * Math.pow(b / a, clamp(x, 0, 1));
-  const bassCut = (x) => glide(20, 200, x);
-  const entryHp = (p, top, openBy) => (p >= openBy ? 20 : glide(20, top, Math.pow(1 - p / openBy, 0.35)));
+  // The shapes themselves are the planner's (automix.js djShape), so the
+  // overview and the spec's curves are what plays.
   const djShapes = new WeakMap();   // plan -> its shapes, made once per blend length
   function djShape(m, style, D) {
     const hit = djShapes.get(m);
     if (hit && hit.D === D && hit.style === style) return hit;
-    const clash = clamp(m.clash || 0, 0, 1);
-    const beat = m.bpm > 0 ? 60 / m.bpm : 0;
-    const grid = beat ? D / beat : 0;   // beats in the blend
-    const onBar = (f) => (grid >= 8 ? clamp(Math.round((f * grid) / 4) * 4 / grid, 4 / grid, 1 - 4 / grid) : f);
-    const w = grid >= 2 ? 0.5 / grid : 0.2;
-    const swapAt = onBar(0.5);
-    const h = (p) => clamp((p - (swapAt - w)) / w, 0, 1);
-    const S = Math.PI / 2;
-    let inHp, outHp, outLp, rise, fall;
-    if (style === 'filter') {
-      const top = glide(1200, 2400, clash), openBy = onBar(0.6 + 0.18 * clash);
-      outLp = (p) => glide(7000, 300, Math.pow(p, 0.75));
-      outHp = (p) => bassCut(h(p));
-      inHp = (p) => Math.max(entryHp(p, top, openBy), bassCut(1 - h(p)));
-      rise = (p) => Math.sin(Math.pow(p, 0.8) * S);
-      fall = (p) => Math.cos(Math.pow(p, 1.6) * S);
-    } else {
-      const top = glide(520, 950, clash), openBy = onBar(0.45 + 0.25 * clash);
-      const from = onBar(0.3 - 0.18 * clash), floor = glide(2200, 1100, clash);
-      const fallFrom = Math.max(0, Math.min(swapAt, 0.5, grid ? 1 - 4 / grid : 0.5));
-      outLp = (p) => glide(20000, floor, (p - from) / (1 - from));
-      outHp = (p) => bassCut(h(p));
-      inHp = (p) => Math.max(bassCut(1 - h(p)), entryHp(p, top, openBy));
-      const held = (plain, dj) => plain + (dj - plain) * (1 - clash);
-      rise = (p) => held(Math.sin(p * S), Math.sin(clamp(p / swapAt, 0, 1) * S));
-      fall = (p) => held(Math.cos(p * S), p <= fallFrom ? 1 : Math.cos(((p - fallFrom) / (1 - fallFrom)) * S));
-    }
     // ~25 ms steps, so half a beat of bass swap is drawn. Firefox draws a
     // curve as one ramp per step (fadeCurve), five params at once: fewer there.
     const most = typeof AudioParam !== 'undefined' && AudioParam.prototype.cancelAndHoldAtTime ? 4000 : 1200;
     const n = Math.max(EP, Math.min(most, Math.ceil(D * 40)));
-    const mk = (f) => Float32Array.from({ length: n }, (_, i) => f(i / (n - 1)));
-    const gIn = new Float32Array(n), gOut = new Float32Array(n);
-    for (let i = 0; i < n; i++) {
-      const p = i / (n - 1);
-      let r = rise(p), f = fall(p);
-      r += (Math.sin(Math.pow(p, 1.65) * S) - r) * clash;
-      f += (Math.cos(Math.pow(p, 0.65) * S) - f) * clash;
-      const trim = r + f <= 1 ? 1 : Math.max(0.5, 1 / Math.sqrt(r + f));
-      gIn[i] = r * trim; gOut[i] = f * trim;
-    }
-    const shape = { D, style, gIn, gOut, inHp: mk(inHp), outHp: mk(outHp), outLp: mk(outLp) };
+    const shape = window.__viviAutomix.djShape(m, style, D, n);
     djShapes.set(m, shape);
     return shape;
   }
@@ -1488,7 +1472,12 @@
     inBus.gain.cancelScheduledValues(now); inBus.gain.setValueAtTime(live.muted ? 0 : live.inBase * live.k, now);
     // (started PREROLL_SEC early, silent, so it is warm when the blend brings it in)
     const pre = Math.min(PREROLL_SEC, m.mixInTrackTime / rate);
-    inDeck.schedule([{ output: t0 - pre, input: m.mixInTrackTime - pre * rate, rate, active: true, loop: null }]);
+    // A stretched next song glides back to its own speed here, on the deck,
+    // after the blend; the player takes over only once it is at x1.0. (Stepping
+    // the <video>'s playbackRate instead restarts the browser's stretcher at
+    // every step, heard as a glitch after the mix.)
+    live.deckGlide = deckGlideBack(m, t0, D, rate);
+    inDeck.schedule([{ output: t0 - pre, input: m.mixInTrackTime - pre * rate, rate, active: true, loop: null }, ...(live.deckGlide?.points || [])]);
     const ig = inDeck.gain.gain, out = live.fade.gain;
     const [cIn, cOut] = gainCurves(m, m.style, D);
     ig.cancelScheduledValues(0); ig.setValueAtTime(0, now); fadeCurve(ig, cIn, t0, D);
@@ -1498,29 +1487,53 @@
     live.src.onended = null;   // the mix may run on the deck past the old song's end (a late take-over)
     log(`automix: ${m.style}, ${D.toFixed(1)} s, starting in ${(t0 - now).toFixed(2)} s on the incoming deck (next song from ${m.mixInTrackTime.toFixed(2)} s at x${rate.toFixed(3)}); the player moves on in ${(live.askAt - now).toFixed(2)} s${djNote(m, m.style)}`);
   }
-  // The new song is on YouTube's player: silent, held to the clock, it takes over at the blend's end.
+  // The deck's way back from `rate` to x1.0 after a blend of length D from t0:
+  // 0.25% every 0.25 s (1% a second), as schedule points. Null when the song
+  // plays at its own speed already, or the deck doesn't hold enough of it.
+  const GLIDE_STEP = 0.0025, GLIDE_STEP_SEC = 0.25;
+  function deckGlideBack(m, t0, D, rate) {
+    if (Math.abs(rate - 1) < 0.002) return null;
+    const n = Math.ceil(Math.abs(rate - 1) / GLIDE_STEP), points = [];
+    let output = t0 + D, input = m.mixInTrackTime + D * rate, r = rate;
+    for (let i = 1; i <= n; i++) {
+      input += GLIDE_STEP_SEC * r; output += GLIDE_STEP_SEC;
+      r = i === n ? 1 : rate + (1 - rate) * (i / n);
+      points.push({ output, input, rate: r, active: true, loop: null });
+    }
+    if (input + 10 > inPrep.end) return null;   // (then the player glides, as before)
+    return { points, end: output, trackAtEnd: input };
+  }
+  // The new song is on YouTube's player: silent, held to the clock, it takes over
+  // at the blend's end, or where the deck's glide back to x1.0 ends.
   function blendTakeOver(g, v) {
-    const now = g.ctx.currentTime, m = live.mix, rate = m.rate || 1, H = 0.025, L = live;
+    const now = g.ctx.currentTime, m = live.mix, rate = m.rate || 1, H = 0.025, L = live, G = L.deckGlide;
     if (st.id !== m.nextId) { abortLive('the queue played another song than the blend was for'); return; }
     // just after the curves end (an event inside one is refused), or later if the player came late
-    const tk = Math.max(L.t0 + L.D + 0.02, now + 1.6);
-    const trackAt = (t) => m.mixInTrackTime + (t - L.t0) * rate;
+    const tk = Math.max((G ? G.end : L.t0 + L.D) + 0.02, now + 1.6);
+    const trackAt = (t) => (G && t >= G.end ? G.trackAtEnd + (t - G.end) : m.mixInTrackTime + (t - L.t0) * rate);
     if (trackAt(tk + 0.5) > inPrep.end) { abortLive('the player came too late for the incoming deck'); return; }
     deck?.cancel();
     deck = new PlayerDeck(g, v, st.id);
     // held to the clock from now on (silent behind the gate), so its level can be read early
     const from = Math.min(now + 0.5, tk - 1.5);
-    deck.playAt(from, trackAt(from), rate);
-    if (Math.abs(rate - 1) < 0.002) deck.setRate(1, tk + 3); else deck.glideToUnity(rate, tk);
+    if (G) {
+      // only ever at x1.0: lined up with the deck where the deck's glide has ended
+      deck.playAt(from, trackAt(tk) - (tk - from), 1);
+      deck.setRate(1, tk + 3);
+    } else {
+      deck.playAt(from, trackAt(from), rate);
+      if (Math.abs(rate - 1) < 0.002) deck.setRate(1, tk + 3); else deck.glideToUnity(rate, tk);
+    }
     deck.quietUntil = tk - 0.35;   // no silent seek right before the gate opens
     const gate = g.gate.gain, ig = inDeck.gain.gain;
     gate.cancelScheduledValues(now); gate.setValueAtTime(0, now); gate.setValueAtTime(0, tk); gate.linearRampToValueAtTime(1, tk + H);
     ig.setValueAtTime(1, tk); ig.linearRampToValueAtTime(0, tk + H);
     // the deck's level is matched to the player's: once the player has settled, and checked again before it takes over
+    // (while the deck still glides, the two play different moments: only the late check then)
     const early = now + 2;
-    if (early < tk - 1.2) setTimeout(() => matchInLevel(L, early + 0.8), (early - now) * 1000);
+    if (!G && early < tk - 1.2) setTimeout(() => matchInLevel(L, early + 0.8), (early - now) * 1000);
     setTimeout(() => matchInLevel(L, tk - 0.05), Math.max(0, (tk - 0.45 - now) * 1000));
-    log(`automix: the new song waits on the player, taking over from the incoming deck in ${(tk - now).toFixed(2)} s`);
+    log(`automix: the new song waits on the player, taking over from the incoming deck in ${(tk - now).toFixed(2)} s${G ? ` (the deck glides from x${rate.toFixed(3)} to x1.000 first, ${(G.end - L.t0 - L.D).toFixed(1)} s; the player stays at x1.000)` : ''}`);
     L.mixEnd = tk;
     L.phase = 'mixing';
     L.mixId = st.id;

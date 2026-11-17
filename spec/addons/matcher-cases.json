@@ -1,0 +1,437 @@
+{
+  "about": "Addon track matching: a YouTube Music song (target) against an addon's search rows (candidates). expect is what BitChord's TrackMatcher returns: ranked = accepted rows best first (pick = ranked[0]), scores = each accepted row's score, rejected = rows it refuses. Filled by scripts/addon_matcher_fixtures.mjs --update from BitChord v1.9.2 (a2d886e6) web/app/src/data/match/trackMatcher.ts.",
+  "cases": [
+    {
+      "name": "exact row wins; a row 45 s longer by the same artist is kept at 0 length points (shared-artist rows may drift up to 90 s)",
+      "target": {
+        "title": "Blinding Lights",
+        "artist": "The Weeknd",
+        "durationSec": 200,
+        "album": "After Hours"
+      },
+      "candidates": [
+        {
+          "id": "remix",
+          "title": "Blinding Lights (Chromatics Remix)",
+          "artist": "The Weeknd",
+          "durationSec": 271,
+          "album": null
+        },
+        {
+          "id": "extended",
+          "title": "Blinding Lights",
+          "artist": "The Weeknd",
+          "durationSec": 245,
+          "album": "After Hours"
+        },
+        {
+          "id": "album",
+          "title": "Blinding Lights",
+          "artist": "The Weeknd",
+          "durationSec": 200.4,
+          "album": "After Hours"
+        }
+      ],
+      "expect": {
+        "pick": "album",
+        "ranked": [
+          "album",
+          "extended"
+        ],
+        "scores": {
+          "extended": 160,
+          "album": 200
+        },
+        "rejected": [
+          "remix"
+        ]
+      }
+    },
+    {
+      "name": "feat in the YouTube title, both credited on the addon",
+      "target": {
+        "title": "Stay (feat. Justin Bieber)",
+        "artist": "The Kid LAROI",
+        "durationSec": 141
+      },
+      "candidates": [
+        {
+          "id": "stay",
+          "title": "Stay",
+          "artist": "The Kid LAROI & Justin Bieber",
+          "durationSec": 141.8,
+          "album": "F*CK LOVE 3"
+        }
+      ],
+      "expect": {
+        "pick": "stay",
+        "ranked": [
+          "stay"
+        ],
+        "scores": {
+          "stay": 150
+        },
+        "rejected": []
+      }
+    },
+    {
+      "name": "sped-up upload must not take the original",
+      "target": {
+        "title": "Escapism. (Sped Up)",
+        "artist": "RAYE, 070 Shake",
+        "durationSec": 220
+      },
+      "candidates": [
+        {
+          "id": "original",
+          "title": "Escapism.",
+          "artist": "RAYE, 070 Shake",
+          "durationSec": 272,
+          "album": "My 21st Century Blues"
+        },
+        {
+          "id": "sped",
+          "title": "Escapism. - Sped Up",
+          "artist": "RAYE, 070 Shake",
+          "durationSec": 219.6,
+          "album": "Escapism. (Sped Up)"
+        }
+      ],
+      "expect": {
+        "pick": "sped",
+        "ranked": [
+          "sped"
+        ],
+        "scores": {
+          "sped": 165
+        },
+        "rejected": [
+          "original"
+        ]
+      }
+    },
+    {
+      "name": "original must not take the sped-up version",
+      "target": {
+        "title": "Escapism.",
+        "artist": "RAYE, 070 Shake",
+        "durationSec": 272
+      },
+      "candidates": [
+        {
+          "id": "sped",
+          "title": "Escapism. (Sped Up)",
+          "artist": "RAYE, 070 Shake",
+          "durationSec": 219.6,
+          "album": null
+        },
+        {
+          "id": "original",
+          "title": "Escapism.",
+          "artist": "RAYE, 070 Shake",
+          "durationSec": 272.3,
+          "album": "My 21st Century Blues"
+        }
+      ],
+      "expect": {
+        "pick": "original",
+        "ranked": [
+          "original"
+        ],
+        "scores": {
+          "original": 165
+        },
+        "rejected": [
+          "sped"
+        ]
+      }
+    },
+    {
+      "name": "instrumental row is never the sung song",
+      "target": {
+        "title": "Hello",
+        "artist": "Adele",
+        "durationSec": 295
+      },
+      "candidates": [
+        {
+          "id": "inst",
+          "title": "Hello (Instrumental)",
+          "artist": "Adele",
+          "durationSec": 295,
+          "album": null
+        }
+      ],
+      "expect": {
+        "pick": null,
+        "ranked": [],
+        "scores": {},
+        "rejected": [
+          "inst"
+        ]
+      }
+    },
+    {
+      "name": "cover by another artist is dropped when the right artist is there",
+      "target": {
+        "title": "Hello",
+        "artist": "Adele",
+        "durationSec": 295
+      },
+      "candidates": [
+        {
+          "id": "cover",
+          "title": "Hello",
+          "artist": "Piano Covers Club",
+          "durationSec": 295.2,
+          "album": null
+        },
+        {
+          "id": "adele",
+          "title": "Hello",
+          "artist": "Adele",
+          "durationSec": 296,
+          "album": "25"
+        }
+      ],
+      "expect": {
+        "pick": "adele",
+        "ranked": [
+          "adele"
+        ],
+        "scores": {
+          "cover": 110,
+          "adele": 165
+        },
+        "rejected": []
+      }
+    },
+    {
+      "name": "unknown credit allowed only within 2 s",
+      "target": {
+        "title": "Hello",
+        "artist": "Adele",
+        "durationSec": 295
+      },
+      "candidates": [
+        {
+          "id": "va-close",
+          "title": "Hello",
+          "artist": "Various Artists",
+          "durationSec": 295.6,
+          "album": null
+        },
+        {
+          "id": "va-far",
+          "title": "Hello",
+          "artist": "Various Artists",
+          "durationSec": 299,
+          "album": null
+        }
+      ],
+      "expect": {
+        "pick": "va-close",
+        "ranked": [
+          "va-close"
+        ],
+        "scores": {
+          "va-close": 110
+        },
+        "rejected": [
+          "va-far"
+        ]
+      }
+    },
+    {
+      "name": "accents fold (foldLatin)",
+      "target": {
+        "title": "Bésame Mucho",
+        "artist": "Andrea Bocelli",
+        "durationSec": 245
+      },
+      "candidates": [
+        {
+          "id": "plain",
+          "title": "Besame Mucho",
+          "artist": "Andrea Bocelli",
+          "durationSec": 245,
+          "album": null
+        }
+      ],
+      "expect": {
+        "pick": "plain",
+        "ranked": [
+          "plain"
+        ],
+        "scores": {
+          "plain": 165
+        },
+        "rejected": []
+      }
+    },
+    {
+      "name": "closer length beats search order",
+      "target": {
+        "title": "Vaina Loca",
+        "artist": "Ozuna, Manuel Turizo",
+        "durationSec": 176
+      },
+      "candidates": [
+        {
+          "id": "video-cut",
+          "title": "Vaina Loca",
+          "artist": "Ozuna, Manuel Turizo",
+          "durationSec": 190,
+          "album": null
+        },
+        {
+          "id": "audio",
+          "title": "Vaina Loca",
+          "artist": "Ozuna, Manuel Turizo",
+          "durationSec": 176.5,
+          "album": null
+        }
+      ],
+      "expect": {
+        "pick": "audio",
+        "ranked": [
+          "audio",
+          "video-cut"
+        ],
+        "scores": {
+          "video-cut": 140,
+          "audio": 165
+        },
+        "rejected": []
+      }
+    },
+    {
+      "name": "upload labelling is noise",
+      "target": {
+        "title": "Unethical (Official Audio)",
+        "artist": "Hensonn",
+        "durationSec": 133
+      },
+      "candidates": [
+        {
+          "id": "row",
+          "title": "Unethical",
+          "artist": "Hensonn",
+          "durationSec": 133,
+          "album": "Unethical"
+        }
+      ],
+      "expect": {
+        "pick": "row",
+        "ranked": [
+          "row"
+        ],
+        "scores": {
+          "row": 165
+        },
+        "rejected": []
+      }
+    },
+    {
+      "name": "music video target: the shared-artist row wins, a same-length row by another artist is refused",
+      "target": {
+        "title": "Lady Gaga - Poker Face (Official Music Video)",
+        "artist": "Lady Gaga",
+        "durationSec": 213,
+        "isVideo": true
+      },
+      "candidates": [
+        {
+          "id": "song",
+          "title": "Poker Face",
+          "artist": "Lady Gaga",
+          "durationSec": 237,
+          "album": "The Fame"
+        },
+        {
+          "id": "other-artist",
+          "title": "Poker Face",
+          "artist": "Glee Cast",
+          "durationSec": 213,
+          "album": null
+        }
+      ],
+      "expect": {
+        "pick": "song",
+        "ranked": [
+          "song"
+        ],
+        "scores": {
+          "song": 140
+        },
+        "rejected": [
+          "other-artist"
+        ]
+      }
+    },
+    {
+      "name": "explicit flags must agree",
+      "target": {
+        "title": "Starboy",
+        "artist": "The Weeknd, Daft Punk",
+        "durationSec": 230,
+        "isExplicit": true
+      },
+      "candidates": [
+        {
+          "id": "clean",
+          "title": "Starboy",
+          "artist": "The Weeknd, Daft Punk",
+          "durationSec": 230,
+          "album": "Starboy",
+          "explicit": false
+        },
+        {
+          "id": "explicit",
+          "title": "Starboy",
+          "artist": "The Weeknd, Daft Punk",
+          "durationSec": 230,
+          "album": "Starboy",
+          "explicit": true
+        }
+      ],
+      "expect": {
+        "pick": "explicit",
+        "ranked": [
+          "explicit"
+        ],
+        "scores": {
+          "explicit": 185
+        },
+        "rejected": [
+          "clean"
+        ]
+      }
+    },
+    {
+      "name": "different song by the same artist",
+      "target": {
+        "title": "Bohemian Rhapsody",
+        "artist": "Queen",
+        "durationSec": 355
+      },
+      "candidates": [
+        {
+          "id": "show",
+          "title": "The Show Must Go On",
+          "artist": "Queen",
+          "durationSec": 263,
+          "album": "Innuendo"
+        }
+      ],
+      "expect": {
+        "pick": null,
+        "ranked": [],
+        "scores": {},
+        "rejected": [
+          "show"
+        ]
+      }
+    }
+  ]
+}

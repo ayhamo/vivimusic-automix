@@ -1420,9 +1420,8 @@ html.vivi-pill-player ytmusic-player-bar #hover-time-info.ytmusic-player-bar {
 
 
 /* ── Blended / dissolved Canvas player ─────────────────────────────────────
-   No frame: the video's edges are feathered into the page background with a
-   mask (horizontal x vertical gradients, intersected), so it looks like part
-   of the scene. Tune with --vivi-canvas-fade (bigger = softer, more dissolved). */
+   No frame: edges are feathered into the page background with a mask.
+   Tune with --vivi-canvas-fade (bigger = softer). */
 .vivi-canvas-player {
   --vivi-canvas-fade: 4%;
   border-radius: 0 !important;

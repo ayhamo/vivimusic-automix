@@ -43,7 +43,7 @@
   },
   "background_scripts": {
     "_about": "Firefox runs the background as an event page from this list (Chrome uses service_worker and importScripts). Upstream's importScripts helpers are added in their order; these are our additions.",
-    "drop": ["src/stargate.js"],
+    "drop": ["src/stargate.js", "src/smooth-update.js"],
     "before_background": ["src/listenbrainz.js", "src/fx-headers.js"],
     "after_background": ["src/plus/bg-plus.js"]
   },

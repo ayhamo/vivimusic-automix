@@ -327,7 +327,11 @@
   // (style 'blend', 'filter' or 'crossfade'; either may be null: Auto).
   function plan({ fromId, toId, from, to, durationSec, pos, earliest, pick = null }) {
     pinnedBars = pick?.bars || null;
-    try { return planFor({ fromId, toId, from, to, durationSec, pos, earliest, pick }); } finally { pinnedBars = null; }
+    try {
+      const p = planFor({ fromId, toId, from, to, durationSec, pos, earliest, pick });
+      p.curves = blendCurves(p);
+      return p;
+    } finally { pinnedBars = null; }
   }
   function planFor({ fromId, toId, from, to, durationSec, pos, earliest, pick }) {
     const both = !!(from && to);
@@ -483,9 +487,8 @@
     const s = sungCache.get(id).spans;
     return Array.isArray(s) ? s : null;
   }
-  // One lookup per song at a time: songMeta answers a second ask for the same
-  // song by giving the first one nothing, so the loop mix's lookup and this
-  // one, made at the same moment, share a single answer.
+  // One lyrics lookup per song at a time: the loop mix's lookup and this one,
+  // made at the same moment, share a single answer.
   const sungInflight = new Map();
   function sharedSungSpans(id) {
     let p = sungInflight.get(id);
@@ -583,6 +586,148 @@
     };
   }
 
+  // ───────── curves: what each deck does over the transition ─────────
+  // spec/automix/plan.schema.json "curves". The engine (crossfade.js) plays
+  // these same shapes (djShape below, loopSchedule), so the overview and the
+  // phone app can draw a transition without knowing how it was made.
+  // Each curve is [[t, v], …] in seconds from the transition's start (t = 0:
+  // the mix-out, or the outgoing loop's start), held before its first point and
+  // after its last; linear between points (Hz: geometric), a step is two
+  // points at one t. A curve that is absent stays neutral.
+  const clamp = (x, lo, hi) => Math.min(hi, Math.max(lo, x));
+  const glideTo = (a, b, x) => a * Math.pow(b / a, clamp(x, 0, 1));
+  const bassCutHz = (x) => glideTo(20, 200, x);
+  const entryHp = (p, top, openBy) => (p >= openBy ? 20 : glideTo(20, top, Math.pow(1 - p / openBy, 0.35)));
+  const DECK_GLIDE_STEP = 0.0025, DECK_GLIDE_STEP_SEC = 0.25;   // the incoming deck's glide back to x1.0 (crossfade.js deckGlideBack)
+
+  // AutoDJ's (version 2) fader and filters for a blend or filter mix of D
+  // seconds, sampled at n points over p = 0..1. The clash (the share both
+  // sing, from the plan) deepens the filters and moves the fader towards a
+  // vocal-safe pair.
+  function djShape(m, style, D, n) {
+    const clash = clamp(m.clash || 0, 0, 1);
+    const beat = m.bpm > 0 ? 60 / m.bpm : 0;
+    const grid = beat ? D / beat : 0;   // beats in the blend
+    const onBar = (f) => (grid >= 8 ? clamp(Math.round((f * grid) / 4) * 4 / grid, 4 / grid, 1 - 4 / grid) : f);
+    const w = grid >= 2 ? 0.5 / grid : 0.2;
+    const swapAt = onBar(0.5);
+    const h = (p) => clamp((p - (swapAt - w)) / w, 0, 1);
+    const S = Math.PI / 2;
+    let inHp, outHp, outLp, rise, fall;
+    if (style === 'filter') {
+      const top = glideTo(1200, 2400, clash), openBy = onBar(0.6 + 0.18 * clash);
+      outLp = (p) => glideTo(7000, 300, Math.pow(p, 0.75));
+      outHp = (p) => bassCutHz(h(p));
+      inHp = (p) => Math.max(entryHp(p, top, openBy), bassCutHz(1 - h(p)));
+      rise = (p) => Math.sin(Math.pow(p, 0.8) * S);
+      fall = (p) => Math.cos(Math.pow(p, 1.6) * S);
+    } else {
+      const top = glideTo(520, 950, clash), openBy = onBar(0.45 + 0.25 * clash);
+      const from = onBar(0.3 - 0.18 * clash), floor = glideTo(2200, 1100, clash);
+      const fallFrom = Math.max(0, Math.min(swapAt, 0.5, grid ? 1 - 4 / grid : 0.5));
+      outLp = (p) => glideTo(20000, floor, (p - from) / (1 - from));
+      outHp = (p) => bassCutHz(h(p));
+      inHp = (p) => Math.max(bassCutHz(1 - h(p)), entryHp(p, top, openBy));
+      const held = (plain, dj) => plain + (dj - plain) * (1 - clash);
+      rise = (p) => held(Math.sin(p * S), Math.sin(clamp(p / swapAt, 0, 1) * S));
+      fall = (p) => held(Math.cos(p * S), p <= fallFrom ? 1 : Math.cos(((p - fallFrom) / (1 - fallFrom)) * S));
+    }
+    const mk = (f) => Float32Array.from({ length: n }, (_, i) => f(i / (n - 1)));
+    const gIn = new Float32Array(n), gOut = new Float32Array(n);
+    for (let i = 0; i < n; i++) {
+      const p = i / (n - 1);
+      let r = rise(p), f = fall(p);
+      r += (Math.sin(Math.pow(p, 1.65) * S) - r) * clash;
+      f += (Math.cos(Math.pow(p, 0.65) * S) - f) * clash;
+      const trim = r + f <= 1 ? 1 : Math.max(0.5, 1 / Math.sqrt(r + f));
+      gIn[i] = r * trim; gOut[i] = f * trim;
+    }
+    return { D, style, gIn, gOut, inHp: mk(inHp), outHp: mk(outHp), outLp: mk(outLp) };
+  }
+
+  // the incoming deck's glide back to x1.0 after a blend at [rate]: [seconds, steps]
+  function glideBack(rate) {
+    if (Math.abs(rate - 1) < 0.002) return null;
+    const n = Math.ceil(Math.abs(rate - 1) / DECK_GLIDE_STEP);
+    return { n, sec: n * DECK_GLIDE_STEP_SEC };
+  }
+
+  // sampled shape → points over 0..D (about 8 a second, at least 65)
+  const pointsOf = (arr, D) => Array.from(arr, (v, i) => [(D * i) / (arr.length - 1), v]);
+  const curveSamples = (D) => Math.max(65, Math.ceil(D * 8) + 1);
+  const equalPower = (n, rising) => Float32Array.from({ length: n }, (_, i) => (rising ? Math.sin : Math.cos)((i / (n - 1)) * Math.PI / 2));
+
+  // A blend, filter mix or crossfade plan's curves.
+  function blendCurves(m) {
+    const D = m.durationSec, style = m.style;
+    const out = {}, inn = {};
+    if (m.v2 && style !== 'crossfade') {
+      const s = djShape(m, style, D, curveSamples(D));
+      out.gain = pointsOf(s.gOut, D); inn.gain = pointsOf(s.gIn, D);
+      out.lowpassHz = pointsOf(s.outLp, D); out.highpassHz = pointsOf(s.outHp, D);
+      inn.highpassHz = pointsOf(s.inHp, D);
+    } else {
+      out.gain = pointsOf(equalPower(65, false), D); inn.gain = pointsOf(equalPower(65, true), D);
+      if (style !== 'crossfade') {
+        // the bass swaps within one bar at the midpoint
+        const mid = D / 2, bar = Math.min(m.barSec || 0, D / 2);
+        inn.bassDb = [[0, m.swapDb], [mid - bar / 2, m.swapDb], [mid + bar / 2, 0]];
+        out.bassDb = [[mid - bar / 2, 0], [mid + bar / 2, m.swapDb]];
+        if (style === 'blend') { out.highDb = [[0, 0], [D, -8]]; inn.highDb = [[0, -8], [D, 0]]; }
+        else { out.highpassHz = [[0, 20], [D, 1800]]; inn.lowpassHz = [[0, 350], [D, 20000]]; }
+      }
+    }
+    // tempo: the playing song speeds up beat by beat before the mix-out (blend only)
+    if (style === 'blend' && m.outRate > 1.0001 && m.rampBeats > 0) {
+      const R = m.outRate, n = m.rampBeats, b = m.beatSec;
+      let t = 0;
+      for (let k = 1; k <= n; k++) t -= b / (1 + ((R - 1) * k) / n);
+      const pts = [[t, 1]];
+      for (let k = 1; k <= n; k++) {
+        const r = 1 + ((R - 1) * k) / n, prev = pts[pts.length - 1][1];
+        pts.push([t, prev], [t, r]);
+        t += b / r;
+      }
+      pts.push([D, R]);
+      out.rate = pts.filter((p, i) => i === 0 || p[0] !== pts[i - 1][0] || p[1] !== pts[i - 1][1]);
+    }
+    const rate = style === 'blend' ? m.rate : 1;
+    if (Math.abs(rate - 1) > 1e-9) {
+      const g = glideBack(rate);
+      inn.rate = g ? [[0, rate], [D, rate], [D + g.sec, 1]] : [[0, rate], [D, rate], [D, 1]];
+    }
+    return { durationSec: D, out, in: inn };
+  }
+
+  // A loop mix's curves (crossfade.js scheduleLoopMix), from its loopSchedule.
+  function loopCurves(plan) {
+    const x = loopSchedule(plan, 0), half = x.bar / 2;
+    const steps = (changes, until) => {
+      const pts = [];
+      for (const c of changes) {
+        if (c.output > until) break;
+        const prev = pts.length ? pts[pts.length - 1][1] : null;
+        if (prev === null) pts.push([c.output, c.rate]);
+        else if (Math.abs(prev - c.rate) > 1e-9) pts.push([c.output, prev], [c.output, c.rate]);
+      }
+      return pts;
+    };
+    return {
+      durationSec: x.releaseAt,
+      out: {
+        gain: [[0, 1], [x.enterEnd, 1], [x.rampEnd, 0.6], [x.releaseAt, 0]],
+        bassDb: [[x.mid - half, 0], [x.mid + half, BASS_CUT_DB]],
+        highpassHz: [[x.rampEnd, 20], [x.releaseAt, 1500]],
+        rate: steps(x.outChanges.filter((c) => c.active), x.releaseAt),
+      },
+      in: {
+        gain: [[0, 0], [x.enterEnd, 0.55], [x.rampEnd, 1]],
+        bassDb: [[0, BASS_CUT_DB], [x.mid - half, BASS_CUT_DB], [x.mid + half, 0]],
+        rate: steps(x.inChanges, x.releaseAt),
+      },
+    };
+  }
+
   // ───────── the loop mix (BitChord engine/loopMix.ts) ─────────
   // The outgoing song hands over to a stretch deck at the start of an
   // instrumental loop near its end and loops it. The incoming song comes in
@@ -656,11 +801,13 @@
     const inLoopOutBars = inPick.bars / fold;
     const totalBars = Math.ceil((ENTER_BARS + rampBars + 2) / inLoopOutBars) * inLoopOutBars;
     const pick = (key, p, beatSec, bpm) => ({ key, loop: [p.start, p.end], bars: p.bars, beatSec, bpm, vocal: p.vocal, checkedBy: p.checkedBy });
-    return {
+    const plan = {
       out: pick(out.fileKey, outPick, outBeat, outBpm),
       in: pick(inn.fileKey, inPick, inBeat, inBpm),
       fold, enterBars: ENTER_BARS, rampBars, exitBars: totalBars - ENTER_BARS - rampBars, totalBars,
     };
+    plan.curves = loopCurves(plan);
+    return plan;
   }
 
   // [bars]-bar loops in [from, to]: on the model's own downbeats where it has
@@ -747,22 +894,27 @@
   }
 
   // Song details from YouTube Music's queue (crossfade-page.js), for the lyrics lookup.
-  const metaWaits = new Map();
+  // Asks for the same song while one is under way share its answer (a second
+  // ask used to answer the first with nothing, so the overview, open during the
+  // loop mix's lookup, could leave a song without lyrics and change its loop).
+  const metaWaits = new Map();   // id -> { promise, resolve }
   window.addEventListener('message', (e) => {
     const d = e.data;
     if (e.source !== window || !d || d.ch !== 'vivi-xfade' || d.dir !== 'out' || d.type !== 'meta') return;
     const w = metaWaits.get(d.id);
     if (!w) return;
     metaWaits.delete(d.id);
-    w(d.meta || null);
+    w.resolve(d.meta || null);
   });
   function songMeta(id) {
-    return new Promise((resolve) => {
-      metaWaits.get(id)?.(null);
-      metaWaits.set(id, resolve);
-      window.postMessage({ ch: 'vivi-xfade', dir: 'in', type: 'meta', id }, window.location.origin);
-      setTimeout(() => { if (metaWaits.get(id) === resolve) { metaWaits.delete(id); resolve(null); } }, 3000);
-    });
+    const pending = metaWaits.get(id);
+    if (pending) return pending.promise;
+    const w = {};
+    w.promise = new Promise((resolve) => { w.resolve = resolve; });
+    metaWaits.set(id, w);
+    window.postMessage({ ch: 'vivi-xfade', dir: 'in', type: 'meta', id }, window.location.origin);
+    setTimeout(() => { if (metaWaits.get(id) === w) { metaWaits.delete(id); w.resolve(null); } }, 3000);
+    return w.promise;
   }
 
   // BitChord state/player.ts sungSpans: where [id] is sung, from its synced
@@ -871,6 +1023,8 @@
     sungSpans: sharedSungSpans,
     meta: songMeta,
     loopSchedule,
+    djShape,
+    glideBack,
     LOOP: { OUT_REGION_SEC, IN_REGION_SEC, LOOP_SETUP_SEC },
     warmup,
     setStatus,

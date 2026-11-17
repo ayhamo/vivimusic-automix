@@ -1,0 +1,116 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "vivimusic/automix/plan.schema.json",
+  "title": "Automix transition plan",
+  "description": "What the planner decides for one transition (src/automix/automix.js plan() and planLoopMix()). Times are seconds of each song's own timeline; 'out' is the playing song, 'in' the next one. The golden files in spec/automix/golden hold one of these per engine version.",
+  "type": "object",
+  "required": ["pos", "earliest", "plays", "loop", "blend"],
+  "properties": {
+    "pos": { "type": "number", "description": "Playhead of the outgoing song when the plan was made." },
+    "earliest": { "type": "number", "description": "Earliest mix-out: pos + the hand-over lead (4 s) + 0.5 s." },
+    "plays": { "enum": ["loop", "blend", "filter", "crossfade"], "description": "What the player plays: the loop mix when it found bars on both sides, else blend.style. Its curves are loop.curves or blend.curves." },
+    "loop": { "$ref": "#/$defs/loopPlan" },
+    "blend": { "$ref": "#/$defs/blendPlan" }
+  },
+  "$defs": {
+    "points": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "array", "prefixItems": [{ "type": "number" }, { "type": "number" }], "minItems": 2, "maxItems": 2 },
+      "description": "[[t, value], ...], t ascending, seconds from the transition's start (may be negative: the outgoing song's speed-up before a blend). Held before the first point and after the last; linear between points, except Hz curves, which move geometrically; a step is two points at the same t."
+    },
+    "deckCurves": {
+      "type": "object",
+      "description": "One song's moves. An absent curve stays neutral: lowpassHz 20000, highpassHz 20, bassDb 0, highDb 0, rate 1.",
+      "required": ["gain"],
+      "additionalProperties": false,
+      "properties": {
+        "gain": { "$ref": "#/$defs/points", "description": "Fader, 0..1 (on top of the song's own volume and levelling)." },
+        "lowpassHz": { "$ref": "#/$defs/points" },
+        "highpassHz": { "$ref": "#/$defs/points" },
+        "bassDb": { "$ref": "#/$defs/points", "description": "Low-shelf gain, dB (the bass swap)." },
+        "highDb": { "$ref": "#/$defs/points", "description": "High-shelf gain, dB." },
+        "rate": { "$ref": "#/$defs/points", "description": "Playback rate (tempo and pitch together, or time-stretched on a stretch deck)." }
+      }
+    },
+    "curves": {
+      "type": "object",
+      "description": "What each song does over the transition, emitted by the planner and played by the engine (automix.js blendCurves / loopCurves). The overview draws these, so both apps draw the same thing whatever the engine version. 'out' is the playing song, 'in' the next one.",
+      "required": ["durationSec", "out", "in"],
+      "additionalProperties": false,
+      "properties": {
+        "durationSec": { "type": "number", "minimum": 0 },
+        "out": { "$ref": "#/$defs/deckCurves" },
+        "in": { "$ref": "#/$defs/deckCurves" }
+      }
+    },
+    "loopSide": {
+      "type": "object",
+      "required": ["key", "loop", "bars", "beatSec", "bpm", "vocal", "checkedBy"],
+      "properties": {
+        "key": { "type": "string", "description": "The song's video id." },
+        "loop": { "type": "array", "prefixItems": [{ "type": "number" }, { "type": "number" }], "minItems": 2, "maxItems": 2, "description": "[start, end] on downbeats." },
+        "bars": { "enum": [1, 2, 4], "description": "Loop length; 4 is tried first, then 2, then 1." },
+        "beatSec": { "type": "number" },
+        "bpm": { "type": "number" },
+        "vocal": { "type": "number", "minimum": 0, "maximum": 1, "description": "Share of the loop that is sung (must stay under 0.03, no sung run over 0.2 s)." },
+        "checkedBy": { "enum": ["lyrics", "mask"], "description": "Sung spans from synced lyrics, or the open-unmix mask when the song has none." }
+      }
+    },
+    "loopPlan": {
+      "description": "The loop mix. null: no usable grid or a music video. {none}: a side has no instrumental bars.",
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "required": ["none"],
+          "additionalProperties": false,
+          "properties": { "none": { "type": "string" } }
+        },
+        {
+          "type": "object",
+          "required": ["out", "in", "fold", "enterBars", "rampBars", "exitBars", "totalBars", "curves"],
+          "properties": {
+            "out": { "$ref": "#/$defs/loopSide" },
+            "in": { "$ref": "#/$defs/loopSide" },
+            "fold": { "type": "number", "description": "Tempo fold (0.5, 1 or 2) so the ramp is the shortest between the two BPMs." },
+            "enterBars": { "type": "integer", "description": "Bars the incoming loop plays in, bass cut, at the outgoing tempo." },
+            "rampBars": { "type": "integer", "minimum": 2, "maximum": 24, "description": "Bars of the master tempo ramp (at most 2.5 BPM per bar)." },
+            "exitBars": { "type": "integer" },
+            "totalBars": { "type": "integer" },
+            "curves": { "$ref": "#/$defs/curves", "description": "t = 0 is the outgoing loop's start." }
+          }
+        }
+      ]
+    },
+    "blendPlan": {
+      "type": "object",
+      "required": ["style", "fallback", "reason", "mixOutTrackTime", "durationSec", "mixInTrackTime", "rate", "bars", "swapDb", "barSec", "bpm", "inBpm", "curves"],
+      "properties": {
+        "style": { "enum": ["blend", "filter", "crossfade"], "description": "blend: beatmatched EQ blend. filter: incoming at its own tempo, low-passed, outgoing high-passed. crossfade: 12 s equal-power fade, the fallback." },
+        "fallback": { "type": "boolean" },
+        "reason": { "type": ["string", "null"], "description": "Why a filter mix or crossfade was chosen instead of a blend." },
+        "v2": { "type": "boolean", "description": "Planned by Advanced AutoDJ (version 2)." },
+        "clash": { "type": "number", "minimum": 0, "maximum": 1, "description": "Share of the blend where both songs sing (version 2)." },
+        "rerouted": { "type": ["string", "null"], "description": "Version 2: how the blend point moved to sing less over each other, or why it could not." },
+        "vocalsBy": { "type": ["string", "null"], "description": "What the clash was measured with." },
+        "keyClash": { "type": ["string", "null"], "description": "'F major → B minor' when the keys clash and key-aware mixing is on; then the blend is shortened." },
+        "mixOutTrackTime": { "type": "number", "description": "Outgoing song time where the transition starts." },
+        "durationSec": { "type": "number", "minimum": 0 },
+        "mixInTrackTime": { "type": "number", "description": "Incoming song time it starts from." },
+        "rate": { "type": "number", "exclusiveMinimum": 0, "description": "Incoming playback rate during the blend." },
+        "outRate": { "type": "number", "exclusiveMinimum": 0, "description": "Outgoing rate after the tempo ramp." },
+        "rampBeats": { "type": "number" },
+        "rampSongSec": { "type": "number" },
+        "beatSec": { "type": "number" },
+        "bars": { "type": "integer", "minimum": 0 },
+        "swapDb": { "type": "number", "description": "Bass cut on the swap." },
+        "barSec": { "type": "number" },
+        "bpm": { "type": ["number", "null"] },
+        "outBpm": { "type": "number" },
+        "inBpm": { "type": ["number", "null"] },
+        "curves": { "$ref": "#/$defs/curves", "description": "t = 0 is mixOutTrackTime." }
+      }
+    }
+  }
+}

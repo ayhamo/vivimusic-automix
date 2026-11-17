@@ -11,6 +11,8 @@
     // popup.js: extra lyrics providers (on by default) and their priority labels
     providers: { lyricsplus: true, paxsenix: true, genius: true },
     priorityLabels: { paxsenix: 'Paxsenix (Apple Music)', lyricsplus: 'LyricsPlus (Syllable / Word)' },
+    // popup.js: where the update button leads (upstream's points at its own AMO listing)
+    updatePage: 'https://github.com/ayhamo/vivimusic-automix/releases/latest',
     // popup-ui.js: the ListenBrainz home card, after Last.fm
     extendCards(rsNotes, meta, order) {
       rsNotes.listenbrainz = 'ListenBrainz scrobbling is paused while Optimized & resource saving mode is on.';
@@ -35,15 +37,6 @@
     .view-settings[data-feature="listenbrainz"] { --panel-accent: #eb743b; }
   `;
   document.head.appendChild(style);
-
-  // Upstream's in-place updater (smooth-update.js) needs folder access, which
-  // Firefox does not give extensions; there updates come signed from AMO.
-  if (typeof window.showDirectoryPicker !== 'function' && globalThis.browser?.runtime?.getBrowserInfo) {
-    const row = document.getElementById('smoothUpdatesToggle')?.closest('.row');
-    const note = row?.nextElementSibling?.matches('p.theme-sub') ? row.nextElementSibling : null;
-    for (const el of [row, note, document.getElementById('smoothFolderRow')]) el?.classList.add('vivi-plus-hidden');
-    style.textContent += '.vivi-plus-hidden { display: none !important; }';
-  }
 
   // ── Our settings rows, placed next to upstream elements found by id ──
   // A row whose anchor is gone (upstream moved things) is put at the end of the

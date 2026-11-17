@@ -999,7 +999,7 @@
     appleStateObserver.observe(document.documentElement, {
       attributes: true,
       subtree: true,
-      attributeFilter: ['player-ui-state', 'player-page-open', 'player-page-ui-state']
+      attributeFilter: ['player-ui-state', 'player-page-open', 'player-page-ui-state', 'player-fullscreened']
     });
     appleRadiusTimer = setInterval(resyncAppleRadii, 800);
   }
@@ -1120,6 +1120,14 @@
   }
 
   function appleRadiusFor(imgEl) {
+    // "Full screen mode": the artwork is full-bleed against the screen edge, so
+    // the overlay must not get the thumbnail's rounded corners (they would
+    // show as dark wedges in the screen corners).
+    if (document.documentElement.classList.contains('vivi-fs-mode') &&
+        !imgEl.closest('ytmusic-player-bar') &&
+        document.querySelector('ytmusic-player-page[player-fullscreened]:not([video-mode])')) {
+      return 0;
+    }
     return Math.max(appleCornerRadius(imgEl, 0), appleThemeRadius(imgEl));
   }
 

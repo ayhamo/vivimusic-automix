@@ -153,7 +153,7 @@ Then test in Firefox (crossfade, manual skip, automix, lyrics), bump `version` i
 git push
 ```
 
-Last synced: GitHub v11.5.0 (2026-11-17); manifest rebuilt with `python scripts/apply_manifest.py --ref v11.5.0`.
+Last synced: GitHub v11.5.0 + AMO 11.5.0 (2026-11-17); manifest rebuilt with `python scripts/apply_manifest.py --ref v11.5.0`.
 
 ### B. The daily workflow (`.github/workflows/fork-sync-release.yml`)
 
@@ -167,11 +167,17 @@ Last synced: GitHub v11.5.0 (2026-11-17); manifest rebuilt with `python scripts/
 
 The add-on is already on your AMO account (https://addons.mozilla.org/en-US/developers/addons, uploaded as unlisted).
 
+**Signed by the workflow:** with the repo secrets `AMO_JWT_ISSUER` and `AMO_JWT_SECRET` set (AMO Developer Hub → Tools → Manage API Keys: "JWT issuer" and "JWT secret"), each run signs the Firefox build as unlisted with `web-ext sign` and attaches `vivimusic-automix-<version>-firefox.xpi` to the release; open it in Firefox to install or update. Without the secrets the step is skipped and the manual steps below apply.
+
+**Auto-update:** set the repo variable `UPDATE_URL` (Settings → Secrets and variables → Actions → Variables) to a public address of `updates.json`. The workflow then writes that address into the manifest as `update_url` before signing and attaches an `updates.json` pointing at the release's `.xpi`. Firefox fetches both without signing in, so they must be public: a private repo's release files are not.
+
+Manual signing:
+
 1. Download `vivimusic-automix-<version>-firefox.zip` from the newest release.
 2. AMO Developer Hub → the add-on → **Upload New Version** (AMO keeps its own listing name and summary, not the manifest's: they were changed by hand under Edit Product Page → Describe Add-on) → the zip → follow the steps. Unlisted versions are signed automatically, usually within minutes.
 3. Download the signed `.xpi` AMO gives back and open it in Firefox (any edition). Same add-on id and a higher version, so it updates in place and keeps your settings.
 
-Unlisted add-ons do not auto-update in Firefox (that needs an `update_url` Firefox can fetch without logging in), so repeat steps 1–3 for each new release.
+Without `UPDATE_URL`, unlisted add-ons do not auto-update in Firefox, so repeat steps 1–3 (or open the signed `.xpi`) for each new release.
 
 Without signing (Developer Edition / Nightly only): `about:config` → `xpinstall.signatures.required` = `false`, then `about:addons` → gear → Install Add-on From File… → the zip.
 
@@ -193,7 +199,7 @@ For quick tests without installing: `about:debugging#/runtime/this-firefox` → 
 - `.github/README.md` is the repo landing page; upstream's `readme.md` is left untouched so merges stay clean.
 - Our additions live outside upstream's files, so merges stay clean:
   - `src/plus/plus.css` (after `canvas.css`): our rules and the overrides of upstream rules (RTL lyrics margins, line blur, pill bar). `canvas.css` stays exactly upstream's.
-  - `src/plus/theme-plus.css`: our font stack and the Firefox additions; the background's `VIVI_THEME_CSS` injects it after `theme.css`, which stays upstream's.
+  - `src/plus/theme-plus.css`: our font stack; `bg-plus.js` injects it next to upstream's `theme.css` on `VIVI_THEME_CSS`.
   - `src/plus/bg-plus.js`: Spotify header rule, ListenBrainz, Paxsenix, Genius, Apple artist art. Loaded by `importScripts` (Chrome) and `background.scripts` (Firefox).
   - `src/plus/popup-plus.js`: our popup rows, placed next to upstream elements found by id (a row whose anchor is gone lands at the end of the popup with a console warning), plus branding and the Spotify Connect permission request. Upstream's popup files keep four one-line hooks marked `// Vivimusic Web+`.
   - `manifest-plus.json`: our manifest changes as operations. After a merge, rebuild with `python scripts/apply_manifest.py --ref <upstream tag>`; `--check` only compares. Exit 1 means an anchor is gone.
@@ -206,6 +212,7 @@ For quick tests without installing: `about:debugging#/runtime/this-firefox` → 
 
 - `viviTest('lyrics' | 'sponsorblock' | 'artwork' | url)` — relays a fetch through the background and logs the HTTP status.
 - `viviAutomixStatus()` — logs automix engine state and crossfade state as JSON.
+- `postMessage({ ch: 'vivi-xfade', dir: 'out', type: 'vivi-automix-fixture', reqId, ids: [videoIdA, videoIdB] }, location.origin)` — answers with `dir: 'fixture'` and each song's analysis, sung spans, decoded length and 20 Hz loudness: the data of a `spec/automix/pairs` file. The test Firefox's `capture` scenario uses it; see `spec/README.md`.
 - `Shift + D` — Stats for Nerds HUD.
 
 ---
