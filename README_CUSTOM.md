@@ -155,10 +155,11 @@ git push
 
 Last synced: GitHub v11.5.0 + AMO 11.5.0 (2026-11-17); manifest rebuilt with `python scripts/apply_manifest.py --ref v11.5.0`.
 
-### B. The daily workflow (`.github/workflows/fork-sync-release.yml`)
+### B. The release workflow (`.github/workflows/fork-sync-release.yml`)
 
-- Runs every day at 05:23 UTC, or by hand: Actions → "Fork sync and release" → Run workflow (`force` rebuilds and replaces the release even if nothing changed).
-- It checks upstream's latest GitHub release, upstream's AMO version and this repo's `main`. When any of them is new, it does part A in the runner (nothing is pushed back), lints, and publishes a **GitHub release** (repo page → Releases) with `vivimusic-automix-<version>-firefox.zip` and `vivimusic-automix-<version>-edge-chrome.zip` attached. Release tag: `fork-<upstream tag>-amo<AMO version>-<fork commit>`.
+- **Runs only by hand**, no schedule: Actions → "Fork sync and release" → Run workflow (`force` rebuilds and replaces the release even if nothing changed). Upstream is watched by hand.
+- **Firefox auto-update is off:** the repo variable `UPDATE_URL` is unset, so builds carry no `update_url` and no `updates.json` is attached. Setting it again (to a public `…/releases/latest/download/updates.json`) turns it back on; tested working 2026-11-17 while the repo was public.
+- A run checks upstream's latest GitHub release, upstream's AMO version and this repo's `main`. When any of them is new, it does part A in the runner (nothing is pushed back), lints, and publishes a **GitHub release** (repo page → Releases) with `vivimusic-automix-<version>-firefox.zip` and `vivimusic-automix-<version>-edge-chrome.zip` attached. Release tag: `fork-<upstream tag>-amo<AMO version>-<fork commit>`.
 - A red run means upstream changed something that needs a human (a conflict or new AMO manifest changes) or the linter found errors. Nothing is published; do part A locally to see and fix it.
 - A green run after an upstream update only built a release: still do part A locally and push, so `main` has the merge.
 - Release version is `<manifest version>.<run number>` (e.g. `10.1.7.3`). AMO refuses a version it has seen before, and the run number makes every build higher. Keep `manifest.json` at three parts.

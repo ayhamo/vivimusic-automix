@@ -1,18 +1,17 @@
-# Fork-only workflow. Once a day it checks upstream Vivimusic Web in its two
-# places: the latest GitHub release tag of Archimetrix/VIVIMUSIC_WEB (Chrome
-# source) and the current AMO version (Firefox port, never pushed to GitHub).
-# When either one, or this fork's own main branch, has something this fork has
-# not released yet, it merges upstream into this branch's patches (in the
-# runner only, nothing is pushed), lints, and publishes the extension zip as a
-# GitHub release here, ready to upload to AMO (Developer Hub -> the add-on ->
-# Upload New Version). If a merge needs a human (conflicts, new upstream
-# manifest changes) or the linter finds errors, the run fails and nothing is
-# published.
+# Fork-only workflow. It checks upstream Vivimusic Web in its two places: the
+# latest GitHub release tag of Archimetrix/VIVIMUSIC_WEB (Chrome source) and
+# the current AMO version (Firefox port, never pushed to GitHub).
+#
+# It runs only when started by hand (Actions -> Run workflow): the user watches
+# upstream and says when to merge and build. When upstream or this fork's main
+# has something not released yet (or "force" is on), it merges upstream into this
+# branch's patches (in the runner only, nothing is pushed), lints, signs the
+# Firefox build on AMO and publishes a GitHub release. If a merge needs a human
+# (conflicts, new upstream manifest changes) or the linter finds errors, the
+# run fails and nothing is published.
 name: Fork sync and release
 
 on:
-  schedule:
-    - cron: "23 5 * * *"
   workflow_dispatch:
     inputs:
       force:
