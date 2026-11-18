@@ -1863,11 +1863,17 @@
   // still leaving (each is a whole song as float32 at the context's rate, ~100 MB); a finished
   // mix's is let go at once. `idle`: playback paused a while, so the next song's goes too.
   let testRecording = false;
+  // the song just left is kept a while: Song -> Video -> Song (the music video is another id) comes
+  // back to it, and without its copy it played YouTube's sound ~40 s (fetched and fitted again,
+  // queued behind the video's analysis)
+  const LEFT_KEEP_MS = 5 * 60e3;
+  let left = { id: null, at: 0 }, tickId = null;
+  const keptLeft = (k) => k === left.id && performance.now() - left.at < LEFT_KEEP_MS;
   function pruneAddons(idle = false) {
     if (testRecording) return;
     for (const [k, p] of prepared) {
       if (!p.rec && p.state !== 'failed') continue;   // still being prepared
-      if (k === st?.id || k === adeck?.id || k === live?.oldId || (!idle && k === st?.next)) continue;
+      if (k === st?.id || k === adeck?.id || k === live?.oldId || keptLeft(k) || (!idle && k === st?.next)) continue;
       prepared.delete(k);
     }
   }
@@ -1882,6 +1888,7 @@
     const AP = window.__viviAddonsPage;
     if (!AP?.isOn() || !st || st.ad || !st.id) return;
     AP.deckAlive?.();   // the badge's "Upgrading Quality" only while this runs (no audio graph: no deck)
+    if (st.id !== tickId) { if (tickId) left = { id: tickId, at: performance.now() }; tickId = st.id; }
     pruneAddons();
     if (adeck?.id !== st.id && !live) {
       const run = adeck = { id: st.id, state: 'starting' };
@@ -1952,7 +1959,7 @@
     if (have && !retryable(have)) return have.promise;
     const tries = (have?.tries || 0) + 1;
     // kept: the playing song's, the next one's and the last one's (the mix's tail)
-    for (const k of [...prepared.keys()]) if (prepared.size >= 3 && k !== st?.id && k !== st?.next && k !== adeck?.id && k !== live?.oldId) prepared.delete(k);
+    for (const k of [...prepared.keys()]) if (prepared.size >= 3 && k !== st?.id && k !== st?.next && k !== adeck?.id && k !== live?.oldId && !keptLeft(k)) prepared.delete(k);
     const me = {};
     me.promise = (async () => {
       const F = window.__viviOffsetFit, A = window.__viviAutomix;

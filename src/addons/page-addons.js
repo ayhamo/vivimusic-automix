@@ -205,7 +205,9 @@
       let b = document.getElementById(BADGE_ID);
       const q = badgeOf(curId, st);
       const time = document.querySelector('ytmusic-player-bar .time-info');
-      if (!q) { if (b) b.hidden = true; holdWidth(time, false); return; }
+      // not in the pill player bar: its length changes with the state and moved the pill's parts
+      const pill = document.documentElement.classList.contains('vivi-pill-player');
+      if (!q || pill) { if (b) b.hidden = true; holdWidth(time, false); return; }
       holdWidth(time, true);
       const host = time?.parentElement || document.querySelector('ytmusic-player-bar .right-controls-buttons');
       if (!host) return;

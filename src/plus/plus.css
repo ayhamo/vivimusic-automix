@@ -474,3 +474,85 @@ ytmusic-player-bar .time-info { font-variant-numeric: tabular-nums; }
   .vivi-addon-badge[data-kind], .vivi-addon-badge[data-kind] .vivi-addon-badge-label { animation: none; }
   .vivi-addon-badge[data-kind="lossless"] .vivi-addon-badge-label { background-size: 0 0, 100% 100%; }
 }
+
+/* ── Pill player bar, our layout (upstream's pill: canvas.css) ──
+   One row: controls, time and quality badge | art | title, artist and the seek bar under them |
+   like, dislike, menu | volume and the rest. The middle box is dissolved into the bar's grid,
+   so each part takes the room it needs (upstream's three fixed thirds put the badge under the
+   art and the seek bar off the song's centre). */
+html.vivi-pill-player ytmusic-player-bar:not([hidden]),
+html.vivi-pill-player #layout ytmusic-player-bar:not([hidden]) {
+  display: grid !important;
+  grid-template-columns: auto auto minmax(60px, 1fr) auto auto !important;
+  grid-template-rows: 1fr auto 1fr !important;
+  grid-template-areas: "left art . likes right" "left art info likes right" "left art seek likes right" !important;
+  column-gap: 14px !important;
+  align-items: center !important;
+}
+html.vivi-pill-player ytmusic-player-bar .middle-controls { display: contents !important; }
+html.vivi-pill-player ytmusic-player-bar #left-controls { grid-area: left; width: auto !important; min-width: 0 !important; max-width: none !important; }
+html.vivi-pill-player ytmusic-player-bar #right-controls { grid-area: right; width: auto !important; min-width: 0 !important; justify-content: flex-end; }
+html.vivi-pill-player ytmusic-player-bar .thumbnail-image-wrapper { grid-area: art; margin: 0 !important; }
+html.vivi-pill-player ytmusic-player-bar .content-info-wrapper { grid-area: info; min-width: 0 !important; max-width: none !important; width: auto !important; margin: 0 !important; align-self: end; }
+html.vivi-pill-player ytmusic-player-bar .middle-controls-buttons { grid-area: likes; margin: 0 !important; }
+html.vivi-pill-player ytmusic-player-bar .time-info { margin-inline-end: 0 !important; }
+html.vivi-pill-player ytmusic-player-bar .vivi-addon-badge { display: none !important; }
+/* the volume slider (shown on hover) floats left of the volume button over a glass chip, so
+   its empty 100 px no longer push the right-hand buttons apart */
+html.vivi-pill-player ytmusic-player-bar #right-controls { position: relative; }
+html.vivi-pill-player ytmusic-player-bar #volume-slider {
+  position: absolute !important;
+  right: calc(100% - 4px);
+  top: 50%;
+  transform: translateY(-50%);
+  padding: 0 6px;
+  border-radius: 999px;
+  background: rgba(30, 30, 34, 0.72);
+  -webkit-backdrop-filter: blur(16px);
+  backdrop-filter: blur(16px);
+  z-index: 2;
+}
+/* the seek bar: under the title and artist, as wide as they are */
+html.vivi-pill-player #layout ytmusic-player-bar #progress-bar.ytmusic-player-bar,
+html.vivi-pill-player ytmusic-player-bar #progress-bar.ytmusic-player-bar {
+  grid-area: seek;
+  position: relative !important;
+  inset: auto !important;
+  top: auto !important;
+  left: auto !important;
+  width: auto !important;
+  margin: 2px 0 0 !important;
+  height: 14px !important;
+  align-self: start;
+  transform: none !important;
+}
+html.vivi-pill-player ytmusic-player-bar #progress-bar #sliderContainer { margin-top: -10px; }
+/* a title or artist line too long for its room scrolls back and forth (pill-bar.js sets the
+   distance); the box around them clips it */
+html.vivi-pill-player ytmusic-player-bar .content-info-wrapper { overflow: hidden !important; }
+html.vivi-pill-player ytmusic-player-bar .content-info-wrapper .vivi-marquee {
+  overflow: visible !important;
+  text-overflow: clip !important;
+  width: max-content !important;
+  max-width: none !important;
+  animation: vivi-marquee var(--vivi-marquee-sec, 8s) linear infinite alternate;
+}
+@keyframes vivi-marquee {
+  0%, 15% { transform: translateX(0); }
+  85%, 100% { transform: translateX(calc(-1 * var(--vivi-marquee-px, 0px))); }
+}
+/* narrower windows: the volume slider and then the badge's words give way first */
+@media (max-width: 1100px) {
+  html.vivi-pill-player ytmusic-player-bar #volume-slider { display: none !important; }
+}
+@media (max-width: 900px) {
+  html.vivi-pill-player ytmusic-player-bar .vivi-addon-badge-label { display: none; }
+  html.vivi-pill-player ytmusic-player-bar:not([hidden]),
+  html.vivi-pill-player #layout ytmusic-player-bar:not([hidden]) { column-gap: 8px !important; }
+}
+@media (max-width: 700px) {
+  html.vivi-pill-player ytmusic-player-bar .middle-controls-buttons { display: none !important; }
+}
+@media (prefers-reduced-motion: reduce) {
+  html.vivi-pill-player ytmusic-player-bar .content-info-wrapper .vivi-marquee { animation: none; }
+}

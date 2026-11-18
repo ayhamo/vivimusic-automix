@@ -39,9 +39,11 @@
   const LOST_SEC = 0.25;            // YouTube this far from the deck (a median of 5): it moved (a seek)
   const SETTLE_SEC = 1.5;           // after a start, YouTube's time may still settle (the mix's quiet seeks)
   // steadily this far off YouTube's place (the median of DRIFT_N errors, each ±10 ms of noise in
-  // the element's time): in step again on its output. After a mix's take-over the schedule and the
-  // player differed by 26 ms, and nothing below LOST_SEC ever put that right
-  const DRIFT_SEC = 0.008, DRIFT_N = 40, REALIGN_GAP_SEC = 10;
+  // the element's time): the deck's place is checked on YouTube's output, and only more than
+  // TAP_EXACT_SEC off there is it moved. After a mix's take-over the schedule and the player
+  // differed by 26 ms, and nothing below LOST_SEC ever put that right; the element's time alone
+  // read ±11-19 ms on a deck the output matched exactly
+  const DRIFT_SEC = 0.008, DRIFT_N = 40, REALIGN_GAP_SEC = 10, TAP_EXACT_SEC = 0.003;
   const START_LEAD = 0.12;          // a start is scheduled this far ahead (the anchor's work, the worklet's hop)
   const ANCHOR_SEC = 0.25, SEARCH_SEC = 0.35, DECIM = 8;
   // after YouTube (re)starts, this much of its new sound in the tap before a match is tried, and
@@ -217,6 +219,25 @@
       return { t: tRead, at: est(tRead), score: null, by: 'time' };
     }
 
+    // the deck's place against YouTube's output (the tap): moved only when it is off there too
+    async checkPlace(c, timeErr) {
+      if (this.anchoring) return;
+      this.anchoring = true;
+      let a;
+      try { a = await this.findAnchor(c); } finally { this.anchoring = false; }
+      if (this.state !== 'following' || !this.anchor || a.by !== 'tap') return;
+      const off = a.at - this.fileAt(a.t);
+      this.checks = (this.checks || 0) + 1;
+      this.lastCheckMs = Math.round(off * 10000) / 10;
+      if (Math.abs(off) <= TAP_EXACT_SEC) return;
+      log(`${Math.round(off * 1000)} ms off YouTube's output (its time read ${Math.round(timeErr * 1000)} ms): in step again`);
+      this.realigns = (this.realigns || 0) + 1;
+      const t = Math.max(this.ctx.currentTime + START_LEAD, a.t + START_LEAD);
+      this.stopVoices(t);
+      this.startVoice(t, a.at + (t - a.t), VOICE_SEC);
+      this.settleUntil = t + 0.5;
+    }
+
     async anchorAndStart(c, first) {
       if (this.anchoring) return;
       this.anchoring = true;
@@ -269,9 +290,8 @@
       if (this.nErr - (this.driftMark || 0) >= DRIFT_N && now - (this.realignedAt ?? -Infinity) > REALIGN_GAP_SEC) {
         const w = this.errors.slice(-DRIFT_N).sort((x, y) => x - y)[DRIFT_N >> 1];
         if (Math.abs(w) > DRIFT_SEC) {
-          log(`${Math.round(w * 1000)} ms off YouTube's place: in step again on its output`);
-          this.realignedAt = now; this.realigns = (this.realigns || 0) + 1;
-          this.anchorAndStart(c, false);
+          this.realignedAt = now;
+          this.checkPlace(c, w);
           return;
         }
       }
@@ -322,7 +342,7 @@
         state: this.state, started: !!this.started, anchors: this.anchors.length, lastAnchor: this.lastAnchor || null, anchor: this.anchor,
         errorMs: e.length ? Math.round(e[e.length - 1] * 1000) : null,
         medianAbsMs: abs.length ? Math.round(abs[abs.length >> 1] * 1000) : null,
-        maxAbsMs: Math.round(this.maxAbsError * 1000), gain: this.out.gain.value, realigns: this.realigns || 0,
+        maxAbsMs: Math.round(this.maxAbsError * 1000), gain: this.out.gain.value, realigns: this.realigns || 0, checks: this.checks || 0, lastCheckMs: this.lastCheckMs ?? null,
       };
     }
 

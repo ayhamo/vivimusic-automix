@@ -149,6 +149,7 @@
         "src/crossfade.js",
         "src/automix-overview.js",
         "src/music-only.js",
+        "src/plus/pill-bar.js",
         "src/vendor/hls.min.js",
         "src/fullscreen-mode.js",
         "src/content.js"
