@@ -1554,5 +1554,8 @@
     warmup,
     setStatus,
     getLiveState: () => ({ ...live }),
+    // the addon copy's fit and level in the analysis frame's worker (addons/fit.worker.js);
+    // `transfer`: the job's arrays, handed over (gone here afterwards)
+    addonWork: async (job, transfer = []) => { await ensureFrame(); return askHost({ id: 'addon', type: 'addonWork', job, transfer }, transfer, 60000); },
   };
 })();

@@ -1435,6 +1435,96 @@
    "expect": {
     "miss": "not https"
    }
+  },
+  {
+   "name": "a progressive file whose path has \"dash\" in a word",
+   "answer": {
+    "url": "https://cdn/Dashboard.flac"
+   },
+   "expect": {
+    "codec": "flac",
+    "transport": "file",
+    "tier": null,
+    "sampleRate": null,
+    "bitDepth": null,
+    "bitrate": null,
+    "headers": {},
+    "cached": false
+   }
+  },
+  {
+   "name": "a progressive file whose token has \"mpd\" in it",
+   "answer": {
+    "url": "https://cdn/x.flac?t=xxmpdxx"
+   },
+   "expect": {
+    "codec": "flac",
+    "transport": "file",
+    "tier": null,
+    "sampleRate": null,
+    "bitDepth": null,
+    "bitrate": null,
+    "headers": {},
+    "cached": false
+   }
+  },
+  {
+   "name": "a progressive file on a host named hls",
+   "answer": {
+    "url": "https://hls.cdn/x.mp3"
+   },
+   "expect": {
+    "codec": "mp3",
+    "transport": "file",
+    "tier": null,
+    "sampleRate": null,
+    "bitDepth": null,
+    "bitrate": null,
+    "headers": {},
+    "cached": false
+   }
+  },
+  {
+   "name": "HLS by the path extension",
+   "answer": {
+    "url": "https://cdn/a.m3u8"
+   },
+   "expect": {
+    "codec": null,
+    "transport": "hls",
+    "tier": null,
+    "sampleRate": null,
+    "bitDepth": null,
+    "bitrate": null,
+    "headers": {},
+    "cached": false
+   }
+  },
+  {
+   "name": "DASH by the path extension, a query after it",
+   "answer": {
+    "url": "https://cdn/a.mpd?t=1"
+   },
+   "expect": {
+    "codec": null,
+    "transport": "dash",
+    "tier": null,
+    "sampleRate": null,
+    "bitDepth": null,
+    "bitrate": null,
+    "headers": {},
+    "cached": false
+   }
+  },
+  {
+   "name": "HLS from the MIME type",
+   "answer": {
+    "url": "https://cdn/x",
+    "mimeType": "application/vnd.apple.mpegurl"
+   },
+   "expect": {
+    "transport": "hls"
+   }
   }
  ],
  "baseOf": [

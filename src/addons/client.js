@@ -255,7 +255,12 @@
       const quality = text(j.quality ?? j.streamQuality ?? j.audioQuality);
       const all = [url, j.format, quality, j.codec, j.fileCodec, j.container, j.containerFormat, j.mimeType, j.manifest, j.mediaType, j.audioMode].map(text).join(' ');
       if (ATMOS.test([j.codec, j.audioMode, j.format, quality].map(text).join(' '))) return { miss: 'atmos' };
-      const transport = /hls|m3u8|mpegurl/i.test(all) ? 'hls' : /dash|mpd|dash\+xml/i.test(all) ? 'dash' : 'file';
+      // transport: the URL path's extension and the answer's own format fields, never words inside
+      // the host, query or a token (a progressive /Dashboard.flac or ?t=..mpd.. is a file)
+      const path = (() => { try { return new URL(url).pathname.toLowerCase(); } catch { return ''; } })();
+      const fields = [j.format, quality, j.codec, j.fileCodec, j.container, j.containerFormat, j.mimeType, j.manifest, j.mediaType].map(text).join(' ');
+      const transport = /\.m3u8$/.test(path) || /\b(hls|m3u8)\b|mpegurl/i.test(fields) ? 'hls'
+        : /\.mpd$/.test(path) || /\b(dash|mpd)\b|dash\+xml/i.test(fields) ? 'dash' : 'file';
       let sampleRate = num(j.sampleRate) ?? num(all.match(/([\d.]+)\s*kHz/i)?.[1]);
       if (sampleRate != null && sampleRate < 1000) sampleRate *= 1000;
       const bitDepth = num(j.bitDepth) ?? num(all.match(/(\d{1,2})\s*-?bit/i)?.[1]);

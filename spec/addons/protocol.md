@@ -88,7 +88,7 @@ Cache the manifest 10 min and re-read its policy fields before each search and s
 | the `cachedMarker` field (default `cached`) | A true flag: the file came from the service's cache and doesn't count against the uncached limit (4a). |
 | `error` | Logged; the answer is a miss. |
 
-Transport: HLS when any of the text says `hls`, `m3u8` or `mpegurl`; DASH for `dash`, `mpd` or `dash+xml`; else a progressive file. Missing numbers are read from the quality text: `([\d.]+)\s*kHz`, `(\d{1,2})\s*-?bit`, `(\d{2,4})\s*kbps`.
+Transport: from the URL's path extension and the answer's format fields only (`format`, the quality text, `codec`, `fileCodec`, `container`, `containerFormat`, `mimeType`, `manifest`, `mediaType`), never from words inside the host, the query or a token. HLS when the path ends in `.m3u8` or a field has the word `hls` or `m3u8` or contains `mpegurl`; DASH when the path ends in `.mpd` or a field has the word `dash` or `mpd` or contains `dash+xml`; else a progressive file (so `/Dashboard.flac` and `?t=…mpd…` are files). Missing numbers are read from the quality text: `([\d.]+)\s*kHz`, `(\d{1,2})\s*-?bit`, `(\d{2,4})\s*kbps`.
 
 Codec, first that applies: stated codec; container (flac/wav/mp3/aiff); MIME subtype; `flac` if the text says lossless; the URL's extension when it is an audio one (flac, mp3, m4a, aac, ogg, oga, opus, wav, aif, aiff, alac).
 

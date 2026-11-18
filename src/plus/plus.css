@@ -446,19 +446,18 @@ ytmusic-player-bar:has(ytmusic-player-expanding-menu:not([aria-hidden="true"]):n
 .vivi-addon-badge {
   display: inline-flex; align-items: center; gap: 4px; flex: none; align-self: center;
   margin: 0 10px; min-width: 0; overflow: hidden;
-  color: rgba(255, 255, 255, 0.45); font-size: 12px; font-weight: 500; line-height: 16px; letter-spacing: 0.5px;
+  color: rgba(255, 255, 255, 0.45); font-size: 12.5px; font-weight: 500; line-height: 16px; letter-spacing: 0.5px;
   white-space: nowrap; cursor: default; user-select: none;
 }
 .vivi-addon-badge[hidden] { display: none; }
 .vivi-addon-badge svg { flex: none; fill: currentColor; }
 .vivi-addon-badge-label { overflow: hidden; text-overflow: ellipsis; }
-/* animated states: the glyph at 0.7 white */
-.vivi-addon-badge[data-kind="upgrading"] svg,
+/* the shimmering (confirmed) state: the glyph at 0.7 white; the others stay at 0.45 like the text */
 .vivi-addon-badge[data-kind="lossless"] svg { fill: rgba(255, 255, 255, 0.7); }
-/* Upgrading Quality: the label pulses 1.0 <-> 0.4, 900 ms, reversing */
-.vivi-addon-badge[data-kind="upgrading"] .vivi-addon-badge-label {
-  color: #fff; animation: vivi-q-pulse 900ms cubic-bezier(0.4, 0, 0.2, 1) infinite alternate;
-}
+/* Upgrading Quality: the whole badge, glyph and word, fades 1.0 <-> 0.4, 900 ms, reversing */
+.vivi-addon-badge[data-kind="upgrading"] { animation: vivi-q-pulse 900ms cubic-bezier(0.4, 0, 0.2, 1) infinite alternate; }
+/* the clock before the badge with digits of one width, so the badge doesn't shift each second */
+ytmusic-player-bar .time-info { font-variant-numeric: tabular-nums; }
 @keyframes vivi-q-pulse { from { opacity: 1; } to { opacity: 0.4; } }
 /* Lossless / Hi-Res Lossless: white text at 0.55 with a full-white band (half-width 0.6 x the
    text) sweeping left to right in 3 s; the band is 120% wide, so 600% -> -500% moves its centre
@@ -472,6 +471,6 @@ ytmusic-player-bar:has(ytmusic-player-expanding-menu:not([aria-hidden="true"]):n
 }
 @keyframes vivi-q-shimmer { from { background-position: 600% 0, 0 0; } to { background-position: -500% 0, 0 0; } }
 @media (prefers-reduced-motion: reduce) {
-  .vivi-addon-badge[data-kind] .vivi-addon-badge-label { animation: none; }
+  .vivi-addon-badge[data-kind], .vivi-addon-badge[data-kind] .vivi-addon-badge-label { animation: none; }
   .vivi-addon-badge[data-kind="lossless"] .vivi-addon-badge-label { background-size: 0 0, 100% 100%; }
 }

@@ -19,7 +19,7 @@
   const VOCAL_WINDOW_SEC = (958 * 1024) / 44100;   // open-unmix's fixed input, ~22.2 s
   // BitChord's ANALYSIS_VERSION (8), plus ours: a change to either redoes the cache.
   const ANALYSIS_VERSION = 'bc8.v1';
-  let worker = null;
+  let worker = null, fitWorker = null;
   const jobs = new Map();   // fileKey -> resolve, for songs analysed here
 
   const reply = (msg, transfer) => parent.postMessage({ ch: 'vivi-automix', ...msg }, PARENT_ORIGIN, transfer || []);
@@ -356,6 +356,16 @@
       } catch (err) {
         reply({ type: 'error', fileKey: d.fileKey, message: String(err?.message || err) });
       }
+    } else if (d.type === 'addonWork') {
+      // the addon copy's fit and level (addons/fit.worker.js), off the page's main thread
+      fitWorker ??= new Worker(chrome.runtime.getURL('src/addons/fit.worker.js'));
+      const id = d.fileKey;
+      fitWorker.addEventListener('message', function on(m) {
+        if (m.data?.id !== id) return;
+        fitWorker.removeEventListener('message', on);
+        reply(m.data.ok ? { type: 'result', fileKey: id, result: m.data.result } : { type: 'error', fileKey: id, message: m.data.error });
+      });
+      fitWorker.postMessage({ id, ...d.job }, d.transfer || []);
     } else if (d.type === 'analyze') {
       // a bare clip (the model warm-up): its own Beat This! window
       const { fileKey, samples, sampleRate, offsetSec } = d;

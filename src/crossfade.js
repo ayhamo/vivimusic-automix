@@ -1958,8 +1958,23 @@
       say('fitting');
       const t1 = performance.now();
       const [ytBuf, adBuf] = await Promise.all([decodeAt(ytBytes, F.FIT_RATE, 2), decodeAt(file.bytes, F.FIT_RATE, 2)]);
+      // the mono mixes here (cheap); the fit, both loudness reads and the true-peak pass in the
+      // analysis frame's worker (addons/fit.worker.js): on this thread they held the page about
+      // 1 s per song. This thread only when that frame is out (the arrays are then still here).
+      let busy = performance.now();
       const yt = monoOf(ytBuf), ad = monoOf(adBuf);
-      const fit = F.fit(yt, ad, { slackSec: 5 });
+      busy = performance.now() - busy;
+      let where = 'worker';
+      let fitted = await A.addonWork({ op: 'fit', yt, ad, opt: { slackSec: 5 } }, [yt.buffer, ad.buffer])
+        .catch((e) => { log('addons: no fit worker:', e?.message || e); return null; });
+      if (!fitted) {
+        if (!yt.length) throw new Error('the fit failed');
+        const t = performance.now();
+        const f = F.fit(yt, ad, { slackSec: 5 });
+        fitted = f.none ? { fit: f } : { fit: f, ytLufs: F.integratedLufs(yt, F.FIT_RATE), addonLufs: F.integratedLufs(ad, F.FIT_RATE) };
+        busy += performance.now() - t; where = 'main thread';
+      }
+      const { fit, ytLufs, addonLufs } = fitted;
       if (fit.none) {
         log(`addons: ${s.addon.name} (${s.addon.host}) refused for this song: ${fit.none}`, fit);
         return { none: fit.none, state: 'refused', fit };
@@ -1967,9 +1982,18 @@
       // the whole file at the audio context's rate (what the decks play), and its level: YouTube's
       // loudness minus the file's, a boost at most +6 dB, the true peak kept at or under -1 dBTP
       const full = await decodeAt(file.bytes, g.ctx.sampleRate, 2);
-      const ytLufs = F.integratedLufs(yt, F.FIT_RATE), addonLufs = F.integratedLufs(ad, F.FIT_RATE);
-      const addonChannels = ytLufs > addonLufs ? Array.from({ length: full.numberOfChannels }, (_, c) => ownChannel(full, c)) : [];
-      const lvl = F.sourceGainDb({ ytLufs, addonLufs, addonChannels, rate: g.ctx.sampleRate });
+      let lvl;
+      if (ytLufs > addonLufs) {   // a boost: its true peak is read over the whole file at the context's rate
+        let t = performance.now();
+        const addonChannels = Array.from({ length: full.numberOfChannels }, (_, c) => ownChannel(full, c));
+        busy += performance.now() - t;
+        const args = { ytLufs, addonLufs, addonChannels, rate: g.ctx.sampleRate };
+        lvl = (await A.addonWork({ op: 'gain', args }, addonChannels.map((x) => x.buffer)).catch(() => null))?.lvl;
+        if (!lvl) {
+          if (!addonChannels[0]?.length) throw new Error('the level failed');
+          t = performance.now(); lvl = F.sourceGainDb(args); busy += performance.now() - t; where = 'main thread';
+        }
+      } else lvl = F.sourceGainDb({ ytLufs, addonLufs, addonChannels: [], rate: g.ctx.sampleRate });
       const t3 = performance.now();
       const rec = {
         id, buf: full, off: fit.offsetSec, k: 10 ** (lvl.gainDb / 20), gainDb: lvl.gainDb, lvl, fit,
@@ -1978,7 +2002,7 @@
       };
       log(`addons: ${rec.name} (${rec.host}) fits: offset ${(rec.off * 1000).toFixed(1)} ms (score ${fit.score.toFixed(3)}, check ${fit.checkScore.toFixed(3)} at ${fit.checkSec.toFixed(0)} s), ` +
         `level ${lvl.gainDb >= 0 ? '+' : ''}${lvl.gainDb.toFixed(2)} dB (wanted ${lvl.wantDb?.toFixed(2)}${lvl.capped ? ', capped by ' + lvl.capped : ''}), ` +
-        `${full.sampleRate} Hz x ${full.numberOfChannels}, ready after ${((t3 - t0) / 1000).toFixed(1)} s (fetch and YouTube's audio ${((t1 - t0) / 1000).toFixed(1)} s, fit, level and decode ${((t3 - t1) / 1000).toFixed(1)} s)`);
+        `${full.sampleRate} Hz x ${full.numberOfChannels}, ready after ${((t3 - t0) / 1000).toFixed(1)} s (fetch and YouTube's audio ${((t1 - t0) / 1000).toFixed(1)} s, fit, level and decode ${((t3 - t1) / 1000).toFixed(1)} s; fit and level in the ${where}, main thread busy ${busy.toFixed(0)} ms)`);
       return { rec };
     })().then((r) => { if (prepared.get(id) === me) Object.assign(me, r); return r; },
       (e) => { const r = { none: String(e?.message || e), state: 'failed' }; if (prepared.get(id) === me) Object.assign(me, r, { tries, failedAt: performance.now() }); return r; });
@@ -2007,7 +2031,9 @@
     const d = BD.create(g.ctx, g.bassFilter);
     d.addon = true;
     d.addonId = id;
+    const tL = performance.now();
     d.load(rec.buf, rec.off);
+    log(`addons: deck loaded in ${(performance.now() - tL).toFixed(0)} ms (main thread)`);
     sdeck = d;
     say('playing', { offsetSec: rec.off, gainDb: rec.lvl.gainDb, wantDb: rec.lvl.wantDb, capped: rec.lvl.capped, score: rec.fit.score, checkScore: rec.fit.checkScore });
     addonEvent('deck', { id, takeAt, startPos, off: rec.off, k: rec.k });
