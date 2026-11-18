@@ -24,7 +24,7 @@ Every search and stream request carries these query parameters, percent-encoded,
    - other tiers: an exact option match, else the first option containing `low|96|128|min` (LOW) or `high|320|normal|standard` (HIGH), else the first option (LOW: else the HIGH one, else the last option **(ours)**);
    - no quality setting declared: the tier name `LOSSLESS`, `HIGH` or `LOW` (Hi-Res and CD send `LOSSLESS`).
    This overrides any declared quality default.
-3. `atmos=`: not sent. The extension and the phone app play stereo **(ours)**. An addon that declares an `atmos` setting (NullBeat: a toggle, default true) gets `atmos=false` in its place, overriding the default **(ours)**.
+3. `atmos=`: not sent. The extension and the phone app play stereo **(ours)**. An addon that declares an `atmos` setting (NullBeat: a toggle, default true) gets `atmos=false` in its place, overriding the default **(ours)**. Phone only: with its Dolby Atmos switch on (off by default, shown only where the phone lists a Dolby decoder), the search and an Atmos row's `/stream` send `atmos=true`; a stereo row's `/stream` still sends `atmos=false`. See §3a. The extension never sends `atmos=true`.
 
 Timeout: 45 s for the whole call, connect to last byte. That is the one that ends a slow request (BitChord also sets a 60 s read timeout, which the 45 s call limit always reaches first). TorBox-backed addons can take 20–32 s on a cold cache.
 
@@ -70,6 +70,26 @@ Cache the manifest 10 min and re-read its policy fields before each search and s
 | `isrc` | Optional, not BitChord. When both sides have one, an equal ISRC is the match **(ours, from Mornye)**. |
 | `streamURL` | Optional fallback when `/stream` fails. |
 
+## 3a. Dolby Atmos on the phone (ours)
+
+The extension stays stereo: Firefox can't decode E-AC-3, and nothing in this section applies to it.
+
+The phone app has a Dolby Atmos switch, off by default. It does anything only where `MediaCodecList` lists a decoder for `audio/eac3-joc` or `audio/ac4`. With it on:
+- Searches send `atmos=true` (§1). Rows read as Atmos (the §3 table) are no longer refused. They go through the same §7 rules (ISRC first, the matcher, the length slack, previews) as a list of their own, at most 1 per addon (with 3 stereo rows that is 4 `/stream` calls, inside the default 5 a minute). The queries go on until the stereo rows match too, so an Atmos row that fails still has a stereo fallback.
+- Atmos rows go first: every addon's matching Atmos rows in priority order, then every addon's stereo rows in priority order as before. A stereo row from the first addon therefore comes after an Atmos row from the third.
+- An Atmos row's `/stream` sends `atmos=true`. An Atmos answer (the §3 pattern, or a `codec` of `eac3` or `ac4` alone) is taken and marked Atmos; the probe treats it as lossy (64 kbps floor). A stereo row's `/stream` sends `atmos=false`, and an Atmos answer to it is still a miss.
+- Before the probe, the stream's codec is matched to a decoder: `eac3_joc`, `eac3`, `ec-3` → `audio/eac3-joc`; `ac4`, `ac-4` → `audio/ac4`; no codec stated → any Atmos decoder. A codec the phone can't decode is passed over with "no decoder on this phone", and the next row is tried.
+- Playback is the same as for any file (§8). The file is fetched, decoded by the decoder that plays it, fitted to YouTube's audio and levelled. Samsung's `c2.dolby.eac3.decoder` gives its Atmos render as 2-channel 48 kHz PCM, so the fit, the gain and the mix decks read it unchanged.
+- An Atmos file is usually its own mix, so its fit to YouTube's audio finds no match (Blinding Lights: coarse score 0.65, under the 0.8 bar). It is not refused. Its decode is kept while the stereo rows are tried (one at a time: a later addon's Atmos row is passed over while one waits), and the first stereo row that fits places it:
+  - The fine fit (the 1 kHz waveform) scans ±0.11 s around the stereo file's offset, in 4 windows of 20 s spread through the song. Where the 4 agree within 5 ms, their median is the Atmos offset; otherwise the stereo offset is used as it is. The envelope's coarse fit is skipped: across two mixes it lands tens of ms off.
+  - The Atmos file is still refused for its length (the slack, against the offset it gets), and then the stereo file plays.
+  - The stereo file is deleted and the Atmos one plays. When no stereo row fits, the Atmos file is deleted too.
+- Our player plays our own decode, not the addon's file. The 2-channel render the fit read is written as a 16-bit WAV with the gain in its samples, and that WAV is what plays (a saved Atmos download is decoded to a WAV in the cache when it loads). YT's player decoding the E-AC-3 itself played it 41 to 59 ms ahead of that decode (a different amount after each seek) and 6 dB quieter (S21 FE, recorded), so the hand-overs to the mix decks jumped and stepped in level. From the WAV, the player, the fit and the decks read the same samples.
+- Level: the gain comes from the Atmos file's own loudness. Atmos mixes are mastered far quieter than YouTube's audio (Blinding Lights: 13.5 dB under), so the fit's boost (at most +6 dB, kept under -1 dBTP) is applied for Atmos too, in the WAV. The rest of the gap stays: Blinding Lights plays about 7.5 dB under YouTube's audio.
+- The quality badge reads "Dolby Atmos" when the renderer's input format is `audio/eac3-joc` or `audio/ac4`, or when it is PCM from our WAV of such a decode. Plain E-AC-3 without objects is not Atmos. The badge's icon is BitChord's `ic_dolby_atmos` (the double-D).
+- Switching it off hands Atmos audio back to YouTube's player at once. Prepared Atmos files are dropped, and the songs are asked again in stereo. Downloaded Atmos files stay.
+- Downloads: the popup's quality row gains Atmos (only with the switch on). It asks for Atmos rows only (`atmos=true`, the addon's best quality) and checks the bytes for an MP4 with an `ec-3` or `ac-4` sample entry. When no addon has it in Atmos, it steps down to Best, then Hi-Res, then CD. An Atmos file is never reused for a stereo download of the same ISRC, or the reverse.
+
 ## 4. `GET {base}/stream/{trackId}?{settings}`
 
 `trackId` is percent-encoded as one path segment.
@@ -81,7 +101,7 @@ Cache the manifest 10 min and re-read its policy fields before each search and s
 | `codec` / `fileCodec`; `container` / `containerFormat`; `mimeType` | |
 | `manifest` / `mediaType` | `none`, `hls`, `dash`. |
 | `encrypted` | Refuse unless false, `"none"` or blank. |
-| Atmos | Refuse a stream whose `codec`, `audioMode`, `format` or `quality` reads as Atmos (same pattern as the rows): an addon may answer Atmos for a row that didn't say so **(ours)**. |
+| Atmos | Refuse a stream whose `codec`, `audioMode`, `format` or `quality` reads as Atmos (same pattern as the rows): an addon may answer Atmos for a row that didn't say so **(ours)**. Phone with the Dolby Atmos switch on: an Atmos answer to an Atmos row is taken (§3a). |
 | `sampleRate` | Hz; under 1000 means kHz. |
 | `bitDepth` | |
 | `bitrate` | Over 3000 means bit/s, else kbps. Absent: 320 for HIGH, 128 for LOW. |
@@ -97,7 +117,7 @@ On a 404, a blank `url` or an `error`: use the row's `streamURL`, else the next 
 
 ## 4a. Stream limits (BitChord fork)
 
-TorBox-backed addons allow about 5 `/stream` calls a minute and 60 uncached an hour. Per addon, the client counts its `/stream` calls over the last minute and its uncached answers over the last hour, against the manifest's `limits` or those defaults. A call over either count is not made: the row is skipped with "stream limit, free in N s", which is not a failure (health untouched). A cached `/stream` answer (6) costs nothing.
+TorBox-backed addons allow about 5 `/stream` calls a minute and 60 uncached an hour. Per addon, the client counts its `/stream` calls over the last minute and its uncached answers over the last hour, against the manifest's `limits` or those defaults. A call over either count is not made: the row is skipped with "stream limit, free in N s", which is not a failure (health untouched). On the phone, a song that gets no file while a limit was hit is tried again after 60 s, not after the 10 min a failed song waits **(ours)**. A cached `/stream` answer (6) costs nothing.
 
 A 429 on `/stream` is not retried. The client learns from it: from then on the per-minute count is the number that got through before it (at least 1), and no `/stream` call goes to that addon until `Retry-After` (default 60 s) has passed.
 
