@@ -42,6 +42,7 @@
     if (e.source !== window || !d || d.ch !== CHANNEL || d.dir !== 'out') return;
     if (d.type === 'meta') { const w = metaWaits.get(d.id); if (w) { metaWaits.delete(d.id); w(d.meta || null); } }
     else if (d.type === 'state') onState(d);
+    else if (d.type === 'ytAudio') ytAudio = { id: String(d.id || ''), itag: Number(d.itag) || 0, kbps: Number(d.kbps) || 0, codec: String(d.codec || ''), at: Date.now() };
   });
   function metaOf(id) {
     return new Promise((resolve) => {
@@ -180,11 +181,20 @@
       if (known.size > 200) known.delete(known.keys().next().value);
       return q;
     }
-    if (known.has(id)) return null;   // its copy played and was handed back: YouTube's own audio again
-    if (!(Date.now() - deckAt < 2000)) return null;   // the addon deck isn't running (no audio graph): nothing will upgrade
+    if (known.has(id)) return youTubeQuality(id);   // its copy played and was handed back: YouTube's own audio again
+    if (!(Date.now() - deckAt < 2000)) return youTubeQuality(id);   // the addon deck isn't running (no audio graph): nothing will upgrade
     const pending = st.state === 'looking' || st.state === 'opening' || (st.state === 'found' && !st.why)
       || (st.state === 'ready' && (!st.play || st.play.state === 'fetching' || st.play.state === 'fitting'));
-    return pending ? { kind: 'upgrading', label: 'Upgrading Quality', glyph: 'wave', title: 'Looking for a better copy of this song in your addons' } : null;
+    return pending ? { kind: 'upgrading', label: 'Upgrading Quality', glyph: 'wave', title: 'Looking for a better copy of this song in your addons' } : youTubeQuality(id);
+  }
+  // YouTube's own audio, by what its player decodes now (crossfade-page.js 'ytAudio'): "High Quality"
+  // at 256 kbps or more (Premium's Opus itag 774, AAC 141), nothing for the usual ~130-160 kbps (251, 140)
+  let ytAudio = null;
+  function youTubeQuality(id) {
+    const y = ytAudio;
+    if (!y || Date.now() - y.at > 3000 || (id && y.id !== id) || !(y.kbps >= 256)) return null;
+    const codec = /^mp4a/i.test(y.codec) ? 'AAC' : (y.codec || 'audio').toUpperCase();
+    return { kind: 'high', label: 'High Quality', glyph: 'headphones', title: `${codec} · ${y.kbps} kbps, YouTube's own audio (itag ${y.itag})` };
   }
   // Two places, neither in the bar's row (the label's length changes with the state and moved the
   // bar's parts): a round icon on the corner of the song art in the player bar (in the pill too;

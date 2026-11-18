@@ -540,6 +540,23 @@
     if (s) say({ type: 'state', ...s });
   }, 250);
 
+  // The audio format YouTube's player decodes now, for the quality badge (src/addons/page-addons.js):
+  // its itag from stats for nerds ("vp09… (248) / opus (774)"), its bitrate and codec from the
+  // player response of that same song. Sent every second, whether crossfade is on or not.
+  setInterval(() => {
+    try {
+      const p = moviePlayer();
+      if (!p?.getStatsForNerds || !p.getPlayerResponse) return;
+      const audio = String(p.getStatsForNerds()?.codecs || '').split('/').pop();
+      const itag = Number(/\((\d+)\)/.exec(audio)?.[1]) || 0;
+      const r = p.getPlayerResponse(), id = r?.videoDetails?.videoId || '';
+      if (!itag || !id || id !== p.getVideoData?.()?.video_id) return;
+      const f = (r.streamingData?.adaptiveFormats || []).find((x) => x.itag === itag && /^audio\//.test(x.mimeType || ''));
+      if (!f) return;
+      say({ type: 'ytAudio', id, itag, kbps: Math.round(Number(f.bitrate) / 1000) || 0, codec: /codecs="([^".]+)/.exec(f.mimeType)?.[1] || '' });
+    } catch { /* the player changed shape */ }
+  }, 1000);
+
   // ───────────────────────── tail decoding ─────────────────────────
   async function buildTail(req) {
     const snap = snapshot();
