@@ -235,6 +235,11 @@ class Kawarp {
         this.gl = gl;
         this.halfFloatExt = gl.getExtension("OES_texture_half_float");
         this.halfFloatLinearExt = gl.getExtension("OES_texture_half_float_linear");
+        // Firefox requires this extension to be enabled before a half-float
+        // texture can be used as a render target (Chrome enables it implicitly).
+        // Without it the FBO is incomplete and the whole animation renders black.
+        gl.getExtension("EXT_color_buffer_half_float");
+        gl.getExtension("WEBGL_color_buffer_float");
         // Let u_opacity actually blend against whatever sits behind the canvas
         // (e.g. the static blurred artwork div) rather than just darkening to black.
         gl.enable(gl.BLEND);
@@ -794,6 +799,14 @@ class Kawarp {
             throw new Error("Failed to create framebuffer");
         gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
         gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
+        // Safety net: if this driver can't render to half-float, redo it as
+        // 8-bit instead of silently drawing nothing.
+        if (canUseHalfFloat && gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) {
+            gl.bindTexture(gl.TEXTURE_2D, texture);
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+            gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
+            this.halfFloatExt = null; // later FBOs go straight to 8-bit
+        }
         return { framebuffer, texture };
     }
     deleteFramebuffer(fbo) {

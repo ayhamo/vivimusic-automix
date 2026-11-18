@@ -1531,7 +1531,7 @@
     if (fromUrl) return fromUrl;
     const player = document.querySelector('#movie_player, ytmusic-player');
     try {
-      const data = player?.getVideoData?.() || window.__viviPageVideoData?.(); // vivi+
+      const data = player?.getVideoData?.() || window.__viviPageVideoData?.();
       if (data?.video_id) return data.video_id;
     } catch { /* ignore */ }
     return null;

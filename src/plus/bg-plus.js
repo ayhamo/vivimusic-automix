@@ -111,28 +111,11 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   }
 });
 
-// Inject / remove theme.css for the sending tab (VIVI_THEME_CSS, from content.js).
-// Done from here (not with a <link> in the page) so the browser's page-side
-// extension-URL check is never involved.
-chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  if (msg?.type !== 'VIVI_THEME_CSS') return undefined;
-  if (!sender?.tab?.id) { sendResponse({ ok: false }); return undefined; }
-  const target = { tabId: sender.tab.id, frameIds: [sender.frameId || 0] };
-  const files = ['src/theme.css'];
-  const job = msg.on
-    ? chrome.scripting.insertCSS({ target, files })
-    : chrome.scripting.removeCSS({ target, files });
-  Promise.resolve(job)
-    .then(() => sendResponse({ ok: true }))
-    .catch((e) => sendResponse({ ok: false, error: String(e?.message || e) }));
-  return true;
-});
-
 // Inject / remove our theme additions (theme-plus.css) for the sending tab,
 // next to upstream's theme.css.
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  // The listener above (registered first) adds theme.css and answers; this one
-  // only adds our additions after it, without answering.
+  // background.js's own listener adds theme.css and answers; this one only adds
+  // our additions next to it, without answering.
   if (msg?.type !== 'VIVI_THEME_CSS' || !sender?.tab?.id) return undefined;
   const target = { tabId: sender.tab.id, frameIds: [sender.frameId || 0] };
   const files = ['src/plus/theme-plus.css'];
@@ -399,20 +382,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
  * apart from a few `// vivi+ hook` lines. All background scripts share one global
  * scope (Firefox: background.scripts; Chrome: importScripts), and upstream calls
  * these functions by name at call time, so reassigning them here replaces them.
- * Nothing calls them before this file has loaded, except background.js's
- * top-level ensureAmpHeaderSpoofRule() (see below).
+ * Nothing calls them before this file has loaded.
  */
-
-// ── background.js: no DNR in the Firefox build (fx-headers.js spoofs the headers) ──
-// background.js's own top-level call runs before this file in Firefox; there upstream's
-// try/catch just logs one console.debug line ("Could not register AMP header-spoof rule").
-{
-  const upstreamAmpRule = ensureAmpHeaderSpoofRule;
-  ensureAmpHeaderSpoofRule = async function ensureAmpHeaderSpoofRule() {
-    if (!chrome.declarativeNetRequest?.updateSessionRules) return; // Firefox build: handled by fx-headers.js (webRequest)
-    return upstreamAmpRule();
-  };
-}
 
 // ── background.js: update check against this fork's releases ──
 {
@@ -465,22 +436,6 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
     return result;
   };
-}
-
-// ── background.js: keep the event page alive during long background work ──
-{
-  const upstreamLastfmWebPoll = lastfmWebPoll;
-  lastfmWebPoll = function lastfmWebPoll() {
-    if (lastfmWebPolling) return upstreamLastfmWebPoll();
-    const stopKA = viviKeepAlive();
-    return upstreamLastfmWebPoll().finally(stopKA);
-  };
-}
-// Used by the hook in background.js's VIVI_YTM_TRANSFER case: keeps the event page
-// alive until that case answers.
-function viviKeepAliveUntilReply(sendResponse) {
-  const stopKA = viviKeepAlive();
-  return (response) => { stopKA(); sendResponse(response); };
 }
 
 // ── spotify.js: login via the browser's own Spotify cookie (any cookie store),

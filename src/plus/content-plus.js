@@ -8,13 +8,10 @@
  *   bind(ctx)                 content.js's private helpers (placed right
  *        before handleTrackChange, where these features used to live);
  *        starts the timers and the Shift+D listener below
- *   themeCss(on, existing)    theme.css through the background's insertCSS
  *   purgeNotFound(all, prefix) one-time drop of saved "no Canvas" results
  *   adIsShowing()             an ad is playing (says nothing about the song)
  *   fetchCanvasData(track, artworkFn)  Apple lookup that tells "failed"
  *        apart from "no Canvas" and carries Apple's second rendition
- *   appleRadiusFor / applyAppleRadius / appleRadius / appleRadiusWatch /
- *   appleFrame                rounded corners on the Apple overlays
  *   syncCanvasWithSong(playing)  Canvas media pause/resume with the song
  *   lyricsCanvas / setLyricsCanvas / canvasSettings  Spotify Canvas behind
  *        the lyrics or the side panel, plus the blur settings
@@ -36,38 +33,6 @@
   };
   const log = (...a) => C.log(...a);
   const warn = (...a) => C.warn(...a);
-
-  // ───────────────────────── Theme CSS via the background ─────────────────────────
-  let themeCssInjected = false;
-  function requestThemeCss(on, attempt) {
-    try {
-      chrome.runtime.sendMessage({ type: 'VIVI_THEME_CSS', on }, (res) => {
-        void chrome.runtime.lastError;
-        // Retry a couple of times (e.g. background still starting up).
-        if (on && !res?.ok && attempt < 2 && themeCssInjected) {
-          setTimeout(() => { if (themeCssInjected) requestThemeCss(true, attempt + 1); }, 800 * (attempt + 1));
-        }
-      });
-    } catch { /* extension context gone */ }
-  }
-
-  // theme.css is injected by the background script (scripting.insertCSS)
-  // instead of a <link> to a chrome-extension:// URL. The browser refuses
-  // that kind of page-side load in some situations ("Unsafe attempt to
-  // load URL … Domains, protocols and ports must match"), which was logged
-  // as an error on the extensions page. insertCSS has no such check.
-  // on: returns true when applyTheme must stop here (already injected).
-  P.themeCss = (on, existing) => {
-    if (on) {
-      if (existing) existing.remove(); // leftover <link> from an older version
-      if (themeCssInjected) return true;
-      themeCssInjected = true;
-      requestThemeCss(true, 0);
-      return false;
-    }
-    if (themeCssInjected) { themeCssInjected = false; requestThemeCss(false, 0); }
-    return false;
-  };
 
   // ───────────────────────── Saved "no Canvas" cleanup ─────────────────────────
   // One-time cleanup: older builds saved failed lookups (for example while
@@ -132,156 +97,6 @@
     if (!videoUrl) return { videoUrl: null, imageUrl: null, notFound: true };
     const imageUrl = artworkResult?.imageUrl || null;
     return { videoUrl, fallbackVideoUrl: canvas.fallbackUrl || null, imageUrl, notFound: false };
-  };
-
-  // ───────────────────────── Apple overlay corner radius ─────────────────────────
-  let appleStateObserver = null;
-  let appleRadiusTimer = null;
-
-  // Corner radius (px) the artwork is clipped to: the nearest ancestor with a
-  // rounded corner. Firefox clips a cross-process <iframe> to a rounded box
-  // without anti-aliasing (jagged corners), so the radius is handed to the
-  // iframe page, which rounds its own <video> — that is ordinary, smoothly
-  // anti-aliased content.
-  function appleCornerRadius(el, fallback) {
-    // What the eye sees is the LARGEST curve among the image itself and any
-    // ancestor that really clips it (overflow != visible) — e.g. an 8px image
-    // inside a 20px-rounded, overflow:hidden player shows a 20px corner.
-    let best = 0, n = el, hops = 0;
-    while (n && n !== document.documentElement && hops++ < 7) {
-      const cs = getComputedStyle(n);
-      const v = cs.borderTopLeftRadius || '';
-      const r = v.endsWith('%') ? 0 : (parseFloat(v) || 0);
-      const clips = n === el || cs.overflowX !== 'visible' || cs.overflowY !== 'visible';
-      if (clips && r > best) best = r;
-      n = n.parentElement;
-    }
-    return best > 0 ? Math.min(best, 48) : fallback;
-  }
-
-  // The theme's own artwork radii (theme.css :root). These never change, unlike
-  // the computed radius above, which can read 0 for a moment while YT Music is
-  // still switching between the mini and full player.
-  function appleThemeRadius(imgEl) {
-    if (!document.documentElement.classList.contains('vivi-theme-on')) return 0;
-    const bar = !!imgEl.closest('ytmusic-player-bar');
-    const v = getComputedStyle(document.documentElement).getPropertyValue(bar ? '--radius-art' : '--radius-art-lg');
-    return parseFloat(v) || (bar ? 8 : 20);
-  }
-
-  function appleRadiusFor(imgEl) {
-    // "Full screen mode": the artwork is full-bleed against the screen edge, so
-    // the overlay must not get the thumbnail's rounded corners (they would
-    // show as dark wedges in the screen corners).
-    if (document.documentElement.classList.contains('vivi-fs-mode') &&
-        !imgEl.closest('ytmusic-player-bar') &&
-        document.querySelector('ytmusic-player-page[player-fullscreened]:not([video-mode])')) {
-      return 0;
-    }
-    return Math.max(appleCornerRadius(imgEl, 0), appleThemeRadius(imgEl));
-  }
-
-  // Re-check every overlay's radius. Called on a timer and after player-state
-  // changes, because a radius read while the player is mid-transition (or
-  // before YT Music has applied its classes) can be stale.
-  function resyncAppleRadii() {
-    document.querySelectorAll('.vivi-canvas-media[data-vivi-apple-overlay="1"]').forEach((el) => {
-      const img = el.parentElement && el.parentElement.querySelector('img:not(.vivi-canvas-media)');
-      if (img) applyAppleRadius(el, appleRadiusFor(img));
-    });
-  }
-
-  // Give an Apple overlay the SAME rounded corners as the native thumbnail it
-  // sits on. In Firefox the overlay's CSS `border-radius: inherit` picks up the
-  // wrapper's radius (often 0 — YT Music rounds the <img> itself, not its
-  // wrapper), so the artwork came out square. Copy the thumbnail's own radius
-  // instead. +3px because the overlay overshoots its box by 1px on every side,
-  // which would otherwise leave the corner arc ~1px outside the thumbnail's.
-  // Rounded-rectangle alpha mask built from four corner gradients plus two
-  // overlapping bars, so it scales with the element and needs no JS on resize.
-  function appleCornerMask(R) {
-    if (!(R > 0)) return 'none';
-    const tile = `${R}px ${R}px`;
-    const stops = `#000 ${R - 0.5}px, transparent ${R + 0.5}px`;
-    const bar = `${R - 1}px`, cut = `${2 * R - 2}px`;
-    return [
-      `radial-gradient(circle at 100% 100%, ${stops}) 0 0 / ${tile} no-repeat`,
-      `radial-gradient(circle at 0 100%, ${stops}) 100% 0 / ${tile} no-repeat`,
-      `radial-gradient(circle at 100% 0, ${stops}) 0 100% / ${tile} no-repeat`,
-      `radial-gradient(circle at 0 0, ${stops}) 100% 100% / ${tile} no-repeat`,
-      `linear-gradient(#000, #000) 0 ${bar} / 100% calc(100% - ${cut}) no-repeat`,
-      `linear-gradient(#000, #000) ${bar} 0 / calc(100% - ${cut}) 100% no-repeat`
-    ].join(', ');
-  }
-
-  function applyAppleRadius(el, r) {
-    r = Math.max(0, Math.round(r || 0));
-    if (el.dataset.viviAppleRadius === String(r)) return;
-    el.dataset.viviAppleRadius = String(r);
-    if (el.tagName === 'IFRAME') {
-      // Firefox clips an out-of-process <iframe> to a rounded box without
-      // anti-aliasing (jagged) or not at all, and ignores rounding applied to
-      // the <video> inside it. An alpha MASK is composited like any image, so
-      // its edge is smooth. The iframe is 1px bigger than the thumbnail on every
-      // side, so the arc is r+4: that keeps it just inside the thumbnail's own
-      // corner instead of poking out of it.
-      el.style.setProperty('border-radius', '0', 'important');
-      el.style.setProperty('clip-path', 'none', 'important');
-      const m = appleCornerMask(r > 0 ? r + 4 : 0);
-      el.style.setProperty('-webkit-mask', m, 'important');
-      el.style.setProperty('mask', m, 'important');
-    } else {
-      const px = (r > 0 ? r + 3 : 0) + 'px';
-      el.style.setProperty('border-radius', px, 'important');
-      el.style.setProperty('clip-path', r > 0 ? `inset(0 round ${px})` : 'none', 'important');
-    }
-    console.debug('[Vivi] Apple artwork corner radius →', r + 'px', el.dataset.viviAppleSlot || '');
-    if (el.tagName === 'IFRAME') {
-      const send = () => {
-        try { el.contentWindow?.postMessage({ __viviAppleRadius: Number(el.dataset.viviAppleRadius) || 0 }, '*'); } catch (_) {}
-      };
-      send();
-      el.addEventListener('load', send, { once: true });
-    }
-  }
-
-  P.appleRadiusFor = appleRadiusFor;
-  P.applyAppleRadius = applyAppleRadius;
-  P.appleRadius = (el, imgEl) => applyAppleRadius(el, appleRadiusFor(imgEl));
-
-  // Started/stopped with content.js's Apple overlay observer.
-  P.appleRadiusWatch = (on) => {
-    if (on) {
-      // The overlay sync only runs when DOM nodes are added/removed. Minimising
-      // or re-opening the player mostly flips attributes, so watch those too and
-      // re-check the corner radius while the layout settles.
-      appleStateObserver = new MutationObserver(() => {
-        [0, 250, 700, 1500].forEach((ms) => setTimeout(resyncAppleRadii, ms));
-      });
-      appleStateObserver.observe(document.documentElement, {
-        attributes: true,
-        subtree: true,
-        attributeFilter: ['player-ui-state', 'player-page-open', 'player-page-ui-state', 'player-fullscreened']
-      });
-      appleRadiusTimer = setInterval(resyncAppleRadii, 800);
-    } else {
-      appleStateObserver?.disconnect();
-      appleStateObserver = null;
-      if (appleRadiusTimer) clearInterval(appleRadiusTimer);
-      appleRadiusTimer = null;
-    }
-  };
-
-  // A fresh (not yet inserted) Apple HLS iframe from makeAppleHlsIframe: hand
-  // the corner radius to the player page (&r=, before the #fragment) and set
-  // the colour scheme. Same colour scheme on the frame and its document keeps
-  // the frame's own background genuinely transparent (a mismatch makes
-  // browsers paint it opaque).
-  P.appleFrame = (frame, options, wrapper, isMain) => {
-    const radius = options.radius !== undefined ? options.radius : appleCornerRadius(wrapper, isMain ? 18 : 8);
-    const r = Math.max(0, Math.round(radius || 0));
-    frame.src = frame.getAttribute('src').replace('#', `&r=${r}#`);
-    frame.style.colorScheme = 'light';
   };
 
   // ───────────────────────── Canvas pauses with the song ─────────────────────────

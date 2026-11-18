@@ -61,23 +61,6 @@
   if (brand) brand.textContent = 'Vivimusic Web+';
   document.querySelector('.header .issue-button')?.remove();
   document.querySelector('body > .footer')?.remove();
-  // Upstream's "Smoother Updates Process" (rewrites an unpacked install's folder) does not
-  // apply to a store add-on. Its note goes; its two rows are kept, out of sight, because
-  // upstream's popup.js looks them up and wires them when it starts.
-  {
-    const smoothRow = document.getElementById('smoothUpdatesToggle')?.closest('.row');
-    const smoothFolderRow = document.getElementById('smoothFolderRow');
-    const note = smoothRow?.nextElementSibling;
-    if (note?.matches('p.theme-sub')) note.remove();
-    if (smoothRow && smoothFolderRow) {
-      const holder = document.createElement('div');
-      holder.hidden = true;
-      holder.style.setProperty('display', 'none', 'important');
-      smoothRow.before(holder);
-      holder.append(smoothRow, smoothFolderRow);
-    }
-  }
-
   const style = document.createElement('style');
   style.textContent = `
     .home-card[data-feature="listenbrainz"] { --card-accent: #eb743b; }

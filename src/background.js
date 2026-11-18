@@ -22,6 +22,7 @@ if (typeof importScripts === 'function') importScripts('fx-headers.js', 'md5.js'
 const AMP_HEADER_RULE_ID = 9001;
 
 async function ensureAmpHeaderSpoofRule() {
+  if (!chrome.declarativeNetRequest?.updateSessionRules) return; // Firefox build: handled by fx-headers.js (webRequest)
   try {
     await chrome.declarativeNetRequest.updateSessionRules({
       removeRuleIds: [AMP_HEADER_RULE_ID],
@@ -49,6 +50,14 @@ async function ensureAmpHeaderSpoofRule() {
 const REPO = 'Archimetrix/VIVIMUSIC_XTEN';
 const RELEASES_API = `https://api.github.com/repos/${REPO}/releases/latest`;
 const RELEASES_PAGE = `https://github.com/${REPO}/releases/latest`;
+// Firefox store (AMO). The add-on is looked up by its permanent ID, so a rename
+// of the listing/slug (it was "vivimusicweb", now "vivimusicxten") can never
+// break update checks again.
+const AMO_FALLBACK_PAGE = 'https://addons.mozilla.org/en-US/firefox/addon/vivimusicxten/';
+function amoAddonId() {
+  try { return chrome.runtime.getManifest().browser_specific_settings?.gecko?.id || 'vivimusic-web@archimetrix.app'; }
+  catch { return 'vivimusic-web@archimetrix.app'; }
+}
 const ALARM_NAME = 'vivi-update-check';
 const CHECK_INTERVAL_MIN = 12 * 60; // twice a day
 const ANNOUNCEMENTS_URL = 'https://raw.githubusercontent.com/Archimetrix/storage-project-files/main/vivimusicwebannoucement.json';
@@ -183,27 +192,40 @@ async function checkForUpdate() {
   const currentVersion = chrome.runtime.getManifest().version;
   let result;
   try {
-    const res = await fetch(RELEASES_API, {
-      headers: { Accept: 'application/vnd.github+json' },
-    });
-    if (!res.ok) throw new Error(`GitHub API ${res.status}`);
-    const data = await res.json();
-    const latestVersion = data.tag_name || data.name || '';
+    // The Firefox build is updated through the Firefox store, so ask the store
+    // what the newest published version is. (GitHub releases are not what
+    // Firefox users receive, and can lag behind or be out of step, which is
+    // why "Check for updates" used to say up to date on an old version.)
+    let latestVersion = '';
+    let releaseUrl = AMO_FALLBACK_PAGE;
+    let source = 'amo';
+    try {
+      const res = await fetch(
+        `https://addons.mozilla.org/api/v5/addons/addon/${encodeURIComponent(amoAddonId())}/?lang=en-US&t=${Date.now()}`,
+        { headers: { Accept: 'application/json' }, cache: 'no-store' }
+      );
+      if (!res.ok) throw new Error(`Add-on store ${res.status}`);
+      const data = await res.json();
+      latestVersion = String(data?.current_version?.version || '');
+      if (!latestVersion) throw new Error('Add-on store returned no version');
+      if (typeof data.url === 'string' && /^https:\/\/addons\.mozilla\.org\//.test(data.url)) releaseUrl = data.url;
+    } catch (amoErr) {
+      // Store unreachable: fall back to GitHub so the check still works.
+      source = 'github';
+      const res = await fetch(RELEASES_API, { headers: { Accept: 'application/vnd.github+json' } });
+      if (!res.ok) throw new Error(`${amoErr.message}; GitHub API ${res.status}`);
+      const data = await res.json();
+      latestVersion = data.tag_name || data.name || '';
+      releaseUrl = AMO_FALLBACK_PAGE;
+    }
     const updateAvailable = latestVersion ? isNewer(latestVersion, currentVersion) : false;
-    // Release ZIP for the "Smoother Updates Process" (prefer an uploaded .zip
-    // asset; fall back to GitHub's auto-generated source zipball).
-    const assets = Array.isArray(data.assets) ? data.assets : [];
-    const zipAsset = assets.find((a) => /\.zip$/i.test(a.name) && /vivi/i.test(a.name)) || assets.find((a) => /\.zip$/i.test(a.name));
-    const digest = zipAsset && /^sha256:/i.test(zipAsset.digest || '') ? zipAsset.digest.slice(7) : '';
     result = {
       ok: true,
       currentVersion,
       latestVersion: latestVersion.replace(/^v/i, ''),
       updateAvailable,
-      releaseUrl: data.html_url || RELEASES_PAGE,
-      zipUrl: (zipAsset && zipAsset.browser_download_url) || data.zipball_url || '',
-      sha256: digest,
-      zipSize: (zipAsset && zipAsset.size) || 0,
+      releaseUrl,
+      source,
       checkedAt: Date.now(),
     };
   } catch (e) {
@@ -320,41 +342,6 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   }
 });
 
-/* ── Smoother Updates Process ───────────────────────────────────────────────
- * VIVI_SMOOTH_STATUS : folder/permission state for the popup.
- * VIVI_SMOOTH_APPLY  : try to install the pending update silently. If the
- *                      user must act first (pick folder / re-allow access),
- *                      replies { needsUser: true } and the popup opens
- *                      src/updater.html instead.
- */
-chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  if (sender.id !== chrome.runtime.id) return;
-  if (msg.type === 'VIVI_SMOOTH_STATUS') {
-    (async () => {
-      const { smoothUpdatesEnabled } = await chrome.storage.local.get({ smoothUpdatesEnabled: true });
-      sendResponse({ enabled: smoothUpdatesEnabled !== false, ...(await ViviSmoothUpdate.status()) });
-    })().catch(() => sendResponse({ enabled: true, hasFolder: false, folderName: '', permission: 'none' }));
-    return true;
-  }
-  if (msg.type === 'VIVI_SMOOTH_APPLY') {
-    (async () => {
-      const { vivi_update_check: info } = await chrome.storage.local.get('vivi_update_check');
-      if (!info || !info.ok || !info.updateAvailable) return sendResponse({ ok: false, error: 'No update available.' });
-      try {
-        const r = await ViviSmoothUpdate.applyUpdate({
-          zipUrl: info.zipUrl, sha256: info.sha256, expectedVersion: info.latestVersion, sizeHint: info.zipSize,
-          onProgress: (p) => { chrome.storage.session.set({ vivi_smooth_progress: p }).catch(() => {}); },
-        });
-        sendResponse({ ok: true, version: r.version });
-        setTimeout(() => chrome.runtime.reload(), 700);
-      } catch (e) {
-        const needsUser = ['NO_FOLDER', 'NEEDS_PERMISSION', 'WRONG_FOLDER'].includes(e.code);
-        sendResponse({ ok: false, needsUser, code: e.code, error: e.message });
-      }
-    })();
-    return true;
-  }
-});
 
 async function lastfmGetSession() {
   const { lastfmSession } = await chrome.storage.local.get('lastfmSession');
@@ -452,12 +439,14 @@ async function lastfmWebTryFinish() {
 async function lastfmWebPoll() {
   if (lastfmWebPolling) return;
   lastfmWebPolling = true;
+  const stopKA = viviKeepAlive();
   try {
     for (let i = 0; i < 150; i++) { // ~5 minutes at 2s
       if ((await lastfmWebTryFinish()) !== 'pending') break;
       await new Promise((r) => setTimeout(r, 2000));
     }
   } finally {
+    stopKA();
     lastfmWebPolling = false;
   }
 }
@@ -529,7 +518,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       setSpDc(msg.spDc).then(() => spotifyStatus()).then((s) => sendResponse({ ok: true, ...s })).catch((e) => sendResponse(spotifyJsonError(e.message)));
       return true;
     case 'VIVI_SPOTIFY_CONNECT':
-      spotifyConnectFromBrowser().then(sendResponse);
+      viviWithKeepAlive(spotifyConnectFromBrowser).then(sendResponse);
       return true;
     case 'VIVI_SPOTIFY_LOGOUT':
       clearSpotify().then(sendResponse);
@@ -553,8 +542,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       spotifyPlaylistTrackCount(msg.playlistId).then(count => sendResponse({ ok: true, count: Number(count) || 0 })).catch(e => sendResponse(spotifyJsonError(e.message)));
       return true;
     case 'VIVI_YTM_TRANSFER':
-      sendResponse = viviKeepAliveUntilReply(sendResponse); // vivi+ hook: keep the event page alive until it answers (bg-plus.js)
-      (async () => {
+      viviWithKeepAlive(async () => {
         let tabs = await chrome.tabs.query({ url: 'https://music.youtube.com/*' });
         let tab = tabs.find(t => t.active) || tabs[0];
         if (!tab?.id && msg.passive) return { ok: false, error: 'Open YouTube Music in a tab first.' };
@@ -576,7 +564,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           await chrome.scripting.executeScript({ target: { tabId: tab.id }, world: 'MAIN', files: ['src/ytm-page.js'] });
           return await chrome.tabs.sendMessage(tab.id, msg.payload);
         }
-      })().then(sendResponse).catch(e => sendResponse({ ok: false, error: e?.message || String(e) }));
+      }).then(sendResponse).catch(e => sendResponse({ ok: false, error: e?.message || String(e) }));
       return true;
 
     case 'VIVI_APPLE_CANVAS_DIRECT':
@@ -1277,6 +1265,23 @@ async function getMusixmatchLyrics(track) {
   }
   throw lastErr || new Error('Musixmatch unavailable');
 }
+
+// Inject / remove theme.css for the sending tab. Done from here (not with a
+// <link> in the page) so the browser's page-side extension-URL check is never
+// involved.
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg?.type !== 'VIVI_THEME_CSS') return undefined;
+  if (!sender?.tab?.id) { sendResponse({ ok: false }); return undefined; }
+  const target = { tabId: sender.tab.id, frameIds: [sender.frameId || 0] };
+  const files = ['src/theme.css'];
+  const job = msg.on
+    ? chrome.scripting.insertCSS({ target, files })
+    : chrome.scripting.removeCSS({ target, files });
+  Promise.resolve(job)
+    .then(() => sendResponse({ ok: true }))
+    .catch((e) => sendResponse({ ok: false, error: String(e?.message || e) }));
+  return true;
+});
 
 // Add the Musixmatch bridge to the existing listener above without changing
 // the popup/Spotify/Last.fm message contracts.

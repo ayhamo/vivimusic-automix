@@ -307,16 +307,41 @@
   const warn = (...a) => DEBUG && console.debug('[Vivi]', ...a);
 
   
+  let themeCssInjected = false;
+  function requestThemeCss(on, attempt) {
+    try {
+      chrome.runtime.sendMessage({ type: 'VIVI_THEME_CSS', on }, (res) => {
+        void chrome.runtime.lastError;
+        // Retry a couple of times (e.g. background still starting up).
+        if (on && !res?.ok && attempt < 2 && themeCssInjected) {
+          setTimeout(() => { if (themeCssInjected) requestThemeCss(true, attempt + 1); }, 800 * (attempt + 1));
+        }
+      });
+    } catch { /* extension context gone */ }
+  }
+
   function applyTheme(enabled) {
     themeCurrentlyOn = enabled;
-    if (enabled && !chrome.runtime?.id) return; // vivi+ hook: dead extension context after an update
+    // After the extension is reloaded/updated, tabs that were already open keep
+    // running the OLD content script with a dead extension context. Its attempt
+    // to load theme.css is refused by the browser and logged as an error on
+    // chrome://extensions. A dead context has no runtime id, so skip quietly.
+    if (enabled && !chrome.runtime?.id) return;
     const existing = document.getElementById(THEME_LINK_ID);
     if (enabled) {
       // canvas.css's header/sidebar glass-tint rules key off this class so
       // that they only ever apply while the theme is actually on — see
       // canvas.css for why they can't just live in theme.css itself.
       document.documentElement.classList.add('vivi-theme-on');
-      if (VP.themeCss?.(true, existing)) return; // vivi+ hook: theme.css via background insertCSS, not a <link>
+      // theme.css is injected by the background script (scripting.insertCSS)
+      // instead of a <link> to a chrome-extension:// URL. The browser refuses
+      // that kind of page-side load in some situations ("Unsafe attempt to
+      // load URL … Domains, protocols and ports must match"), which was logged
+      // as an error on the extensions page. insertCSS has no such check.
+      if (existing) existing.remove(); // leftover <link> from an older version
+      if (themeCssInjected) return;
+      themeCssInjected = true;
+      requestThemeCss(true, 0);
       // Restore background layer if we have artwork
       if (currentVideoUrl || currentImageUrl) {
         setBackgroundVar(currentImageUrl);
@@ -324,7 +349,7 @@
     } else {
       document.documentElement.classList.remove('vivi-theme-on');
       existing?.remove();
-      VP.themeCss?.(false); // vivi+ hook
+      if (themeCssInjected) { themeCssInjected = false; requestThemeCss(false, 0); }
       const inner = document.getElementById(BG_IMG_ID);
       if (inner) inner.style.backgroundImage = '';
       document.documentElement.style.removeProperty('--blyrics-background-img');
@@ -623,7 +648,6 @@
     return type !== 'MUSIC_VIDEO_TYPE_ATV';
   }
 
-
   // ── "Is this really a song yet?" gate ──────────────────────────────────
   // On a slow network YT Music first lays out its 16:9 video surface (the
   // black rectangle) and only switches to square art-track presentation once
@@ -698,14 +722,15 @@
   // under one key while playback looked the other key up, so Alt+C showed
   // "Not cached" for the track that was, in fact, already cached (just
   // under a sibling key). Both call sites now go through this one function.
-  function getBarEl() {
-    return document.querySelector('ytmusic-player-bar') || window.__viviLayoutCompat?.getMiniplayer() || null;
-  }
-
   function bylineArtistText(bylineEl) {
     if (!bylineEl) return null;
     const text = bylineEl.textContent?.trim()?.split('•')[0]?.trim();
     return text || null;
+  }
+
+  // Classic player bar, or the new miniplayer on accounts with the new layout.
+  function getBarEl() {
+    return document.querySelector('ytmusic-player-bar') || window.__viviLayoutCompat?.getMiniplayer() || null;
   }
 
   function getCurrentTrack() {
@@ -780,7 +805,7 @@
     if (fromUrl) return fromUrl;
     const player = document.querySelector('#movie_player, ytmusic-player');
     try {
-      const data = player?.getVideoData?.() || window.__viviPageVideoData?.(); // vivi+ hook
+      const data = player?.getVideoData?.() || window.__viviPageVideoData?.();
       if (data?.video_id) return data.video_id;
     } catch { /* ignore */ }
     return null;
@@ -930,6 +955,8 @@
   // being permanently tied to one DOM node.
   let activeAppleArtwork = null;
   let appleOverlayObserver = null;
+  let appleStateObserver = null;
+  let appleRadiusTimer = null;
   let appleOverlaySyncTimer = null;
   let appleOverlaySyncing = false;
 
@@ -1008,10 +1035,10 @@
         parent.dataset.viviAppleOverflowSet = '1';
       }
 
-      const thumbRadius = VP.appleRadiusFor?.(imgEl); // vivi+ hook: rounded Apple overlay
-      overlay = makeMediaEl(source, parent, { appleOverlay: true, radius: thumbRadius }); // vivi+ hook (radius)
+      const thumbRadius = appleRadiusFor(imgEl);
+      overlay = makeMediaEl(source, parent, { appleOverlay: true, radius: thumbRadius });
       if (!overlay) return null;
-      VP.applyAppleRadius?.(overlay, thumbRadius); // vivi+ hook
+      applyAppleRadius(overlay, thumbRadius);
       overlay.dataset.viviAppleOverlay = '1';
       overlay.dataset.viviAppleSourceUrl = desiredUrl;
       overlay.dataset.viviAppleOriginalUrl = source.videoUrl || '';
@@ -1041,7 +1068,7 @@
               { appleOverlay: true }
             );
             if (replacement) {
-              VP.appleRadius?.(replacement, imgEl); // vivi+ hook
+              applyAppleRadius(replacement, appleRadiusFor(imgEl));
               replacement.dataset.viviAppleOverlay = '1';
               replacement.dataset.viviAppleFallback = '1';
               replacement.dataset.viviAppleSourceUrl = source.imageUrl;
@@ -1081,7 +1108,7 @@
 
     // YT Music may rewrite the native img's parent styles. Reassert only the
     // dimensions/stacking needed for this overlay without touching the img.
-    VP.appleRadius?.(overlay, imgEl); // vivi+ hook
+    applyAppleRadius(overlay, appleRadiusFor(imgEl));
     overlay.style.inset = '0';
     overlay.style.width = '100%';
     overlay.style.height = '100%';
@@ -1125,13 +1152,27 @@
       childList: true,
       subtree: true
     });
-    VP.appleRadiusWatch?.(true); // vivi+ hook: re-check corner radii on player-state changes
+    // The sync above only runs when DOM nodes are added/removed. Minimising or
+    // re-opening the player mostly flips attributes, so watch those too and
+    // re-check the corner radius while the layout settles.
+    appleStateObserver = new MutationObserver(() => {
+      [0, 250, 700, 1500].forEach((ms) => setTimeout(resyncAppleRadii, ms));
+    });
+    appleStateObserver.observe(document.documentElement, {
+      attributes: true,
+      subtree: true,
+      attributeFilter: ['player-ui-state', 'player-page-open', 'player-page-ui-state', 'player-fullscreened']
+    });
+    appleRadiusTimer = setInterval(resyncAppleRadii, 800);
   }
 
   function stopAppleOverlayObserver() {
     appleOverlayObserver?.disconnect();
     appleOverlayObserver = null;
-    VP.appleRadiusWatch?.(false); // vivi+ hook
+    appleStateObserver?.disconnect();
+    appleStateObserver = null;
+    if (appleRadiusTimer) clearInterval(appleRadiusTimer);
+    appleRadiusTimer = null;
     if (appleOverlaySyncTimer) clearTimeout(appleOverlaySyncTimer);
     appleOverlaySyncTimer = null;
   }
@@ -1209,12 +1250,123 @@
     }
   }
 
-  function makeAppleHlsIframe(url, className, fit, appleOverlay, onError, onPlaying) {
+  // Corner radius (px) the artwork is clipped to: the nearest ancestor with a
+  // rounded corner. Firefox clips a cross-process <iframe> to a rounded box
+  // without anti-aliasing (jagged corners), so the radius is handed to the
+  // iframe page, which rounds its own <video> — that is ordinary, smoothly
+  // anti-aliased content.
+  function appleCornerRadius(el, fallback) {
+    // What the eye sees is the LARGEST curve among the image itself and any
+    // ancestor that really clips it (overflow != visible) — e.g. an 8px image
+    // inside a 20px-rounded, overflow:hidden player shows a 20px corner.
+    let best = 0, n = el, hops = 0;
+    while (n && n !== document.documentElement && hops++ < 7) {
+      const cs = getComputedStyle(n);
+      const v = cs.borderTopLeftRadius || '';
+      const r = v.endsWith('%') ? 0 : (parseFloat(v) || 0);
+      const clips = n === el || cs.overflowX !== 'visible' || cs.overflowY !== 'visible';
+      if (clips && r > best) best = r;
+      n = n.parentElement;
+    }
+    return best > 0 ? Math.min(best, 48) : fallback;
+  }
+
+  // The theme's own artwork radii (theme.css :root). These never change, unlike
+  // the computed radius above, which can read 0 for a moment while YT Music is
+  // still switching between the mini and full player.
+  function appleThemeRadius(imgEl) {
+    if (!document.documentElement.classList.contains('vivi-theme-on')) return 0;
+    const bar = !!imgEl.closest('ytmusic-player-bar');
+    const v = getComputedStyle(document.documentElement).getPropertyValue(bar ? '--radius-art' : '--radius-art-lg');
+    return parseFloat(v) || (bar ? 8 : 20);
+  }
+
+  function appleRadiusFor(imgEl) {
+    // "Full screen mode": the artwork is full-bleed against the screen edge, so
+    // the overlay must not get the thumbnail's rounded corners (they would
+    // show as dark wedges in the screen corners).
+    if (document.documentElement.classList.contains('vivi-fs-mode') &&
+        !imgEl.closest('ytmusic-player-bar') &&
+        document.querySelector('ytmusic-player-page[player-fullscreened]:not([video-mode])')) {
+      return 0;
+    }
+    return Math.max(appleCornerRadius(imgEl, 0), appleThemeRadius(imgEl));
+  }
+
+  // Re-check every overlay's radius. Called on a timer and after player-state
+  // changes, because a radius read while the player is mid-transition (or
+  // before YT Music has applied its classes) can be stale.
+  function resyncAppleRadii() {
+    document.querySelectorAll('.vivi-canvas-media[data-vivi-apple-overlay="1"]').forEach((el) => {
+      const img = el.parentElement && el.parentElement.querySelector('img:not(.vivi-canvas-media)');
+      if (img) applyAppleRadius(el, appleRadiusFor(img));
+    });
+  }
+
+  // Give an Apple overlay the SAME rounded corners as the native thumbnail it
+  // sits on. In Firefox the overlay's CSS `border-radius: inherit` picks up the
+  // wrapper's radius (often 0 — YT Music rounds the <img> itself, not its
+  // wrapper), so the artwork came out square. Copy the thumbnail's own radius
+  // instead. +3px because the overlay overshoots its box by 1px on every side,
+  // which would otherwise leave the corner arc ~1px outside the thumbnail's.
+  // Rounded-rectangle alpha mask built from four corner gradients plus two
+  // overlapping bars, so it scales with the element and needs no JS on resize.
+  function appleCornerMask(R) {
+    if (!(R > 0)) return 'none';
+    const tile = `${R}px ${R}px`;
+    const stops = `#000 ${R - 0.5}px, transparent ${R + 0.5}px`;
+    const bar = `${R - 1}px`, cut = `${2 * R - 2}px`;
+    return [
+      `radial-gradient(circle at 100% 100%, ${stops}) 0 0 / ${tile} no-repeat`,
+      `radial-gradient(circle at 0 100%, ${stops}) 100% 0 / ${tile} no-repeat`,
+      `radial-gradient(circle at 100% 0, ${stops}) 0 100% / ${tile} no-repeat`,
+      `radial-gradient(circle at 0 0, ${stops}) 100% 100% / ${tile} no-repeat`,
+      `linear-gradient(#000, #000) 0 ${bar} / 100% calc(100% - ${cut}) no-repeat`,
+      `linear-gradient(#000, #000) ${bar} 0 / calc(100% - ${cut}) 100% no-repeat`
+    ].join(', ');
+  }
+
+  function applyAppleRadius(el, r) {
+    r = Math.max(0, Math.round(r || 0));
+    if (el.dataset.viviAppleRadius === String(r)) return;
+    el.dataset.viviAppleRadius = String(r);
+    if (el.tagName === 'IFRAME') {
+      // Firefox clips an out-of-process <iframe> to a rounded box without
+      // anti-aliasing (jagged) or not at all, and ignores rounding applied to
+      // the <video> inside it. An alpha MASK is composited like any image, so
+      // its edge is smooth. The iframe is 1px bigger than the thumbnail on every
+      // side, so the arc is r+4: that keeps it just inside the thumbnail's own
+      // corner instead of poking out of it.
+      el.style.setProperty('border-radius', '0', 'important');
+      el.style.setProperty('clip-path', 'none', 'important');
+      const m = appleCornerMask(r > 0 ? r + 4 : 0);
+      el.style.setProperty('-webkit-mask', m, 'important');
+      el.style.setProperty('mask', m, 'important');
+    } else {
+      const px = (r > 0 ? r + 3 : 0) + 'px';
+      el.style.setProperty('border-radius', px, 'important');
+      el.style.setProperty('clip-path', r > 0 ? `inset(0 round ${px})` : 'none', 'important');
+    }
+    console.debug('[Vivi] Apple artwork corner radius →', r + 'px', el.dataset.viviAppleSlot || '');
+    if (el.tagName === 'IFRAME') {
+      const send = () => {
+        try { el.contentWindow?.postMessage({ __viviAppleRadius: Number(el.dataset.viviAppleRadius) || 0 }, '*'); } catch (_) {}
+      };
+      send();
+      el.addEventListener('load', send, { once: true });
+    }
+  }
+
+  function makeAppleHlsIframe(url, className, fit, appleOverlay, onError, onPlaying, radius) {
     const frame = document.createElement('iframe');
     const id = `vivi-apple-${++appleCanvasFrameSeq}`;
     applePendingFrames.set(id, { onError, onPlaying });
-    const src = chrome.runtime.getURL(`src/apple-canvas-player.html?fit=${fit}&id=${encodeURIComponent(id)}#${encodeURIComponent(url)}`);
+    const r = Math.max(0, Math.round(radius || 0));
+    const src = chrome.runtime.getURL(`src/apple-canvas-player.html?fit=${fit}&id=${encodeURIComponent(id)}&r=${r}#${encodeURIComponent(url)}`);
     frame.src = src;
+    // Same colour scheme on the frame and its document keeps the frame's own
+    // background genuinely transparent (a mismatch makes browsers paint it opaque).
+    frame.style.colorScheme = 'light';
     frame.className = className;
     frame.setAttribute('frameborder', '0');
     frame.setAttribute('allow', 'autoplay');
@@ -1305,8 +1457,7 @@
         // at the cost of a negligible crop.
         const frame = makeAppleHlsIframe(videoUrl, className, 'cover', appleOverlay, fallbackToImage, () => {
           frame.dispatchEvent(new Event('vivi-apple-playing'));
-        });
-        VP.appleFrame?.(frame, options, wrapper, isMain); // vivi+ hook: corner radius (&r=) + colour scheme
+        }, options.radius !== undefined ? options.radius : appleCornerRadius(wrapper, isMain ? 18 : 8));
         return frame;
       }
 
@@ -2158,21 +2309,10 @@
   let playerTabIconsContainer = null;
 
   const PLAYER_TAB_ICON_PATHS = {
-    next: [
-      'M4 6h2M9 6h11M4 12h2M9 12h11M4 18h2M9 18h11',
-    ],
-    lyrics: [
-      'M7 3.5h7l4 4v13H7z',
-      'M14 3.5v4h4M10 12h5M10 15.5h5',
-    ],
-    comments: [
-      'M20 11.5a7.5 7.5 0 0 1-7.5 7.5H5l1.6-3A7.5 7.5 0 1 1 20 11.5Z',
-      'M9 11.5h.01M12.5 11.5h.01M16 11.5h.01',
-    ],
-    related: [
-      'M5 4.5h10v12H5zM9 8.5h10v12H9z',
-      'M12 11.5h4M12 14.5h4',
-    ],
+    next: ['M4 6h2M9 6h11M4 12h2M9 12h11M4 18h2M9 18h11'],
+    lyrics: ['M7 3.5h7l4 4v13H7z', 'M14 3.5v4h4M10 12h5M10 15.5h5'],
+    comments: ['M20 11.5a7.5 7.5 0 0 1-7.5 7.5H5l1.6-3A7.5 7.5 0 1 1 20 11.5Z', 'M9 11.5h.01M12.5 11.5h.01M16 11.5h.01'],
+    related: ['M5 4.5h10v12H5zM9 8.5h10v12H9z', 'M12 11.5h4M12 14.5h4'],
   };
 
   function playerTabIconKind(tab) {
@@ -2697,8 +2837,7 @@
   }
 
   function injectSpotifyCanvas(url, attempt = 0, token = canvasRenderToken, trackKey = currentTrackKey) {
-    if (!url || imageOnlyMode) return;
-    if (document.hidden) return;
+    if (!url || imageOnlyMode || document.hidden) return;
     if (token !== canvasRenderToken || trackKey !== currentTrackKey) return;
     if (isRealMusicVideo()) return;
     if (!isMainPlayerPageActive()) {
