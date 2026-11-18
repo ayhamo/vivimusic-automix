@@ -74,6 +74,7 @@
     "https://www.last.fm/*",
     "https://*.scdn.co/*",
     "https://*.spotifycdn.com/*",
+    "https://spotify-canva.vercel.app/*",
     "https://*.ggpht.com/*",
     "https://*.ytimg.com/*"
   ],
@@ -92,6 +93,7 @@
       "src/fx-headers.js",
       "src/background.js",
       "src/plus/bg-plus.js",
+      "src/plus/bg-canvas.js",
       "src/addons/track-matcher.js",
       "src/addons/pick.js",
       "src/addons/client.js",
@@ -106,7 +108,8 @@
       ],
       "js": [
         "src/crossfade-page.js",
-        "src/seek-page.js"
+        "src/seek-page.js",
+        "src/plus/video-canvas-page.js"
       ],
       "run_at": "document_start",
       "world": "MAIN"
@@ -149,6 +152,7 @@
         "src/crossfade.js",
         "src/automix-overview.js",
         "src/music-only.js",
+        "src/plus/video-canvas.js",
         "src/vendor/hls.min.js",
         "src/fullscreen-mode.js",
         "src/content.js"

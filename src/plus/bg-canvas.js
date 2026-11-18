@@ -1,0 +1,215 @@
+// Vivimusic Web+: Spotify Canvas without a Spotify login, as on the phone (SpotifyCanvas.java,
+// Metrolist's DirectCanvasProvider): an anonymous web-player token (TOTP), the client token,
+// Spotify's search (pathfinder searchTopResultsList), Metrolist's match rules, and the canvas
+// URL from the public mirror. Only https scdn.co media is taken.
+//
+// Loaded after spotify.js and background.js. It wraps upstream's spotifyCanvasForTrack (a global
+// function, called by background.js for VIVI_SPOTIFY_CANVAS), so upstream's file is unchanged:
+// the no-login lookup runs first, and upstream's own lookup (it needs the Spotify sign-in) only
+// when ours fails with an error.
+
+'use strict';
+
+const viviSpotifyCanvas = (() => {
+  const TOKEN_URL = 'https://open.spotify.com/api/token';
+  const CLIENT_TOKEN_URL = 'https://clienttoken.spotify.com/v1/clienttoken';
+  const PATHFINDER_URL = 'https://api-partner.spotify.com/pathfinder/v2/query';
+  const MIRROR_URL = 'https://spotify-canva.vercel.app/api/canvas?trackId=';
+  const SEARCH_HASH = '12d940b3f7381506a82ff5382eb59b0ed65118656e6bcdfbe4cebc528f75d29d';
+  const APP_VERSION = '1.2.96.390.gd46a85db';
+  const WEB_CLIENT_ID = 'd8a5ed958d274c2e8ee717e6a4b0971d';
+  // spotlib's Totp: the web player's secret (obfuscated), version 61, 30 s steps
+  const TOTP_SECRET = ',7/*F("rLJ2oxaKL^f+E1xvP@N';
+  const TOTP_VERSION = 61;
+  const TIMEOUT_MS = 8000;
+  const MISS_MS = 24 * 3600e3;
+
+  let accessToken = null, accessExpires = 0, clientToken = null;
+  const deviceId = crypto.randomUUID();
+  const misses = new Map();   // song key -> time of the miss (24 h, in memory)
+
+  async function totp(nowMs) {
+    let raw = '';
+    for (let i = 0; i < TOTP_SECRET.length; i++) raw += String.fromCharCode(TOTP_SECRET.charCodeAt(i) ^ (i % 33 + 9));
+    const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(raw), { name: 'HMAC', hash: 'SHA-1' }, false, ['sign']);
+    const counter = Math.floor(nowMs / 1000 / 30);
+    const data = new Uint8Array(8);
+    new DataView(data.buffer).setUint32(0, Math.floor(counter / 2 ** 32));
+    new DataView(data.buffer).setUint32(4, counter >>> 0);
+    const d = new Uint8Array(await crypto.subtle.sign('HMAC', key, data));
+    const off = d[d.length - 1] & 0x0f;
+    const bin = ((d[off] & 0x7f) << 24) | (d[off + 1] << 16) | (d[off + 2] << 8) | d[off + 3];
+    return String(bin % 1e6).padStart(6, '0');
+  }
+
+  async function get(url, init = {}) {
+    const ctl = new AbortController();
+    const t = setTimeout(() => ctl.abort(), TIMEOUT_MS);
+    try {
+      return await fetch(url, { cache: 'no-store', credentials: 'omit', redirect: 'error', ...init, signal: ctl.signal });
+    } finally { clearTimeout(t); }
+  }
+
+  async function auth() {
+    if (!accessToken || Date.now() > accessExpires - 60e3) {
+      const ask = (code, ver) => get(`${TOKEN_URL}?reason=init&productType=web-player&totp=${code}&totpServer=${code}&totpVer=${ver}`,
+        { headers: { Accept: '*/*' } });
+      let r = await ask(await totp(Date.now()), TOTP_VERSION);
+      // the phone's secret is refused: the newest one from upstream's list (spotify.js)
+      if (r.status === 400 && typeof getSecretDict === 'function' && typeof makeTotp === 'function') {
+        const dict = await getSecretDict();
+        const ver = Object.keys(dict).map(Number).sort((x, y) => y - x)[0];
+        if (ver) r = await ask(await makeTotp(dict[String(ver)], Math.floor(Date.now() / 1000)), ver);
+      }
+      if (!r.ok) throw new Error(`/api/token: HTTP ${r.status}`);
+      const t = await r.json();
+      if (!t.accessToken) throw new Error('/api/token: no access token');
+      accessToken = t.accessToken;
+      accessExpires = t.accessTokenExpirationTimestampMs || Date.now() + 30 * 60e3;
+      clientToken = null;
+    }
+    if (!clientToken) {
+      const r = await get(CLIENT_TOKEN_URL, {
+        method: 'POST',
+        headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ client_data: { client_version: APP_VERSION, client_id: WEB_CLIENT_ID, js_sdk_data: {
+          device_brand: 'unknown', device_model: 'unknown', os: 'windows', os_version: 'unknown', device_id: deviceId, device_type: 'computer' } } }),
+      });
+      if (!r.ok) throw new Error(`clienttoken: HTTP ${r.status}`);
+      const token = (await r.json())?.granted_token?.token;
+      if (!token) throw new Error('clienttoken: no token');
+      clientToken = token;
+    }
+  }
+
+  // a pathfinder persisted query with the anonymous tokens (fetched again once on a 401)
+  async function query(operationName, sha256Hash, variables) {
+    const body = JSON.stringify({ variables, operationName, extensions: { persistedQuery: { version: 1, sha256Hash } } });
+    for (let attempt = 0; attempt < 2; attempt++) {
+      await auth();
+      const r = await get(PATHFINDER_URL, {
+        method: 'POST',
+        headers: {
+          Accept: 'application/json', 'Content-Type': 'application/json;charset=UTF-8',
+          'app-platform': 'WebPlayer', 'spotify-app-version': APP_VERSION,
+          Authorization: `Bearer ${accessToken}`, 'client-token': clientToken,
+        },
+        body,
+      });
+      if (r.status === 401 && attempt === 0) { accessToken = clientToken = null; continue; }
+      if (r.status >= 400) throw new Error(`${operationName}: HTTP ${r.status}`);
+      const data = await r.json();
+      if (data.errors) throw new Error(`${operationName}: GraphQL errors`);
+      return data;
+    }
+    throw new Error(`${operationName}: session expired`);
+  }
+
+  // Metrolist's trustedMedia for Spotify: https on 443, no user info, a scdn.co host
+  function trusted(url) {
+    try {
+      const u = new URL(url);
+      const host = u.hostname.toLowerCase();
+      return u.protocol === 'https:' && !u.username && !u.password && (u.port === '' || u.port === '443')
+        && (host === 'scdn.co' || host.endsWith('.scdn.co'));
+    } catch { return false; }
+  }
+
+  const NOISE = new Set(['feat', 'ft', 'featuring', 'official', 'video', 'audio']);
+  function words(value) {
+    const s = String(value || '').normalize('NFKD').replace(/\p{M}+/gu, '').toLowerCase();
+    return new Set(s.split(/[^\p{L}\p{N}]+/u).filter((w) => w && !NOISE.has(w)));
+  }
+  function similarity(a, b) {
+    const x = words(a), y = words(b);
+    if (!x.size || !y.size) return 0;
+    let both = 0;
+    for (const w of x) if (y.has(w)) both++;
+    return both / Math.max(x.size, y.size);
+  }
+  const same = (a, b) => a.size === b.size && [...a].every((w) => b.has(w));
+
+  // Metrolist's DirectCanvasProvider.matches: the artist (or the primary one) exactly, title words 75%
+  function matches(title, artist, foundTitle, foundArtist, primary, foundPrimary) {
+    const want = words(artist), got = words(foundArtist), wantP = words(primary), gotP = words(foundPrimary);
+    if (!want.size || !(same(want, got) || (wantP.size && same(wantP, gotP)))) return false;
+    return similarity(title, foundTitle) >= 0.75;
+  }
+
+  // Metrolist's publicSpotifyCanvas: the public mirror's canvas for the track
+  async function publicCanvas(trackId) {
+    if (!/^[A-Za-z0-9]{22}$/.test(trackId)) return null;
+    const r = await get(MIRROR_URL + encodeURIComponent(trackId));
+    if (r.status !== 200) return null;
+    const list = (await r.json())?.canvasesList || [];
+    const c = list.find((x) => x?.trackUri === `spotify:track:${trackId}` && trusted(x.canvasUrl));
+    return c ? c.canvasUrl : null;
+  }
+
+  // Metrolist's spotifyCanvas: the first matching track among the top 10 results that has a canvas
+  async function canvasUrl(title, artist) {
+    const primary = artist.split(/\s*(?:,|&| x | X |\bfeat\.?|\bft\.?)\s*/)[0].trim();
+    const search = await query('searchTopResultsList', SEARCH_HASH, {
+      query: `${title} ${artist}`, limit: 10, offset: 0, numberOfTopResults: 10,
+      includeArtistHasConcertsField: false, includeAudiobooks: true, includeAuthors: false,
+      includePreReleases: true, includeAlbumPreReleases: false, includeEpisodeContentRatingsV2: true,
+      sectionFilters: ['GENERIC', 'VIDEO_CONTENT'],
+    });
+    const items = search?.data?.searchV2?.topResultsV2?.itemsV2;
+    if (!Array.isArray(items)) { console.info(`[vivi canvas] spotify: no results for '${title}'`); return null; }
+    for (const it of items.slice(0, 10)) {
+      const track = it?.item?.data;
+      if (!track || track.__typename !== 'Track' || !track.id) continue;
+      const names = (track.artists?.items || []).map((a) => a?.profile?.name).filter(Boolean);
+      if (!matches(title, artist, track.name || '', names.join(', '), primary, names[0])) continue;
+      const canvas = await publicCanvas(track.id);
+      if (trusted(canvas)) {
+        console.info(`[vivi canvas] spotify: '${track.name}' by ${names.join(', ')} (${track.id}) has a canvas`);
+        return canvas;
+      }
+      console.info(`[vivi canvas] spotify: '${track.name}' by ${names.join(', ')} (${track.id}) matches, no canvas`);
+    }
+    console.info(`[vivi canvas] spotify: none for '${title}' by '${artist}'`);
+    return null;
+  }
+
+  // the canvas URL, null (no canvas for the song), or an error
+  async function find(track) {
+    const title = String(track?.song || '').trim(), artist = String(track?.artist || '').trim();
+    if (!title || !artist) return null;
+    const key = `${artist}—${title}`;
+    const missed = misses.get(key);
+    if (missed && Date.now() - missed < MISS_MS) return null;
+    const url = await canvasUrl(title, artist);
+    if (!url) misses.set(key, Date.now());
+    return url;
+  }
+
+  return { find, totp, matches, trusted };
+})();
+globalThis.viviSpotifyCanvas = viviSpotifyCanvas;   // for the test page and the console
+
+// vivi+ hook: wraps upstream's lookup (spotify.js); upstream's saved canvas URLs are used first
+if (typeof spotifyCanvasForTrack === 'function') {
+  const upstreamSpotifyCanvas = spotifyCanvasForTrack;
+  // eslint-disable-next-line no-global-assign
+  spotifyCanvasForTrack = async function (track) {
+    const key = `${track.artist}—${track.song}`;
+    const saved = (await chrome.storage.local.get(`spotify_canvas_${key}`))[`spotify_canvas_${key}`];
+    if (saved?.videoUrl) return saved.videoUrl;
+    try {
+      const url = await viviSpotifyCanvas.find(track);
+      if (url) await chrome.storage.local.set({ [`spotify_canvas_${key}`]: { videoUrl: url, cachedAt: Date.now() } });
+      return url;
+    } catch (e) {
+      console.warn('[vivi canvas] spotify without login failed:', e?.message || e);
+      return upstreamSpotifyCanvas(track);
+    }
+  };
+}
+
+// The phone's source order (music video, Spotify, Apple): the music video comes in Spotify's place
+// (src/plus/video-canvas.js), so Spotify goes before Apple. Set once; the popup can change it after.
+chrome.storage.local.get({ viviCanvasOrderSet: false }).then((s) => {
+  if (!s.viviCanvasOrderSet) chrome.storage.local.set({ canvasPriority: 'spotify', viviCanvasOrderSet: true });
+}).catch(() => {});

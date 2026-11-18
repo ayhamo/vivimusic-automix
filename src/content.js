@@ -2112,6 +2112,8 @@
     const key = `${track.artist}—${track.song}`;
     if (spotifyCanvasRequestKey === key) return currentSpotifyCanvasUrl;
     spotifyCanvasRequestKey = key;
+    const mv = await window.__viviVideoCanvas?.(track); // vivi+ hook: the song's music video first (src/plus/video-canvas.js)
+    if (mv) return spotifyCanvasRequestKey === key ? (currentSpotifyCanvasUrl = mv) : null;
     try {
       const response = await chrome.runtime.sendMessage({
         type: 'VIVI_SPOTIFY_CANVAS',
@@ -2135,6 +2137,8 @@
 
   async function fetchLyricsCanvas(track, key) {
     try {
+      const mv = await window.__viviVideoCanvas?.(track); // vivi+ hook: the song's music video first
+      if (mv) { if (key === currentTrackKey && canvasPlacement !== 'cover') setLyricsCanvas(mv); return; }
       const r = await chrome.runtime.sendMessage({
         type: 'VIVI_SPOTIFY_CANVAS',
         track: { song: track.song, artist: track.artist, videoId: track.videoId },
