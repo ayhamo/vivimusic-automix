@@ -4,6 +4,7 @@
 
 (() => {
   'use strict';
+  const VP = window.__viviPlus?.content || {}; // vivi+ hook: src/plus/content-plus.js (loads before this file)
 
   // Apple Music's animated Canvas is now resolved directly against Apple's
   // own catalog API from background.js (see apple-canvas.js) rather than a
@@ -29,6 +30,211 @@
       document.head.appendChild(link);
     } catch { /* no-op */ }
   })();
+
+  // ── Safe DOM observer ─────────────────────────────────────────────────
+  // Both the logo swap and the Support-button swap watch the document and
+  // rewrite DOM nodes from inside their own MutationObserver callback. That is
+  // a feedback loop by construction: every write we make re-triggers the
+  // observer, which writes again. Normally it converges because the second pass
+  // finds nothing left to change — but if YouTube Music re-adds a node on every
+  // pass (its guide/premium-badge slot does exactly this in some states), the
+  // loop never settles and pins the main thread at 100%, which presents as the
+  // whole page freezing while a track loads. Nothing about that depends on any
+  // feature toggle, which is why turning everything off didn't help.
+  //
+  // observeDom() makes that structurally impossible:
+  //   1. the observer is disconnected while our own callback runs, so our
+  //      writes can never feed back into it;
+  //   2. callbacks are coalesced into one rAF tick instead of firing per
+  //      mutation record;
+  //   3. a circuit breaker trips if the callback keeps firing far more often
+  //      than any real re-render would, permanently downgrading to a slow
+  //      interval so a pathological page can degrade instead of hanging.
+  function observeDom(target, options, callback, label = 'observer') {
+    if (!target) return null;
+
+    const BURST_WINDOW_MS = 1000;
+    const BURST_LIMIT = 60;      // far above any legitimate re-render rate
+    const FALLBACK_INTERVAL_MS = 2000;
+
+    let scheduled = false;
+    let windowStart = Date.now();
+    let runsInWindow = 0;
+    let tripped = false;
+
+    const observer = new MutationObserver(() => schedule());
+
+    const connect = () => { try { observer.observe(target, options); } catch { /* no-op */ } };
+
+    const run = () => {
+      scheduled = false;
+      // Suppress self-feedback: our own writes below must not re-enter here.
+      observer.disconnect();
+      // console.warn directly, not warn(): observeDom runs before `warn` is
+      // initialized further down this file (temporal dead zone).
+      try { callback(); } catch (e) { console.debug('[Vivi]', `${label} failed`, e?.message); }
+      if (!tripped) connect();
+    };
+
+    function schedule() {
+      if (scheduled || tripped) return;
+
+      const now = Date.now();
+      if (now - windowStart > BURST_WINDOW_MS) {
+        windowStart = now;
+        runsInWindow = 0;
+      }
+      if (++runsInWindow > BURST_LIMIT) {
+        tripped = true;
+        observer.disconnect();
+        console.debug('[Vivi]', `${label}: mutation storm detected — falling back to polling`);
+        setInterval(() => { try { callback(); } catch { /* no-op */ } }, FALLBACK_INTERVAL_MS);
+        return;
+      }
+
+      scheduled = true;
+      requestAnimationFrame(run);
+    }
+
+    connect();
+    return observer;
+  }
+
+  // ── Custom logo (replaces the stock YouTube Music wordmark/icon) ──
+  function applyCustomLogo() {
+    try {
+      const fullLogoUrl = chrome.runtime.getURL('icons/custom-logo-full.png');
+      const iconLogoUrl = chrome.runtime.getURL('icons/custom-logo-icon.png');
+
+      const swap = () => {
+        // Main nav-bar logo — <ytmusic-logo logo-src="..." white-logo-src="..."><picture><img class="logo">
+        document.querySelectorAll('ytmusic-logo').forEach((el) => {
+          if (el.getAttribute('logo-src') !== fullLogoUrl) el.setAttribute('logo-src', fullLogoUrl);
+          if (el.getAttribute('white-logo-src') !== fullLogoUrl) el.setAttribute('white-logo-src', fullLogoUrl);
+          const img = el.querySelector('img');
+          if (img && img.src !== fullLogoUrl) img.src = fullLogoUrl;
+        });
+        // Collapsed / mini-guide icon-only logo (if YT Music renders one)
+        document.querySelectorAll('.mini-guide-item img[src*="logo"], #mini-guide img[src*="logo"]').forEach((img) => {
+          if (img.src !== iconLogoUrl) img.src = iconLogoUrl;
+        });
+      };
+
+      swap();
+
+      // The header re-renders on SPA navigation and theme switches, which can
+      // reset these attributes back to YT's stock logo — keep reapplying.
+      observeDom(document.documentElement, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ['logo-src', 'white-logo-src', 'src'],
+      }, swap, 'Custom logo swap');
+    } catch (e) {
+      warn('Custom logo swap failed', e?.message);
+    }
+  }
+  // applyCustomLogo(); // vivi+ hook: not called, the fork keeps YT Music's own logo
+
+  // ── "Upgrade" sidebar link → "Support" (Buy Me a Coffee) ──
+  function applySupportButton() {
+    try {
+      const SUPPORT_URL = 'https://buymeacoffee.com/archimetrix';
+
+      const COFFEE_SVG = `<svg data-vivi-coffee-icon="1" viewBox="0 0 24 24" width="100%" height="100%" style="fill:currentColor;">
+                <path d="M4 3h13v2H4V3zm14 5H5c-1.1 0-2 .9-2 2v3c0 3.31 2.69 6 6 6h2c2.76 0 5.08-1.86 5.79-4.4.13.03.27.05.41.05 1.76 0 3.2-1.44 3.2-3.2S19.96 8 18.2 8H18zm0 4.4c0 .66-.54 1.2-1.2 1.2H16v-3.2h.8c.66 0 1.2.54 1.2 1.2v.8zM3 19h16v2H3v-2z"/>
+              </svg>`;
+
+      const swap = () => {
+        document.querySelectorAll('ytmusic-guide-entry-renderer').forEach((entry) => {
+          // Once we've identified an entry as the Support entry we keep a
+          // permanent marker on it (data-vivi-support-entry) — separate from
+          // the label check, because the label itself gets rewritten to
+          // "Support" the first time through and would no longer match
+          // "Upgrade" on later passes.
+          const alreadyMarked = entry.dataset.viviSupportEntry === '1';
+
+          if (!alreadyMarked) {
+            const textEl = entry.querySelector('yt-formatted-string, .item-text, #formatted-string');
+            const label = (textEl?.textContent || entry.textContent || '').trim();
+            if (label !== 'Upgrade') return;
+
+            entry.dataset.viviSupportEntry = '1';
+            if (textEl) textEl.textContent = 'Support';
+
+            const clickable = entry.querySelector('tp-yt-paper-item, a') || entry;
+            clickable.removeAttribute('href');
+            clickable.style.cursor = 'pointer';
+            clickable.addEventListener('click', (e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              window.open(SUPPORT_URL, '_blank', 'noopener');
+            }, true);
+          } else {
+            // Entry already marked as Support — but YT Music can still
+            // lazily upgrade/re-render its icon slot on a later pass
+            // (e.g. after a page refresh), which is what let the real
+            // premium badge icon sneak back in next to our coffee cup.
+            // If our marked svg is already the only thing there, skip the
+            // work; otherwise fall through and re-enforce it below.
+            const iconHost = entry.querySelector('yt-icon, tp-yt-iron-icon, .yt-spec-icon-shape, ytmusic-guide-entry-renderer #img yt-icon');
+            const alreadyClean = iconHost
+              && iconHost.querySelector('svg[data-vivi-coffee-icon]')
+              && iconHost.children.length === 1;
+            if (alreadyClean) return;
+          }
+
+          // Swap the icon for a coffee-cup glyph
+          // Clear every icon layer inside the entry first, so no leftover
+          // (e.g. the original circular logo) shows behind the cup.
+          // NOTE: <img> is a void element — its picture comes from the `src`
+          // attribute, not markup content, so `innerHTML = ''` is a no-op on
+          // it and the old logo/badge kept bleeding through behind the cup.
+          // Images (and any yt-img-shadow host wrapping one) must be hidden
+          // and stripped of their src instead.
+          const iconHosts = entry.querySelectorAll('yt-icon, tp-yt-iron-icon, .yt-spec-icon-shape, ytmusic-guide-entry-renderer #img yt-icon, ytmusic-guide-entry-renderer #img img, ytmusic-guide-entry-renderer #img *');
+          iconHosts.forEach((el) => {
+            if (el.tagName === 'IMG') {
+              el.removeAttribute('src');
+              el.removeAttribute('srcset');
+              el.style.display = 'none';
+            } else {
+              el.innerHTML = '';
+              // Some hosts (e.g. yt-img-shadow) render their picture inside
+              // an internal <img> that isn't reachable via light-DOM
+              // selectors above — belt-and-braces hide it too.
+              el.querySelectorAll?.('img').forEach((img) => {
+                img.removeAttribute('src');
+                img.removeAttribute('srcset');
+                img.style.display = 'none';
+              });
+            }
+          });
+
+          const iconHost = entry.querySelector('yt-icon, tp-yt-iron-icon, .yt-spec-icon-shape, ytmusic-guide-entry-renderer #img yt-icon');
+          if (iconHost) {
+            iconHost.innerHTML = COFFEE_SVG;
+          } else {
+            // Fallback: no dedicated icon element found — inject one into the #img slot.
+            const imgSlot = entry.querySelector('ytmusic-guide-entry-renderer #img, #img');
+            if (imgSlot) imgSlot.innerHTML = COFFEE_SVG;
+          }
+        });
+      };
+
+      swap();
+
+      // Scoped to the guide (where the entry actually lives) rather than the
+      // whole document: this callback rewrites innerHTML, so the narrower the
+      // watched subtree, the fewer unrelated YT Music re-renders can retrigger
+      // it. Falls back to documentElement only until the guide exists.
+      const guide = document.querySelector('ytmusic-app-layout') || document.documentElement;
+      observeDom(guide, { childList: true, subtree: true }, swap, 'Support button swap');
+    } catch (e) {
+      warn('Support button swap failed', e?.message);
+    }
+  }
+  // applySupportButton(); // vivi+ hook: not called, the fork keeps YT Music's "Upgrade" entry
 
   let currentTrackKey = null;
   let canvasRenderToken = 0;
@@ -59,13 +265,6 @@
   // Apple Music-style animated artwork available. 'spotify' (default)
   // preserves the original always-try-Spotify-first behavior; 'apple' flips it.
   let canvasPriority = 'apple';
-  // Where the Spotify Canvas plays: 'cover' (on the artwork, the original),
-  // 'lyrics' (blurred behind the lyrics) or 'side' (behind the whole side
-  // panel). Behind the panel the cover keeps Apple's animated art (or the
-  // still cover). Kept apart from currentSpotifyCanvasUrl, which drives the
-  // cover overlay.
-  let canvasPlacement = 'cover';
-  let lyricsCanvasUrl = null;
   let currentSpotifyCanvasUrl = null;
   let deferredCanvasTrack = null;
   let spotifyCanvasRequestKey = null;
@@ -91,21 +290,11 @@
   let appleUserEnabled = true;
   let sponsorUserEnabled = true;
   let lastfmUserEnabled = false;
-
-  const LISTENBRAINZ_DEFAULTS = {
-    listenbrainzEnabled: false,
-    listenbrainzSendNowPlaying: true,
-  };
-  let listenbrainzSettings = { ...LISTENBRAINZ_DEFAULTS };
-  let listenbrainzUserEnabled = false;
-  let listenbrainzScrobbled = false;
-  let listenbrainzSentNowPlaying = false;
-
   function applyResourceSaverState() {
     appleCanvasEnabled = appleUserEnabled && !resourceSaver;
     sponsorBlockEnabled = sponsorUserEnabled && !resourceSaver;
     lastfmSettings.lastfmEnabled = lastfmUserEnabled && !resourceSaver;
-    listenbrainzSettings.listenbrainzEnabled = listenbrainzUserEnabled && !resourceSaver;
+    VP.listenbrainz?.resourceSaver?.(resourceSaver); // vivi+ hook
     updateKawarpVisibility(); // Kawarp + equalizer
   }
   let lastfmCurrentKey = null;
@@ -118,41 +307,16 @@
   const warn = (...a) => DEBUG && console.debug('[Vivi]', ...a);
 
   
-  let themeCssInjected = false;
-  function requestThemeCss(on, attempt) {
-    try {
-      chrome.runtime.sendMessage({ type: 'VIVI_THEME_CSS', on }, (res) => {
-        void chrome.runtime.lastError;
-        // Retry a couple of times (e.g. background still starting up).
-        if (on && !res?.ok && attempt < 2 && themeCssInjected) {
-          setTimeout(() => { if (themeCssInjected) requestThemeCss(true, attempt + 1); }, 800 * (attempt + 1));
-        }
-      });
-    } catch { /* extension context gone */ }
-  }
-
   function applyTheme(enabled) {
     themeCurrentlyOn = enabled;
-    // After the extension is reloaded/updated, tabs that were already open keep
-    // running the OLD content script with a dead extension context. Its attempt
-    // to load theme.css is refused by the browser and logged as an error on
-    // chrome://extensions. A dead context has no runtime id, so skip quietly.
-    if (enabled && !chrome.runtime?.id) return;
+    if (enabled && !chrome.runtime?.id) return; // vivi+ hook: dead extension context after an update
     const existing = document.getElementById(THEME_LINK_ID);
     if (enabled) {
       // canvas.css's header/sidebar glass-tint rules key off this class so
       // that they only ever apply while the theme is actually on — see
       // canvas.css for why they can't just live in theme.css itself.
       document.documentElement.classList.add('vivi-theme-on');
-      // theme.css is injected by the background script (scripting.insertCSS)
-      // instead of a <link> to a chrome-extension:// URL. The browser refuses
-      // that kind of page-side load in some situations ("Unsafe attempt to
-      // load URL … Domains, protocols and ports must match"), which was logged
-      // as an error on the extensions page. insertCSS has no such check.
-      if (existing) existing.remove(); // leftover <link> from an older version
-      if (themeCssInjected) return;
-      themeCssInjected = true;
-      requestThemeCss(true, 0);
+      if (VP.themeCss?.(true, existing)) return; // vivi+ hook: theme.css via background insertCSS, not a <link>
       // Restore background layer if we have artwork
       if (currentVideoUrl || currentImageUrl) {
         setBackgroundVar(currentImageUrl);
@@ -160,7 +324,7 @@
     } else {
       document.documentElement.classList.remove('vivi-theme-on');
       existing?.remove();
-      if (themeCssInjected) { themeCssInjected = false; requestThemeCss(false, 0); }
+      VP.themeCss?.(false); // vivi+ hook
       const inner = document.getElementById(BG_IMG_ID);
       if (inner) inner.style.backgroundImage = '';
       document.documentElement.style.removeProperty('--blyrics-background-img');
@@ -283,23 +447,10 @@
   // show up with zero perceptible delay.
   function primeMemCacheFromStorage() {
     chrome.storage.local.get(null, (all) => {
-      if (chrome.runtime.lastError || !all) return;
-      // One-time cleanup: older builds saved failed lookups (for example while
-      // the background page was broken) as "no Canvas", which hid the Canvas
-      // of those songs forever. Drop every saved "no Canvas" once so they are
-      // looked up again.
-      const purge = !all.viviCanvasNotFoundPurgedV1;
-      const stale = [];
+      if (chrome.runtime.lastError) return;
+      all = VP.purgeNotFound?.(all, CACHE_PREFIX) || all; // vivi+ hook: one-time drop of saved "no Canvas"
       for (const [k, v] of Object.entries(all)) {
-        if (!k.startsWith(CACHE_PREFIX)) continue;
-        if (purge && v && v.notFound) { stale.push(k); continue; }
-        memCache[k.slice(CACHE_PREFIX.length)] = v;
-      }
-      if (purge) {
-        chrome.storage.local.remove(stale, () => {
-          chrome.storage.local.set({ viviCanvasNotFoundPurgedV1: true });
-          if (stale.length) log('cleared', stale.length, 'saved "no Canvas" results so they are looked up again');
-        });
+        if (k.startsWith(CACHE_PREFIX)) memCache[k.slice(CACHE_PREFIX.length)] = v;
       }
     });
   }
@@ -311,7 +462,7 @@
     const entry = {
       trackKey,
       videoUrl: data.videoUrl || null,
-      fallbackVideoUrl: data.fallbackVideoUrl || null,
+      fallbackVideoUrl: data.fallbackVideoUrl || null, // vivi+ hook: Apple's second rendition
       imageUrl: data.imageUrl || null,
       notFound: !!data.notFound,
       song: track.song,
@@ -387,7 +538,7 @@
   // remote URLs. No object: URLs, no Blobs, nothing to revoke.
   function resolvePlayableSource(entry) {
     if (!entry) return null;
-    return { videoUrl: entry.videoUrl || null, fallbackVideoUrl: entry.fallbackVideoUrl || null, imageUrl: entry.imageUrl || null };
+    return { videoUrl: entry.videoUrl || null, fallbackVideoUrl: entry.fallbackVideoUrl || null, imageUrl: entry.imageUrl || null }; // vivi+ hook
   }
 
   function clearArtworkCache() {
@@ -459,15 +610,8 @@
     }
   }
 
-  // A YouTube ad playing before the song is a 16:9 video too; judging the
-  // track then marked songs as music videos ("Lyrics are off for video
-  // songs", no Canvas). While an ad shows, nothing is known about the song.
-  function adIsShowing() {
-    return !!document.querySelector('.html5-video-player.ad-showing, .html5-video-player.ad-interrupting');
-  }
-
   function isRealMusicVideo() {
-    if (adIsShowing()) return false;
+    if (VP.adIsShowing?.()) return false; // vivi+ hook: an ad says nothing about the song
     if (playerBarLooksLikeRealVideo()) return true;
     const widescreen = nativeVideoIsWidescreen();
     if (widescreen === true) return true;
@@ -478,6 +622,7 @@
     if (!type) return false;
     return type !== 'MUSIC_VIDEO_TYPE_ATV';
   }
+
 
   // ── "Is this really a song yet?" gate ──────────────────────────────────
   // On a slow network YT Music first lays out its 16:9 video surface (the
@@ -539,7 +684,7 @@
   // but it only calls this lazily on track changes — by then this IIFE has
   // long since run and set it) so both the Canvas overlay and the lyrics
   // "hide on real videos" setting agree on what counts as a video.
-  window.__viviTrackInfo = { isRealMusicVideo, adIsShowing };
+  window.__viviTrackInfo = { isRealMusicVideo };
 
   // Shared artist-text extraction so every place that derives a cache key
   // from a "byline" element (player bar, queue panel, ...) agrees on the
@@ -553,15 +698,14 @@
   // under one key while playback looked the other key up, so Alt+C showed
   // "Not cached" for the track that was, in fact, already cached (just
   // under a sibling key). Both call sites now go through this one function.
+  function getBarEl() {
+    return document.querySelector('ytmusic-player-bar') || window.__viviLayoutCompat?.getMiniplayer() || null;
+  }
+
   function bylineArtistText(bylineEl) {
     if (!bylineEl) return null;
     const text = bylineEl.textContent?.trim()?.split('•')[0]?.trim();
     return text || null;
-  }
-
-  // Classic player bar, or the new miniplayer on accounts with the new layout.
-  function getBarEl() {
-    return document.querySelector('ytmusic-player-bar') || window.__viviLayoutCompat?.getMiniplayer() || null;
   }
 
   function getCurrentTrack() {
@@ -636,7 +780,7 @@
     if (fromUrl) return fromUrl;
     const player = document.querySelector('#movie_player, ytmusic-player');
     try {
-      const data = player?.getVideoData?.() || window.__viviPageVideoData?.();
+      const data = player?.getVideoData?.() || window.__viviPageVideoData?.(); // vivi+ hook
       if (data?.video_id) return data.video_id;
     } catch { /* ignore */ }
     return null;
@@ -746,22 +890,16 @@
   // of CORS both require that privileged context) — this just relays the
   // request over runtime messaging, same pattern already used for Spotify
   // Canvas and Last.fm.
-  // Resolves { videoUrl } (null = this song has no Canvas) or { failed: true }
-  // when the lookup itself broke, which must not be cached as "no Canvas".
   async function fetchAppleCanvasDirect(track) {
     try {
       const res = await chrome.runtime.sendMessage({
         type: 'VIVI_APPLE_CANVAS_DIRECT',
         track: { song: track.song, artist: track.artist, album: track.album || null },
       });
-      if (!res || res.error) {
-        warn('Apple Canvas lookup failed:', res?.error || 'no reply');
-        return { failed: true };
-      }
-      return { videoUrl: res.videoUrl || null, fallbackUrl: res.fallbackUrl || null };
+      return res?.videoUrl || null;
     } catch (err) {
       warn('Apple Canvas (direct) message failed:', err.message);
-      return { failed: true };
+      return null;
     }
   }
 
@@ -772,15 +910,14 @@
     // video is found and momentarily fails later, see makeMediaEl's
     // fallbackToImage), but a track with no motion asset must resolve as
     // "no canvas", not silently fall back to a static image.
-    const [canvas, artworkResult] = await Promise.all([
+    if (VP.fetchCanvasData) return VP.fetchCanvasData(track, () => fetchItunesArtworkFallback(track, signal)); // vivi+ hook: failed lookups aren't "no Canvas"; second rendition
+    const [videoUrl, artworkResult] = await Promise.all([
       fetchAppleCanvasDirect(track),
       fetchItunesArtworkFallback(track, signal),
     ]);
-    if (canvas.failed) return null;   // try again next time instead of caching "no Canvas"
-    const videoUrl = canvas.videoUrl;
     if (!videoUrl) return { videoUrl: null, imageUrl: null, notFound: true };
     const imageUrl = artworkResult?.imageUrl || null;
-    return { videoUrl, fallbackVideoUrl: canvas.fallbackUrl || null, imageUrl, notFound: false };
+    return { videoUrl, imageUrl, notFound: false };
   }
 
  
@@ -793,8 +930,6 @@
   // being permanently tied to one DOM node.
   let activeAppleArtwork = null;
   let appleOverlayObserver = null;
-  let appleStateObserver = null;
-  let appleRadiusTimer = null;
   let appleOverlaySyncTimer = null;
   let appleOverlaySyncing = false;
 
@@ -873,10 +1008,10 @@
         parent.dataset.viviAppleOverflowSet = '1';
       }
 
-      const thumbRadius = appleRadiusFor(imgEl);
-      overlay = makeMediaEl(source, parent, { appleOverlay: true, radius: thumbRadius });
+      const thumbRadius = VP.appleRadiusFor?.(imgEl); // vivi+ hook: rounded Apple overlay
+      overlay = makeMediaEl(source, parent, { appleOverlay: true, radius: thumbRadius }); // vivi+ hook (radius)
       if (!overlay) return null;
-      applyAppleRadius(overlay, thumbRadius);
+      VP.applyAppleRadius?.(overlay, thumbRadius); // vivi+ hook
       overlay.dataset.viviAppleOverlay = '1';
       overlay.dataset.viviAppleSourceUrl = desiredUrl;
       overlay.dataset.viviAppleOriginalUrl = source.videoUrl || '';
@@ -906,7 +1041,7 @@
               { appleOverlay: true }
             );
             if (replacement) {
-              applyAppleRadius(replacement, appleRadiusFor(imgEl));
+              VP.appleRadius?.(replacement, imgEl); // vivi+ hook
               replacement.dataset.viviAppleOverlay = '1';
               replacement.dataset.viviAppleFallback = '1';
               replacement.dataset.viviAppleSourceUrl = source.imageUrl;
@@ -946,7 +1081,7 @@
 
     // YT Music may rewrite the native img's parent styles. Reassert only the
     // dimensions/stacking needed for this overlay without touching the img.
-    applyAppleRadius(overlay, appleRadiusFor(imgEl));
+    VP.appleRadius?.(overlay, imgEl); // vivi+ hook
     overlay.style.inset = '0';
     overlay.style.width = '100%';
     overlay.style.height = '100%';
@@ -990,27 +1125,13 @@
       childList: true,
       subtree: true
     });
-    // The sync above only runs when DOM nodes are added/removed. Minimising or
-    // re-opening the player mostly flips attributes, so watch those too and
-    // re-check the corner radius while the layout settles.
-    appleStateObserver = new MutationObserver(() => {
-      [0, 250, 700, 1500].forEach((ms) => setTimeout(resyncAppleRadii, ms));
-    });
-    appleStateObserver.observe(document.documentElement, {
-      attributes: true,
-      subtree: true,
-      attributeFilter: ['player-ui-state', 'player-page-open', 'player-page-ui-state', 'player-fullscreened']
-    });
-    appleRadiusTimer = setInterval(resyncAppleRadii, 800);
+    VP.appleRadiusWatch?.(true); // vivi+ hook: re-check corner radii on player-state changes
   }
 
   function stopAppleOverlayObserver() {
     appleOverlayObserver?.disconnect();
     appleOverlayObserver = null;
-    appleStateObserver?.disconnect();
-    appleStateObserver = null;
-    if (appleRadiusTimer) clearInterval(appleRadiusTimer);
-    appleRadiusTimer = null;
+    VP.appleRadiusWatch?.(false); // vivi+ hook
     if (appleOverlaySyncTimer) clearTimeout(appleOverlaySyncTimer);
     appleOverlaySyncTimer = null;
   }
@@ -1088,123 +1209,12 @@
     }
   }
 
-  // Corner radius (px) the artwork is clipped to: the nearest ancestor with a
-  // rounded corner. Firefox clips a cross-process <iframe> to a rounded box
-  // without anti-aliasing (jagged corners), so the radius is handed to the
-  // iframe page, which rounds its own <video> — that is ordinary, smoothly
-  // anti-aliased content.
-  function appleCornerRadius(el, fallback) {
-    // What the eye sees is the LARGEST curve among the image itself and any
-    // ancestor that really clips it (overflow != visible) — e.g. an 8px image
-    // inside a 20px-rounded, overflow:hidden player shows a 20px corner.
-    let best = 0, n = el, hops = 0;
-    while (n && n !== document.documentElement && hops++ < 7) {
-      const cs = getComputedStyle(n);
-      const v = cs.borderTopLeftRadius || '';
-      const r = v.endsWith('%') ? 0 : (parseFloat(v) || 0);
-      const clips = n === el || cs.overflowX !== 'visible' || cs.overflowY !== 'visible';
-      if (clips && r > best) best = r;
-      n = n.parentElement;
-    }
-    return best > 0 ? Math.min(best, 48) : fallback;
-  }
-
-  // The theme's own artwork radii (theme.css :root). These never change, unlike
-  // the computed radius above, which can read 0 for a moment while YT Music is
-  // still switching between the mini and full player.
-  function appleThemeRadius(imgEl) {
-    if (!document.documentElement.classList.contains('vivi-theme-on')) return 0;
-    const bar = !!imgEl.closest('ytmusic-player-bar');
-    const v = getComputedStyle(document.documentElement).getPropertyValue(bar ? '--radius-art' : '--radius-art-lg');
-    return parseFloat(v) || (bar ? 8 : 20);
-  }
-
-  function appleRadiusFor(imgEl) {
-    // "Full screen mode": the artwork is full-bleed against the screen edge, so
-    // the overlay must not get the thumbnail's rounded corners (they would
-    // show as dark wedges in the screen corners).
-    if (document.documentElement.classList.contains('vivi-fs-mode') &&
-        !imgEl.closest('ytmusic-player-bar') &&
-        document.querySelector('ytmusic-player-page[player-fullscreened]:not([video-mode])')) {
-      return 0;
-    }
-    return Math.max(appleCornerRadius(imgEl, 0), appleThemeRadius(imgEl));
-  }
-
-  // Re-check every overlay's radius. Called on a timer and after player-state
-  // changes, because a radius read while the player is mid-transition (or
-  // before YT Music has applied its classes) can be stale.
-  function resyncAppleRadii() {
-    document.querySelectorAll('.vivi-canvas-media[data-vivi-apple-overlay="1"]').forEach((el) => {
-      const img = el.parentElement && el.parentElement.querySelector('img:not(.vivi-canvas-media)');
-      if (img) applyAppleRadius(el, appleRadiusFor(img));
-    });
-  }
-
-  // Give an Apple overlay the SAME rounded corners as the native thumbnail it
-  // sits on. In Firefox the overlay's CSS `border-radius: inherit` picks up the
-  // wrapper's radius (often 0 — YT Music rounds the <img> itself, not its
-  // wrapper), so the artwork came out square. Copy the thumbnail's own radius
-  // instead. +3px because the overlay overshoots its box by 1px on every side,
-  // which would otherwise leave the corner arc ~1px outside the thumbnail's.
-  // Rounded-rectangle alpha mask built from four corner gradients plus two
-  // overlapping bars, so it scales with the element and needs no JS on resize.
-  function appleCornerMask(R) {
-    if (!(R > 0)) return 'none';
-    const tile = `${R}px ${R}px`;
-    const stops = `#000 ${R - 0.5}px, transparent ${R + 0.5}px`;
-    const bar = `${R - 1}px`, cut = `${2 * R - 2}px`;
-    return [
-      `radial-gradient(circle at 100% 100%, ${stops}) 0 0 / ${tile} no-repeat`,
-      `radial-gradient(circle at 0 100%, ${stops}) 100% 0 / ${tile} no-repeat`,
-      `radial-gradient(circle at 100% 0, ${stops}) 0 100% / ${tile} no-repeat`,
-      `radial-gradient(circle at 0 0, ${stops}) 100% 100% / ${tile} no-repeat`,
-      `linear-gradient(#000, #000) 0 ${bar} / 100% calc(100% - ${cut}) no-repeat`,
-      `linear-gradient(#000, #000) ${bar} 0 / calc(100% - ${cut}) 100% no-repeat`
-    ].join(', ');
-  }
-
-  function applyAppleRadius(el, r) {
-    r = Math.max(0, Math.round(r || 0));
-    if (el.dataset.viviAppleRadius === String(r)) return;
-    el.dataset.viviAppleRadius = String(r);
-    if (el.tagName === 'IFRAME') {
-      // Firefox clips an out-of-process <iframe> to a rounded box without
-      // anti-aliasing (jagged) or not at all, and ignores rounding applied to
-      // the <video> inside it. An alpha MASK is composited like any image, so
-      // its edge is smooth. The iframe is 1px bigger than the thumbnail on every
-      // side, so the arc is r+4: that keeps it just inside the thumbnail's own
-      // corner instead of poking out of it.
-      el.style.setProperty('border-radius', '0', 'important');
-      el.style.setProperty('clip-path', 'none', 'important');
-      const m = appleCornerMask(r > 0 ? r + 4 : 0);
-      el.style.setProperty('-webkit-mask', m, 'important');
-      el.style.setProperty('mask', m, 'important');
-    } else {
-      const px = (r > 0 ? r + 3 : 0) + 'px';
-      el.style.setProperty('border-radius', px, 'important');
-      el.style.setProperty('clip-path', r > 0 ? `inset(0 round ${px})` : 'none', 'important');
-    }
-    console.debug('[Vivi] Apple artwork corner radius →', r + 'px', el.dataset.viviAppleSlot || '');
-    if (el.tagName === 'IFRAME') {
-      const send = () => {
-        try { el.contentWindow?.postMessage({ __viviAppleRadius: Number(el.dataset.viviAppleRadius) || 0 }, '*'); } catch (_) {}
-      };
-      send();
-      el.addEventListener('load', send, { once: true });
-    }
-  }
-
-  function makeAppleHlsIframe(url, className, fit, appleOverlay, onError, onPlaying, radius) {
+  function makeAppleHlsIframe(url, className, fit, appleOverlay, onError, onPlaying) {
     const frame = document.createElement('iframe');
     const id = `vivi-apple-${++appleCanvasFrameSeq}`;
     applePendingFrames.set(id, { onError, onPlaying });
-    const r = Math.max(0, Math.round(radius || 0));
-    const src = chrome.runtime.getURL(`src/apple-canvas-player.html?fit=${fit}&id=${encodeURIComponent(id)}&r=${r}#${encodeURIComponent(url)}`);
+    const src = chrome.runtime.getURL(`src/apple-canvas-player.html?fit=${fit}&id=${encodeURIComponent(id)}#${encodeURIComponent(url)}`);
     frame.src = src;
-    // Same colour scheme on the frame and its document keeps the frame's own
-    // background genuinely transparent (a mismatch makes browsers paint it opaque).
-    frame.style.colorScheme = 'light';
     frame.className = className;
     frame.setAttribute('frameborder', '0');
     frame.setAttribute('allow', 'autoplay');
@@ -1263,7 +1273,7 @@
     vid.src = url;
   }
 
-  function makeMediaEl({ videoUrl, imageUrl, fallbackVideoUrl }, wrapper, options = {}) {
+  function makeMediaEl({ videoUrl, imageUrl, fallbackVideoUrl }, wrapper, options = {}) { // vivi+ hook (fallbackVideoUrl)
     const appleOverlay = options.appleOverlay === true;
     if (videoUrl && !imageOnlyMode) {
       const isMain = wrapper?.classList?.contains(MAIN_PLAYER_CLASS);
@@ -1271,11 +1281,8 @@
 
       if (isAppleCdnHlsUrl(videoUrl)) {
         const fallbackToImage = () => {
-          // Apple ships the clip in several renditions: try the other one first.
-          if (fallbackVideoUrl && fallbackVideoUrl !== videoUrl) {
-            const alt = makeMediaEl({ videoUrl: fallbackVideoUrl, imageUrl }, wrapper, options);
-            if (alt) { alt.style.opacity = frame.style.opacity || '1'; frame.replaceWith(alt); return; }
-          }
+          const alt = fallbackVideoUrl && fallbackVideoUrl !== videoUrl && makeMediaEl({ videoUrl: fallbackVideoUrl, imageUrl }, wrapper, options); // vivi+ hook: Apple's other rendition first
+          if (alt) { alt.style.opacity = frame.style.opacity || '1'; frame.replaceWith(alt); return; } // vivi+ hook
           if (imageUrl) {
             const img = makeMediaEl({ videoUrl: null, imageUrl }, wrapper, { appleOverlay });
             if (img) {
@@ -1298,7 +1305,8 @@
         // at the cost of a negligible crop.
         const frame = makeAppleHlsIframe(videoUrl, className, 'cover', appleOverlay, fallbackToImage, () => {
           frame.dispatchEvent(new Event('vivi-apple-playing'));
-        }, options.radius !== undefined ? options.radius : appleCornerRadius(wrapper, isMain ? 18 : 8));
+        });
+        VP.appleFrame?.(frame, options, wrapper, isMain); // vivi+ hook: corner radius (&r=) + colour scheme
         return frame;
       }
 
@@ -2011,46 +2019,6 @@
     lastfmSentNowPlaying = false;
   }
 
-  
-  function resetListenbrainzForNewTrack() {
-    listenbrainzScrobbled = false;
-    listenbrainzSentNowPlaying = false;
-  }
-
-  function sendListenbrainzNowPlaying(track) {
-    if (!listenbrainzSettings.listenbrainzEnabled || !listenbrainzSettings.listenbrainzSendNowPlaying) return;
-    if (listenbrainzSentNowPlaying) return;
-    listenbrainzSentNowPlaying = true;
-    const video = getVideoEl();
-    chrome.runtime.sendMessage({
-      type: 'VIVI_LISTENBRAINZ_NOWPLAYING',
-      track: { artist: track.artist, song: track.song, duration: video?.duration || undefined },
-    }).catch(() => {});
-  }
-
-  function maybeScrobbleListenbrainz(track) {
-    if (!listenbrainzSettings.listenbrainzEnabled || listenbrainzScrobbled) return;
-    const video = getVideoEl();
-    if (!video || !video.duration || Number.isNaN(video.duration)) return;
-
-    const duration = video.duration;
-    const elapsed = video.currentTime || 0;
-    if (duration < (lastfmSettings.lastfmMinDurationSec || 30)) return;
-
-    const percentThreshold = duration * ((lastfmSettings.lastfmDelayPercent || 50) / 100);
-    const minutesThreshold = (lastfmSettings.lastfmDelayMinutes || 3) * 60;
-    const threshold = Math.min(percentThreshold, minutesThreshold);
-
-    if (elapsed >= threshold) {
-      listenbrainzScrobbled = true;
-      chrome.runtime.sendMessage({
-        type: 'VIVI_LISTENBRAINZ_SCROBBLE',
-        track: { artist: track.artist, song: track.song },
-        timestamp: lastfmStartedAt,
-      }).catch(() => {});
-    }
-  }
-
   function sendLastfmNowPlaying(track) {
     if (!lastfmSettings.lastfmEnabled || !lastfmSettings.lastfmSendNowPlaying) return;
     if (lastfmSentNowPlaying) return;
@@ -2132,85 +2100,6 @@
     }
   }
 
-  // ── Spotify Canvas behind the lyrics ──
-  const LYRICS_CANVAS_ID = 'vivi-lyrics-canvas';
-
-  async function fetchLyricsCanvas(track, key) {
-    try {
-      const mv = await window.__viviVideoCanvas?.(track); // vivi+ hook: the song's music video first
-      if (mv) { if (key === currentTrackKey && canvasPlacement !== 'cover') setLyricsCanvas(mv); return; }
-      const r = await chrome.runtime.sendMessage({
-        type: 'VIVI_SPOTIFY_CANVAS',
-        track: { song: track.song, artist: track.artist, videoId: track.videoId },
-      });
-      if (key !== currentTrackKey || canvasPlacement === 'cover') return;
-      if (!r?.ok) { log('No Spotify Canvas for the lyrics background:', r?.error || 'none'); return; }
-      setLyricsCanvas(r.videoUrl);
-    } catch (e) {
-      warn('Spotify Canvas (lyrics background):', e?.message || e);
-    }
-  }
-
-  function setLyricsCanvas(url) {
-    lyricsCanvasUrl = url || null;
-    if (!lyricsCanvasUrl) {
-      const old = document.getElementById(LYRICS_CANVAS_ID);
-      if (old) {
-        try { old.pause(); old.removeAttribute('src'); old.load(); } catch (_) {}
-        old.remove();
-      }
-      document.documentElement.classList.remove('vivi-lyrics-canvas-visible');
-      return;
-    }
-    placeLyricsCanvas();
-  }
-
-  // YT Music re-renders the side panel freely, so the video is (re)attached
-  // and shown only while the full player's Lyrics tab is open.
-  function placeLyricsCanvas() {
-    if (!lyricsCanvasUrl) return;
-    const host = document.querySelector('ytmusic-player-page #side-panel');
-    let vid = document.getElementById(LYRICS_CANVAS_ID);
-    if (host && (!vid || vid.parentElement !== host)) {
-      if (!vid) {
-        vid = document.createElement('video');
-        vid.id = LYRICS_CANVAS_ID;
-        vid.className = 'vivi-lyrics-canvas-media';
-        vid.muted = true;
-        vid.loop = true;
-        vid.playsInline = true;
-        vid.autoplay = true;
-        vid.setAttribute('aria-hidden', 'true');
-      }
-      host.insertBefore(vid, host.firstChild);
-    }
-    if (!vid) return;
-    if (vid.dataset.src !== lyricsCanvasUrl) {
-      vid.dataset.src = lyricsCanvasUrl;
-      vid.src = lyricsCanvasUrl;
-    }
-    const lyricsPanel = document.getElementById('vivi-lyrics-panel');
-    const show = isMainPlayerPageActive() && (canvasPlacement === 'side'
-      ? vid.parentElement?.offsetParent !== null
-      : !!lyricsPanel && lyricsPanel.offsetParent !== null);
-    document.documentElement.classList.toggle('vivi-lyrics-canvas-visible', show);
-    // Plays only while it is visible and the song plays; pauses with the song.
-    const shouldPlay = show && !document.hidden && getVideoEl()?.paused === false;
-    if (shouldPlay && vid.paused) vid.play().catch(() => {});
-    else if (!shouldPlay && !vid.paused) vid.pause();
-  }
-  setInterval(placeLyricsCanvas, 500);
-
-  // Blur of the lyric lines around the active one (off / low / normal) and of
-  // the Canvas behind the panel (px). Either may be undefined: keep the old.
-  const LINE_BLUR = { off: 0, low: 0.4, normal: 1 };
-  function applyBlurSettings(lineBlur, canvasBlurPx) {
-    const root = document.documentElement.style;
-    if (lineBlur in LINE_BLUR) root.setProperty('--vivi-line-blur', String(LINE_BLUR[lineBlur]));
-    const px = Number(canvasBlurPx);
-    if (canvasBlurPx != null && Number.isFinite(px)) root.setProperty('--vivi-canvas-blur', Math.max(0, Math.min(30, px)) + 'px');
-  }
-
   // The dedicated Canvas player belongs only to the full player/watch page.
   // When YouTube Music is minimized or navigated back to Home, the global player
   // bar remains mounted, but the main player canvas must disappear completely.
@@ -2269,10 +2158,21 @@
   let playerTabIconsContainer = null;
 
   const PLAYER_TAB_ICON_PATHS = {
-    next: ['M4 6h2M9 6h11M4 12h2M9 12h11M4 18h2M9 18h11'],
-    lyrics: ['M7 3.5h7l4 4v13H7z', 'M14 3.5v4h4M10 12h5M10 15.5h5'],
-    comments: ['M20 11.5a7.5 7.5 0 0 1-7.5 7.5H5l1.6-3A7.5 7.5 0 1 1 20 11.5Z', 'M9 11.5h.01M12.5 11.5h.01M16 11.5h.01'],
-    related: ['M5 4.5h10v12H5zM9 8.5h10v12H9z', 'M12 11.5h4M12 14.5h4'],
+    next: [
+      'M4 6h2M9 6h11M4 12h2M9 12h11M4 18h2M9 18h11',
+    ],
+    lyrics: [
+      'M7 3.5h7l4 4v13H7z',
+      'M14 3.5v4h4M10 12h5M10 15.5h5',
+    ],
+    comments: [
+      'M20 11.5a7.5 7.5 0 0 1-7.5 7.5H5l1.6-3A7.5 7.5 0 1 1 20 11.5Z',
+      'M9 11.5h.01M12.5 11.5h.01M16 11.5h.01',
+    ],
+    related: [
+      'M5 4.5h10v12H5zM9 8.5h10v12H9z',
+      'M12 11.5h4M12 14.5h4',
+    ],
   };
 
   function playerTabIconKind(tab) {
@@ -2324,9 +2224,7 @@
       playerTabIconsContainer = container;
       if (container && playerTabIconsEnabled) {
         playerTabIconsObserver = new MutationObserver(() => decoratePlayerTabIcons());
-        // characterData: YT Music can fill a tab's label in place, after the
-        // tab itself was added.
-        playerTabIconsObserver.observe(container, { childList: true, subtree: true, characterData: true });
+        playerTabIconsObserver.observe(container, { childList: true, subtree: true, characterData: true }); // vivi+ hook: YT Music can fill a tab's label in place
       }
     }
     if (!container || !playerTabIconsEnabled) return;
@@ -2339,26 +2237,6 @@
       tab.dataset.viviPlayerTabIcon = kind;
     });
   }
-
-  // Seen in Firefox (a song started from a library playlist): YT Music's tab
-  // strip keeps its 4 tabs in data, but the repeater that draws them has drawn
-  // none, so the row above "Playing from" is empty until a page refresh.
-  // Asking that repeater to render again brings the tabs back. Its data and
-  // render() live in the page's JS world (wrappedJSObject in Firefox); where
-  // the content script can't reach them, this does nothing.
-  function repairEmptyPlayerTabs() {
-    if (document.hidden) return;
-    const content = document.querySelector('ytmusic-player-page .tab-header-container #tabsContent');
-    const repeat = content?.querySelector(':scope > dom-repeat');
-    if (!repeat || content.querySelector('tp-yt-paper-tab')) return;
-    try {
-      const raw = repeat.wrappedJSObject || repeat;
-      if (!(raw.items?.length > 0) || typeof raw.render !== 'function') return;
-      raw.render();
-      log('player tabs were empty; redrew', content.querySelectorAll('tp-yt-paper-tab').length, 'tabs');
-    } catch (_) { /* page objects unavailable */ }
-  }
-  setInterval(repairEmptyPlayerTabs, 1000);
 
   // Language localization toggled (or the tab strip is otherwise re-read):
   // drop existing decorations and re-evaluate every tab with the new rules.
@@ -2595,41 +2473,8 @@
     const playing = !!video && !video.paused && !video.ended;
     document.documentElement.classList.toggle('vivi-disc-playing', playing);
     syncDiscTonearm();
-    syncCanvasWithSong(playing);
+    VP.syncCanvasWithSong?.(playing); // vivi+ hook: Canvas media pause/resume with the song
   }
-
-  // Canvas videos (Apple animated art, Spotify Canvas) and the lyrics dancer
-  // pause with the song and resume with it. While the tab is hidden,
-  // updateBackgroundTabMode owns their playback instead.
-  let canvasSongPlaying = true;
-  function syncCanvasWithSong(playing) {
-    if (document.hidden) return;
-    const changed = playing !== canvasSongPlaying;
-    canvasSongPlaying = playing;
-    document.querySelectorAll('.vivi-canvas-media, .vivi-canvas-player-media, .vivi-lyrics-dancer').forEach((media) => {
-      if (media.tagName === 'IFRAME') {
-        // Pause is re-sent while paused so a frame created meanwhile stops too.
-        if (!playing || changed) {
-          try { media.contentWindow?.postMessage({ __viviAppleCanvasControl: playing ? 'resume' : 'pause' }, '*'); } catch (_) {}
-        }
-        return;
-      }
-      if (!playing) {
-        if (!media.paused && !media.dataset.viviDeferredSrc) {
-          media.dataset.viviPausedForSong = '1';
-          try { media.pause(); } catch (_) {}
-        }
-      } else if (media.dataset.viviPausedForSong === '1') {
-        delete media.dataset.viviPausedForSong;
-        media.play?.().catch(() => {});
-      }
-    });
-  }
-  // Catches Canvas media that appear while the song is already paused.
-  setInterval(() => {
-    const video = getVideoEl();
-    if (video && video.paused && !document.hidden) syncCanvasWithSong(false);
-  }, 1000);
 
   function applyDiscShine(enabled) {
     discShineEnabled = enabled !== false;
@@ -2852,7 +2697,8 @@
   }
 
   function injectSpotifyCanvas(url, attempt = 0, token = canvasRenderToken, trackKey = currentTrackKey) {
-    if (!url || imageOnlyMode || document.hidden) return;
+    if (!url || imageOnlyMode) return;
+    if (document.hidden) return;
     if (token !== canvasRenderToken || trackKey !== currentTrackKey) return;
     if (isRealMusicVideo()) return;
     if (!isMainPlayerPageActive()) {
@@ -3010,183 +2856,16 @@
     }, true);
   }
 
-
-  // ───────────────────────── Mouse Wheel Volume (from BitChord) ─────────────────────────
-  let wheelVolumeEnabled = true;
-  const WHEEL_VOLUME_STEP = 0.05;
-
-  function initWheelVolume() {
-    window.addEventListener('wheel', (e) => {
-      if (!wheelVolumeEnabled) return;
-      const target = e.target;
-      const playerBar = target?.closest?.('ytmusic-player-bar');
-      const playerArt = target?.closest?.('#player, #song-image, ytmusic-player, .song-media-window');
-      const volSlider = target?.closest?.('.volume-slider, #sliderBar');
-
-      if (!playerBar && !playerArt && !volSlider) return;
-
-      if (!playerBar && !volSlider && target?.closest?.('#queue, #contents, #lyrics, .ytmusic-player-page-lyrics')) {
-        if (!e.altKey && !e.ctrlKey) return;
-      }
-
-      const video = document.querySelector('video');
-      if (!video) return;
-
-      e.preventDefault();
-      const delta = e.deltaY;
-      if (delta === 0) return;
-
-      const curVol = video.volume;
-      const next = curVol + (delta < 0 ? WHEEL_VOLUME_STEP : -WHEEL_VOLUME_STEP);
-      const clamped = Math.round(Math.min(1, Math.max(0, next)) * 100) / 100;
-      video.volume = clamped;
-
-      window.postMessage({
-        ch: 'vivi-xfade',
-        dir: 'in',
-        type: 'set-volume',
-        volume: clamped,
-      }, window.location.origin);
-    }, { passive: false });
-  }
-
-  // ───────────────────────── Apple Artist Hero Art & Palette (from BitChord) ─────────────────────────
-  let appleArtistArtEnabled = true;
-  let currentAppleArtistArt = null;
-  const appleArtistArtCache = new Map();   // artist -> pending/finished lookup
-
-  async function applyAppleArtistArtForTrack(track) {
-    if (!appleArtistArtEnabled || !track?.artist) return;
-    const cleanArtist = window.__viviLyrics?.cleanArtistForLyrics?.(track.artist) || track.artist;
-    try {
-      if (!appleArtistArtCache.has(cleanArtist)) {
-        appleArtistArtCache.set(cleanArtist, chrome.runtime.sendMessage({ type: 'VIVI_APPLE_ARTIST_ART', artist: cleanArtist }).catch(() => null));
-      }
-      const res = await appleArtistArtCache.get(cleanArtist);
-      if (!res?.ok || !res.art) return;
-      currentAppleArtistArt = res.art;
-
-      const root = document.documentElement;
-      if (res.art.background) root.style.setProperty('--vivi-apple-bg', res.art.background);
-      if (res.art.accent) root.style.setProperty('--vivi-apple-accent', res.art.accent);
-      if (res.art.keyColor) root.style.setProperty('--vivi-apple-key', res.art.keyColor);
-
-      const playerBg = document.querySelector('ytmusic-player#player, #main-panel');
-      if (playerBg && res.art.background) {
-        playerBg.style.setProperty('--ytmusic-player-background-color', res.art.background);
-      }
-    } catch { /* context gone */ }
-  }
-
-  // ───────────────────────── Automix "Stats for Nerds" Overlay (from BitChord) ─────────────────────────
-  let nerdStatsEnabled = false;
-  let nerdStatsEl = null;
-
-  function createNerdStatsOverlay() {
-    if (nerdStatsEl) return nerdStatsEl;
-    const el = document.createElement('div');
-    el.id = 'vivi-nerd-stats';
-    el.style.cssText = `
-      position: fixed;
-      bottom: 84px;
-      left: 16px;
-      z-index: 999999;
-      background: rgba(18, 18, 18, 0.88);
-      backdrop-filter: blur(12px);
-      -webkit-backdrop-filter: blur(12px);
-      border: 1px solid rgba(255, 255, 255, 0.14);
-      border-radius: 8px;
-      padding: 8px 12px;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace;
-      font-size: 11px;
-      line-height: 15px;
-      color: rgba(255, 255, 255, 0.85);
-      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.6);
-      pointer-events: none;
-      display: none;
-      max-width: 440px;
-      font-variant-numeric: tabular-nums;
-      text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
-    `;
-
-    el.innerHTML = `
-      <div id="vivi-nerd-stream" style="font-weight: 600; color: #fff; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">Stream: Measuring...</div>
-      <div id="vivi-nerd-automix" style="margin-top: 2px; color: #ff6599; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">Automix: Initializing...</div>
-    `;
-
-    document.body.appendChild(el);
-    nerdStatsEl = el;
-    return el;
-  }
-
-  function updateNerdStatsHUD() {
-    if (!nerdStatsEnabled) {
-      if (nerdStatsEl) nerdStatsEl.style.display = 'none';
-      return;
-    }
-
-    const hud = createNerdStatsOverlay();
-    hud.style.display = 'block';
-
-    const streamEl = hud.querySelector('#vivi-nerd-stream');
-    const automixEl = hud.querySelector('#vivi-nerd-automix');
-
-    const video = document.querySelector('video');
-    const track = getCurrentTrack();
-    const g = window.__viviAudioGraph;
-    const fmt = (t) => (isFinite(t) ? `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}` : '–');
-    const parts = [track ? `${track.song || 'Unknown'} · ${track.artist || ''}` : 'No track'];
-    if (video) parts.push(`${fmt(video.currentTime)} / ${fmt(video.duration)}`);
-    parts.push(g?.ctx ? `Web Audio ${(g.ctx.sampleRate / 1000).toFixed(1)} kHz (${g.ctx.state})` : 'Web Audio off');
-    if (streamEl) streamEl.textContent = parts.join(' | ');
-
-    if (automixEl) {
-      const xf = window.__viviCrossfade?.status?.();
-      const automix = window.__viviAutomix;
-      const engine = automix?.getLiveState?.() || {};
-      if (!xf || !xf.seconds) {
-        automixEl.textContent = 'Crossfade off (Audio playback → Crossfade)';
-        automixEl.style.color = '#888';
-      } else if (!automix?.isEnabled()) {
-        automixEl.textContent = `Crossfade ${xf.seconds} s · Automix off${xf.live ? ' · mixing' : ''}`;
-        automixEl.style.color = '#90caf9';
-      } else {
-        const m = xf.automix?.mix;
-        const state = xf.automix?.state === 'idle' && m ? 'planned' : xf.automix?.state || 'idle';
-        let text = `Automix · ${state}`;
-        if (engine.bpm) text += ` · ${engine.bpm.toFixed(1)} BPM (grid ${(engine.conf || 0).toFixed(2)})`;
-        if (m) text += ` · ${m.style || 'blend'}${m.bars ? ` ${m.bars} bars` : ''} / ${m.mixSec.toFixed(1)} s from ${fmt(m.startAt)}${m.rate && Math.abs(m.rate - 1) > 0.002 ? ` · next ×${m.rate.toFixed(3)}` : ''}`;
-        if (m?.reason) text += ` · ${m.reason}`;
-        if (state === 'fallback' && engine.reason) text += ` · ${engine.reason}`;
-        if (xf.live) text += ' · mixing';
-        automixEl.textContent = text;
-        automixEl.style.color = xf.live ? '#00e676' : m ? '#ff6599' : state === 'fallback' ? '#ffb300' : '#90caf9';
-      }
-    }
-  }
-
-  document.addEventListener('keydown', (e) => {
-    if (e.shiftKey && (e.key === 'D' || e.key === 'd') && !e.ctrlKey && !e.altKey && !e.metaKey) {
-      const active = document.activeElement;
-      if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable)) return;
-      nerdStatsEnabled = !nerdStatsEnabled;
-      chrome.storage.local.set({ nerdStatsEnabled });
-      updateNerdStatsHUD();
-    }
-  }, true);
-
-  setInterval(() => {
-    if (nerdStatsEnabled) updateNerdStatsHUD();
-  }, 1000);
+  VP.bind?.({ log, warn, getVideoEl, getCurrentTrack, isMainPlayerPageActive, trackKey: () => currentTrackKey, lastfm: () => lastfmSettings, lastfmStartedAt: () => lastfmStartedAt }); // vivi+ hook: internals for src/plus/content-plus.js, starts its timers
 
   async function handleTrackChange(track, { recover = false } = {}) {
     const key = `${track.artist}—${track.song}`;
     // recover = re-render the Canvas for the song that is already current,
-    // without redoing lyrics / SponsorBlock work for it.
+    // without redoing lyrics / SponsorBlock / title work for it.
     if (key !== currentTrackKey && !recover) {
       window.__viviLyricsUI?.handleTrack(track);
       loadSponsorSegmentsForTrack(track).catch((e) => warn('SponsorBlock: track load failed', e?.message));
-      applyAppleArtistArtForTrack(track);
+      VP.newTrack?.(track); // vivi+ hook: Apple artist art
     }
     if (key === currentTrackKey && !recover) return;
     currentTrackKey = key;
@@ -3196,7 +2875,7 @@
     spotifyCanvasRequestKey = null;
     currentSpotifyCanvasUrl = null;
     currentVideoUrl = null; currentImageUrl = null;
-    setLyricsCanvas(null);
+    VP.setLyricsCanvas?.(null); // vivi+ hook
 
     // Clear whatever the previous track was showing right away, before either
     // artwork source has had a chance to respond — this is what stops the old
@@ -3208,7 +2887,7 @@
     if (key !== lastfmCurrentKey) {
       lastfmCurrentKey = key;
       resetLastfmForNewTrack();
-      resetListenbrainzForNewTrack();
+      VP.listenbrainz?.reset?.(); // vivi+ hook
       watchLikeButton(track);
     }
 
@@ -3313,21 +2992,13 @@
     // background — so this play isn't held up, but the *next* play of this
     // same song shows Apple Music's artwork instantly (cached URL + the
     // browser's own HTTP cache for the actual bytes).
-    // Canvas behind lyrics: Spotify goes behind the lyrics, the cover only
-    // ever gets Apple's animated art (or stays the normal cover).
-    if (canvasPlacement !== 'cover' && spotifyCanvasEnabled && !imageOnlyMode) {
-      fetchLyricsCanvas(track, key);
-      if (appleCanvasEnabled) {
-        const appleResult = await attemptApple();
-        if (appleResult === 'stop') return;
-        setBackgroundVar(null);
-        scheduleRetry(track, key, 0);
-      } else {
-        setBackgroundVar(null);
-      }
+    if (VP.lyricsCanvas?.(track, key, spotifyCanvasEnabled && !imageOnlyMode)) { // vivi+ hook: Spotify Canvas behind the lyrics, the cover gets Apple only
+      const apple = appleCanvasEnabled;
+      if (apple && await attemptApple() === 'stop') return;
+      setBackgroundVar(null);
+      if (apple) scheduleRetry(track, key, 0);
       return;
     }
-
     if (canvasPriority === 'apple' && appleCanvasEnabled && spotifyCanvasEnabled) {
       const cached = await readCache(key);
       if (key !== currentTrackKey) return;
@@ -3475,10 +3146,7 @@
       sendLastfmNowPlaying(track);
       maybeScrobble(track);
     }
-    if (track && listenbrainzSettings.listenbrainzEnabled) {
-      sendListenbrainzNowPlaying(track);
-      maybeScrobbleListenbrainz(track);
-    }
+    if (track) VP.listenbrainz?.tick?.(track); // vivi+ hook
     prefetchNextTrack();
   }
 
@@ -3651,30 +3319,29 @@
   window.addEventListener('scroll', syncDiscTonearm, { passive: true, capture: true });
   updateBackgroundTabMode();
 
-  chrome.storage.local.get({ ...LASTFM_DEFAULTS, ...LISTENBRAINZ_DEFAULTS }, (stored) => {
-    listenbrainzSettings = { ...LISTENBRAINZ_DEFAULTS, ...stored };
-    listenbrainzUserEnabled = listenbrainzSettings.listenbrainzEnabled === true;
+  chrome.storage.local.get(LASTFM_DEFAULTS, (stored) => {
     lastfmSettings = { ...LASTFM_DEFAULTS, ...stored };
     lastfmUserEnabled = lastfmSettings.lastfmEnabled === true;
     applyResourceSaverState();
   });
 
   chrome.storage.local.get({
-    wheelVolumeEnabled: true, appleArtistArtEnabled: true, nerdStatsEnabled: false, enabled: true, themeEnabled: true, imageOnlyMode: false, spotifyCanvasEnabled: true, canvasPriority: 'apple', spotifyCanvasPlacement: 'cover', lyricsLineBlur: 'low', canvasBlurPx: 3, sponsorBlockEnabled: true,
+    enabled: true, themeEnabled: true, imageOnlyMode: false, spotifyCanvasEnabled: true, canvasPriority: 'apple', sponsorBlockEnabled: true,
     discStyleEnabled: false, discShineEnabled: true,
     playerTabIcons: true,
     kawarpEnabled: false, kawarpPauseWhenInactive: true, eqEnabled: false, resourceSaverEnabled: false,
     kawarpWarpIntensity: 1.0, kawarpBlurPasses: 6, kawarpAnimationSpeed: 4.15,
     kawarpTransitionDuration: 0, kawarpSaturation: 2.6, kawarpDithering: 0.034, kawarpOpacity: 1.0, kawarpBrightness: 0.5,
+    ...VP.storageDefaults, // vivi+ hook
   }, ({
-    wheelVolumeEnabled: wvEnabled, appleArtistArtEnabled: aaaEnabled, nerdStatsEnabled: nsEnabled, enabled, themeEnabled, imageOnlyMode: imgOnly, spotifyCanvasEnabled: spCanvas, canvasPriority: canvasPrio, spotifyCanvasPlacement: cPlace, lyricsLineBlur: lineBlur, canvasBlurPx: cBlur, sponsorBlockEnabled: sbEnabled,
+    enabled, themeEnabled, imageOnlyMode: imgOnly, spotifyCanvasEnabled: spCanvas, canvasPriority: canvasPrio, sponsorBlockEnabled: sbEnabled,
     discStyleEnabled: discStyle, discShineEnabled: discShine,
     playerTabIcons: tabIcons,
     kawarpEnabled: kwEnabled, kawarpPauseWhenInactive: kwPause, eqEnabled: eqEnabled_, resourceSaverEnabled: rsEnabled,
     kawarpWarpIntensity, kawarpBlurPasses, kawarpAnimationSpeed, kawarpTransitionDuration, kawarpSaturation, kawarpDithering, kawarpOpacity, kawarpBrightness,
+    ...viviPlusStored // vivi+ hook
   }) => {
     bindCanvasTrackTransitionGuard();
-    initWheelVolume();
     resourceSaver = rsEnabled === true;
     appleUserEnabled = enabled !== false && discStyle !== true;
     spotifyCanvasEnabled = spCanvas !== false && discStyle !== true;
@@ -3685,16 +3352,11 @@
     applyFullscreenMode(true); // Full screen mode is always on
     chrome.storage.local.get({ fullscreenAutoHideBar: true }, ({ fullscreenAutoHideBar }) => applyFullscreenAutoHide(fullscreenAutoHideBar));
     canvasPriority = canvasPrio === 'apple' ? 'apple' : 'spotify';
-    canvasPlacement = ['lyrics', 'side'].includes(cPlace) ? cPlace : 'cover';
-    applyBlurSettings(lineBlur, cBlur);
     sponsorUserEnabled = sbEnabled !== false;
     themeUserEnabled = themeEnabled;
     imageOnlyMode = imgOnly;
     applyTheme(themeEnabled);
-    wheelVolumeEnabled = wvEnabled !== false;
-    appleArtistArtEnabled = aaaEnabled !== false;
-    nerdStatsEnabled = nsEnabled === true;
-    updateNerdStatsHUD();
+    VP.applyStored?.(viviPlusStored); // vivi+ hook
     window.__viviKawarp?.setOptions({
       warpIntensity: kawarpWarpIntensity,
       blurPasses: kawarpBlurPasses,
@@ -4013,12 +3675,7 @@
         spotifyCanvasEnabled = msg.spotifyCanvasEnabled !== false && !discStyleEnabled;
         reCheckCanvas = true;
       }
-      if ('lyricsLineBlur' in msg || 'canvasBlurPx' in msg) applyBlurSettings(msg.lyricsLineBlur, msg.canvasBlurPx);
-      if ('spotifyCanvasPlacement' in msg) {
-        canvasPlacement = ['lyrics', 'side'].includes(msg.spotifyCanvasPlacement) ? msg.spotifyCanvasPlacement : 'cover';
-        setLyricsCanvas(null);
-        reCheckCanvas = true;
-      }
+      if (VP.canvasSettings?.(msg)) reCheckCanvas = true; // vivi+ hook: Canvas placement + blur
       if ('canvasPriority' in msg) {
         canvasPriority = msg.canvasPriority === 'apple' ? 'apple' : 'spotify';
         reCheckCanvas = true;
@@ -4040,18 +3697,7 @@
         if (track) handleTrackChange(track);
         if (!pollTimer) startPolling();
       }
-      
-      if ('wheelVolumeEnabled' in msg) wheelVolumeEnabled = msg.wheelVolumeEnabled !== false;
-      if ('appleArtistArtEnabled' in msg) {
-        appleArtistArtEnabled = msg.appleArtistArtEnabled !== false;
-        const track = getCurrentTrack();
-        if (track && appleArtistArtEnabled) applyAppleArtistArtForTrack(track);
-      }
-      if ('nerdStatsEnabled' in msg) {
-        nerdStatsEnabled = msg.nerdStatsEnabled === true;
-        updateNerdStatsHUD();
-      }
-
+      VP.settings?.(msg); // vivi+ hook: wheel volume, Apple artist art, nerd stats
       if ('sponsorBlockEnabled' in msg) {
         sponsorUserEnabled = msg.sponsorBlockEnabled !== false;
         sponsorBlockEnabled = sponsorUserEnabled && !resourceSaver;
@@ -4098,13 +3744,7 @@
         });
         if (hasLiveOpts) window.__viviKawarp?.setOptions(liveOpts);
       }
-      Object.keys(LISTENBRAINZ_DEFAULTS).forEach((k) => {
-        if (k in msg) listenbrainzSettings[k] = msg[k];
-      });
-      if ('listenbrainzEnabled' in msg) {
-        listenbrainzUserEnabled = msg.listenbrainzEnabled === true;
-        listenbrainzSettings.listenbrainzEnabled = listenbrainzUserEnabled && !resourceSaver;
-      }
+      VP.listenbrainz?.settings?.(msg, resourceSaver); // vivi+ hook
       Object.keys(LASTFM_DEFAULTS).forEach((k) => {
         if (k in msg) lastfmSettings[k] = msg[k];
       });

@@ -46,8 +46,8 @@ SKIP = {'src/gate.js', 'src/gate.css', 'src/stargate.js', 'src/loader.js', 'src/
 # Files where this fork deliberately differs from the AMO build: conflicting
 # hunks keep our side (non-conflicting upstream changes still merge in).
 # background.js: AMO drops the VIVI_NET_FETCH relay that net.js needs.
-# popup.js: the update notice points to this fork's GitHub release, not upstream's AMO page.
-KEEP_OURS = {'src/background.js', 'src/popup.js'}
+# (popup.js no longer: the update notice is drawn by plus/popup-plus.js through a hook line.)
+KEEP_OURS = {'src/background.js'}
 AMO_DIR = os.path.join(ROOT, 'upstream-amo')
 AMO_MANIFEST_BASELINE = os.path.join(AMO_DIR, 'manifest-last-synced.json')
 TEXT_EXT = ('.js', '.css', '.html', '.json', '.md', '.txt')

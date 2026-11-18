@@ -32,43 +32,13 @@
   const log = (...a) => DEBUG && console.log('[Vivi:Lyrics]', ...a);
 
   
-  // ---- Title & Artist Cleaner for Lyrics (from BitChord / LyricsQuery) ----
-  const CREDITS = [
-    /#[\w\d_]+/g,
-    /\s*[([]\s*(feat|ft|featuring|with)\b[^)\]]*[)\]]/gi,
-    /\s+(feat|ft|featuring)\.?\s+.*$/gi,
-    /\s*[([]\s*(official\s*)?(music\s*)?(video|audio|visuali[sz]er|lyrics?\s*video|lyrics?|m\/?v|hd|hq|4k|60fps|full\s*song)\s*[)\]]/gi,
-    /\s*[([]\s*official\s*[)\]]/gi,
-    /\s*[([]\s*(slowed(\s*\+\s*reverb)?|sped\s*up|speed\s*up|nightcore|daycore|bass\s*boosted|reverb|tiktok|tik\s*tok(\s*version)?|jersey\s*club|jerseyclub)(\s*(remix|version|mix|edit))?\s*[)\]]/gi,
-    /\s*[([]\s*(prod|produced)\s*(by)?\s*[^)\]]+[)\]]/gi,
-    /\s*[([]\s*\d+\s*(hour|min|minute)s?\s*(loop)?\s*[)\]]/gi,
-    /\s*[([]\s*(remix|edit|vip|flip)\s*[)\]]/gi,
-    /\s*[([]\s*(audio\s*only|lyrics?)\s*[)\]]/gi,
-  ];
-
-  function cleanTitleForLyrics(title) {
-    if (!title) return '';
-    let name = String(title);
-    for (const pattern of CREDITS) name = name.replace(pattern, ' ');
-    const cleaned = name.replace(/\s+/g, ' ').trim().replace(/[,\-–—|~]+$/, '').trim();
-    return cleaned || String(title).trim();
-  }
-
-  function cleanArtistForLyrics(artist) {
-    if (!artist) return '';
-    return String(artist).replace(/ - Topic$/i, '').trim() || String(artist).trim();
-  }
-
   const DEFAULT_PROVIDERS = {
-    lyricsplus: true,
     lrcred: true,
     betterlyrics: true,
     lrclib: true,
     musixmatch: true,
     unison: true,
     binilyrics: true,
-    paxsenix: true,
-    genius: true,
     spotify: true,
   };
   let providerSettings = { ...DEFAULT_PROVIDERS };
@@ -84,7 +54,8 @@
   // in the top-3 priority list (line-only sources — Legato/Kugou, Legacy,
   // LRCLIB — are not offered there). A priority provider's
   // reply is shown whatever level it turns out to be, even line-synced.
-  const PRIORITY_ELIGIBLE_KEYS = ['lyricsplus', 'lrcred', 'betterlyrics', 'paxsenix', 'unison', 'binilyrics', 'musixmatch'];
+  const PRIORITY_ELIGIBLE_KEYS = ['lrcred', 'betterlyrics', 'unison', 'binilyrics', 'musixmatch'];
+  window.__viviPlus?.lyrics?.extendKeys(DEFAULT_PROVIDERS, providerSettings, PRIORITY_ELIGIBLE_KEYS); // vivi+ hook
   // The four Better Lyrics sub-sources (TTML, Legato/Kugou, Portato/QQ,
   // Legacy) used to be separate toggles; they are now one "betterlyrics"
   // provider. Old saved settings are folded into the new key on load.
@@ -490,6 +461,8 @@
     return res;
   }
 
+  // LRC header/metadata tags: [ar:..] [ti:..] [al:..] [by:..] [offset:..] [length: 03:45] [re:..] [ve:..]
+  // Any "[word:value]" line that is not a [mm:ss.xx] timestamp is metadata, never lyrics.
   function stripLrcMetaTags(text) {
     return String(text || '')
       .replace(/^\s*\[[a-zA-Z_ ]+\s*:[^\]]*\]\s*$/gm, '')
@@ -845,129 +818,7 @@
     }
   }
 
-  // Paxsenix — Apple Music syllable/word-synced TTML
-  async function fromPaxsenix(track) {
-    try {
-      const response = await chrome.runtime.sendMessage({
-        type: 'VIVI_PAXSENIX_LYRICS',
-        track: { song: track.song, artist: track.artist, duration: track.duration || 0 },
-      });
-      if (!response?.ok || !response.ttml) return null;
-      const parsed = checkTiming(parseTTML(response.ttml), track, 'Paxsenix');
-      if (!parsed) return null;
-      parsed.provider = 'Paxsenix';
-      return parsed;
-    } catch (e) {
-      log('Paxsenix request failed', e?.message || e);
-      return null;
-    }
-  }
-
-  // Genius — plain-text lyrics fallback
-  async function fromGenius(track) {
-    try {
-      const response = await chrome.runtime.sendMessage({
-        type: 'VIVI_GENIUS_LYRICS',
-        track: { song: track.song, artist: track.artist },
-      });
-      if (!response?.ok || !response.html) return null;
-      const doc = new DOMParser().parseFromString(response.html, 'text/html');
-      let containers = [...doc.querySelectorAll('div[data-lyrics-container="true"]')];
-      if (!containers.length) containers = [...doc.querySelectorAll('div.lyrics')];
-      if (!containers.length) return null;
-
-      let fullText = '';
-      for (const el of containers) {
-        el.querySelectorAll('[data-exclude-from-selection="true"], [class*="LyricsHeader__Container"], [class*="SongBioPreview"], [class*="InreadAd"], button, script, style').forEach((n) => n.remove());
-        el.querySelectorAll('br').forEach((b) => b.replaceWith('\n'));
-        fullText += (el.textContent || '') + '\n';
-      }
-      const cleaned = fullText
-        .replace(/\d*You might also like/gi, '')
-        .replace(/\d*Embed\s*$/gim, '')
-        .trim();
-      const parsed = parsePlain(cleaned);
-      if (!parsed) return null;
-      parsed.provider = 'Genius';
-      return parsed;
-    } catch (e) {
-      log('Genius request failed', e?.message || e);
-      return null;
-    }
-  }
-
   
-  // LyricsPlus — community mirrors with syllable/word sync
-  const LYRICS_PLUS_MIRRORS = ['https://lyricsplus.prjktla.my.id', 'https://lyricsplus.binimum.org'];
-  let lyricsPlusGoodMirror = null;
-
-  async function fromLyricsPlus(track) {
-    const mirrors = lyricsPlusGoodMirror
-      ? [lyricsPlusGoodMirror, ...LYRICS_PLUS_MIRRORS.filter((m) => m !== lyricsPlusGoodMirror)]
-      : LYRICS_PLUS_MIRRORS;
-
-    for (const host of mirrors) {
-      try {
-        const durSec = Math.round(track.duration || 0);
-        const qs = new URLSearchParams({
-          title: track.song,
-          artist: track.artist,
-          duration: durSec ? String(durSec) : '',
-        }).toString();
-        const res = await withTimeout(fetch(`${host}/v2/lyrics/get?${qs}`), FETCH_TIMEOUT);
-        if (!res || !res.ok) continue;
-        const data = await res.json();
-        if (!data || !Array.isArray(data.lyrics) || !data.lyrics.length) continue;
-        lyricsPlusGoodMirror = host;
-
-        const lines = [];
-        let hasSyllables = false;
-        for (const item of data.lyrics) {
-          if (typeof item.time !== 'number') continue;
-          const startMs = item.time;
-          const endMs = startMs + (item.duration || 5000);
-          const rawText = String(item.text || '').trim();
-
-          let words = null;
-          if (Array.isArray(item.syllabus) && item.syllabus.length) {
-            const parts = item.syllabus
-              .filter((s) => typeof s.text === 'string' && typeof s.time === 'number')
-              .map((s) => ({
-                text: s.text,
-                start: s.time,
-                end: s.time + (s.duration || 0),
-              }));
-            if (parts.length) {
-              words = buildWordsFromParts(parts);
-              repairTimings(words, endMs);
-              hasSyllables = true;
-            }
-          }
-
-          lines.push({
-            start: startMs,
-            end: endMs,
-            text: rawText || (words ? words.map((w) => w.text).join(' ') : ''),
-            words: words && words.length ? words : undefined,
-          });
-        }
-
-        if (!lines.length) continue;
-        const parsed = {
-          mode: hasSyllables ? 'syllable' : 'line',
-          provider: 'LyricsPlus',
-          lines,
-        };
-        const checked = checkTiming(parsed, track, 'LyricsPlus');
-        if (checked) checked.provider = 'LyricsPlus';
-        return checked;
-      } catch (e) {
-        log('LyricsPlus mirror error:', host, e?.message || e);
-      }
-    }
-    return null;
-  }
-
   // Priority-aware provider resolution. Only the up-to-3 prioritized
   // providers are considered here — everything else in jobDefs is left
   // alone and only gets tried afterward, as a fallback, if none of these
@@ -1145,9 +996,6 @@
     musixmatch: 'Musixmatch',
     unison: 'Unison',
     binilyrics: 'BiniLyrics',
-    paxsenix: 'Paxsenix',
-    lyricsplus: 'LyricsPlus',
-    genius: 'Genius',
     spotify: 'Spotify',
   };
   const PROVIDER_KEY_BY_NAME = Object.fromEntries(
@@ -1211,11 +1059,8 @@
   //     level wins (priority order breaks ties). Plain is only a last resort.
   //  4. Spotify joins the scan when the best is plain, and is used on its own
   //     when nothing at all was found.
-  async function resolveLyrics(rawTrack, excludeKeys, onUpdate) {
-    const cleanSong = cleanTitleForLyrics(rawTrack?.song || '');
-    const cleanArtist = cleanArtistForLyrics(rawTrack?.artist || '');
-    const track = { ...rawTrack, song: cleanSong, artist: cleanArtist, rawSong: rawTrack?.song, rawArtist: rawTrack?.artist };
-
+  async function resolveLyrics(track, excludeKeys, onUpdate) {
+    const rawTrack = track; track = window.__viviPlus?.lyrics?.cleanTrack(track) ?? track; // vivi+ hook
     const jobDefs = [];
     const add = (key, fn) => {
       if (providerSettings[key] && !excludeKeys.has(key)) jobDefs.push({ key, promise: fn(track) });
@@ -1226,9 +1071,7 @@
     add('musixmatch', fromMusixmatch);
     add('unison', fromUnison);
     add('binilyrics', fromBiniLyrics);
-    add('paxsenix', fromPaxsenix);
-    add('lyricsplus', fromLyricsPlus);
-    add('genius', fromGenius);
+    window.__viviPlus?.lyrics?.addProviders(add); // vivi+ hook
 
     const spotifyOn = !!providerSettings.spotify && !excludeKeys.has('spotify');
     let spotifyJob = null;
@@ -1266,46 +1109,7 @@
       }
     }
 
-    // Smart Fallback Cascade: if no lyrics were found on the first pass
-    if (!best) {
-      const rawTitle = rawTrack?.song || '';
-      // 1. If title has a hyphen (e.g. 'Artist - Song Title'), split and retry with parsed track
-      if (rawTitle.includes(' - ')) {
-        const parts = rawTitle.split(' - ');
-        const candidateTitle = cleanTitleForLyrics(parts[parts.length - 1].trim());
-        const candidateArtist = cleanArtistForLyrics(parts[0].trim());
-        if (candidateTitle && candidateTitle.toLowerCase() !== (track.song || '').toLowerCase()) {
-          log('Retrying lyrics search with parsed hyphen title/artist:', candidateTitle, candidateArtist);
-          const fallbackTrack = { ...track, song: candidateTitle, artist: candidateArtist || track.artist };
-          const fbJobs = [];
-          const addFb = (key, fn) => { if (providerSettings[key] && !excludeKeys.has(key)) fbJobs.push(fn(fallbackTrack)); };
-          addFb('lrcred', fromLrcRed);
-          addFb('lyricsplus', fromLyricsPlus);
-          addFb('paxsenix', fromPaxsenix);
-          addFb('betterlyrics', fromBetterLyrics);
-          addFb('lrclib', fromLrclib);
-          addFb('musixmatch', fromMusixmatch);
-          addFb('binilyrics', fromBiniLyrics);
-          addFb('genius', fromGenius);
-          if (fbJobs.length) {
-            best = await raceProviders(fbJobs, onUpdate);
-          }
-        }
-      }
-      // 2. If still no lyrics, search title-only on LRCLIB, Paxsenix, and Genius (fixes remix/channel uploads)
-      if (!best && track.artist) {
-        log('Retrying lyrics search title-only for:', track.song);
-        const titleOnlyTrack = { ...track, artist: '' };
-        const titleJobs = [];
-        if (providerSettings.lrclib && !excludeKeys.has('lrclib')) titleJobs.push(fromLrclib(titleOnlyTrack));
-        if (providerSettings.paxsenix && !excludeKeys.has('paxsenix')) titleJobs.push(fromPaxsenix(titleOnlyTrack));
-        if (providerSettings.genius && !excludeKeys.has('genius')) titleJobs.push(fromGenius(titleOnlyTrack));
-        if (titleJobs.length) {
-          best = await raceProviders(titleJobs, onUpdate);
-        }
-      }
-    }
-
+    if (!best) best = await window.__viviPlus?.lyrics?.fallback(rawTrack, track, excludeKeys, onUpdate); // vivi+ hook
     // Nothing from any other provider: Spotify on its own.
     if (!best && spotifyOn) {
       log('no result from other providers, trying Spotify');
@@ -1331,5 +1135,6 @@
     return best;
   }
 
-  window.__viviLyrics = { cleanTitleForLyrics, cleanArtistForLyrics, fetchBestLyrics, parseTTML, parseLRC, parseEnhancedLRC, parseQRC, parsePlain, providerKeyForName };
+  window.__viviLyrics = { fetchBestLyrics, parseTTML, parseLRC, parseEnhancedLRC, parseQRC, parsePlain, providerKeyForName };
+  window.__viviPlus?.lyrics?.bind({ log, withTimeout, FETCH_TIMEOUT, checkTiming, parseTTML, parsePlain, buildWordsFromParts, repairTimings, raceProviders, fromLrcRed, fromBetterLyrics, fromLrclib, fromMusixmatch, fromBiniLyrics, providerSettings: () => providerSettings }); // vivi+ hook
 })();

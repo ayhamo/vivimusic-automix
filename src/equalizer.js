@@ -65,8 +65,6 @@
   let sourceNode = null;
   let lowShelf = null;
   let xfGate = null;
-  let xfBassFilter = null;
-  let xfHighFilter = null, xfHighpass = null, xfLowpass = null;
   let midPeak = null;
   let highShelf = null;
   let dryGain = null;
@@ -163,23 +161,8 @@
       // Crossfade gate: a plain gain stage between the element and the EQ.
       // It sits at 1.0 (transparent) unless crossfade.js is mid-transition.
       xfGate = audioCtx.createGain();
-      xfBassFilter = audioCtx.createBiquadFilter();
-      xfBassFilter.type = 'lowshelf';
-      xfBassFilter.frequency.value = 250;
-      xfBassFilter.gain.value = 0;
-      // Automix (BitChord's deck): high-shelf cross, and the filter mix's
-      // high- and low-pass. All flat / open unless a blend is running.
-      xfHighFilter = new BiquadFilterNode(audioCtx, { type: 'highshelf', frequency: 4000, gain: 0 });
-      // at rest exactly transparent: Web Audio's high-pass at 0 Hz and low-pass at Nyquist pass the
-      // samples through unchanged (20 Hz / 20 kHz were still filters, on every song)
-      xfHighpass = new BiquadFilterNode(audioCtx, { type: 'highpass', frequency: 0, Q: 0.7 });
-      xfLowpass = new BiquadFilterNode(audioCtx, { type: 'lowpass', frequency: audioCtx.sampleRate / 2, Q: 0.7 });
       sourceNode.connect(xfGate);
-      xfGate.connect(xfBassFilter);
-      xfBassFilter.connect(xfHighFilter);
-      xfHighFilter.connect(xfHighpass);
-      xfHighpass.connect(xfLowpass);
-      xfLowpass.connect(lowShelf);
+      (window.__viviEqPlus?.chain(audioCtx, xfGate) || xfGate).connect(lowShelf); // vivi+ hook: Automix filters
       lowShelf.connect(midPeak);
       midPeak.connect(highShelf);
 
@@ -201,7 +184,8 @@
 
       boundVideo = video;
       // Shared handle so crossfade.js can feed the same processing chain.
-      window.__viviAudioGraph = { ctx: audioCtx, video, source: sourceNode, gate: xfGate, bassFilter: xfBassFilter, highFilter: xfHighFilter, highpass: xfHighpass, lowpass: xfLowpass, entry: lowShelf, mix: masterGain, out: compressor };   // (mix: before the safety compressor, out: what the graph plays; for tests)
+      window.__viviAudioGraph = { ctx: audioCtx, video, source: sourceNode, gate: xfGate, entry: lowShelf };
+      window.__viviEqPlus?.publish(window.__viviAudioGraph, masterGain, compressor); // vivi+ hook
       applySettingsToGraph();
       return true;
     } catch (e) {

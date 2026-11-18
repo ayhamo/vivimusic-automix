@@ -25,85 +25,12 @@ let spotifyClientInfo = null;
 function spotifyJsonError(msg) { return { ok: false, error: msg }; }
 
 async function getSpDc() {
-  const { spotifySpDc, spotifyDisconnected } = await chrome.storage.local.get(['spotifySpDc', 'spotifyDisconnected']);
+  const { spotifySpDc } = await chrome.storage.local.get('spotifySpDc');
   if (spotifySpDc) return spotifySpDc;
-  // After "Disconnect" the browser's own Spotify login is left alone, so do
-  // not pick it up again until the user presses Connect.
-  if (spotifyDisconnected) return null;
-
-  // Upstream's plain lookup first: the normal first-party login cookie.
   try {
     const c = await chrome.cookies.get({ url: SPOTIFY_HOME, name: 'sp_dc' });
-    if (c?.value) {
-      await chrome.storage.local.set({ spotifySpDc: c.value });
-      return c.value;
-    }
-  } catch {}
-
-  try {
-    const stores = await chrome.cookies.getAllCookieStores().catch(() => [{ id: null }]);
-    const storeIds = [null, ...stores.map(s => s.id).filter(Boolean)];
-
-    for (const storeId of storeIds) {
-      const storeOpt = storeId ? { storeId } : {};
-      const queries = [
-        { name: 'sp_dc', ...storeOpt, partitionKey: {}, firstPartyDomain: null },
-        { name: 'sp_dc', ...storeOpt, firstPartyDomain: null },
-        { name: 'sp_dc', ...storeOpt, partitionKey: {} },
-        { name: 'sp_dc', ...storeOpt },
-        { domain: 'spotify.com', name: 'sp_dc', ...storeOpt },
-        { domain: '.spotify.com', name: 'sp_dc', ...storeOpt },
-        { url: 'https://open.spotify.com/', name: 'sp_dc', ...storeOpt },
-        { url: 'https://spotify.com/', name: 'sp_dc', ...storeOpt },
-        { url: 'https://accounts.spotify.com/', name: 'sp_dc', ...storeOpt }
-      ];
-
-      for (const q of queries) {
-        try {
-          let results;
-          if (q.url) {
-            const single = await chrome.cookies.get(q).catch(() => null);
-            results = single ? [single] : [];
-          } else {
-            results = await chrome.cookies.getAll(q).catch(() => []);
-          }
-          for (const c of results) {
-            if (c && c.name === 'sp_dc' && c.value) {
-              const val = String(c.value).trim();
-              if (val) {
-                await chrome.storage.local.set({ spotifySpDc: val });
-                return val;
-              }
-            }
-          }
-        } catch {}
-      }
-    }
-
-    // Direct check of open Spotify tabs
-    try {
-      const tabs = await chrome.tabs.query({ url: '*://*.spotify.com/*' });
-      for (const tab of tabs) {
-        if (tab.cookieStoreId) {
-          const cks = await chrome.cookies.getAll({ name: 'sp_dc', storeId: tab.cookieStoreId }).catch(() => []);
-          for (const c of cks) {
-            if (c && c.name === 'sp_dc' && c.value) {
-              const val = String(c.value).trim();
-              if (val) {
-                await chrome.storage.local.set({ spotifySpDc: val });
-                return val;
-              }
-            }
-          }
-        }
-      }
-    } catch {}
-
-    return null;
-  } catch (e) {
-    console.warn('[Vivi Spotify] Error getting sp_dc:', e);
-    return null;
-  }
+    return c?.value || null;
+  } catch { return null; }
 }
 
 async function setSpDc(value) {
@@ -111,11 +38,7 @@ async function setSpDc(value) {
   if (!value) throw new Error('Empty sp_dc');
   // Keep a local copy and also install it as the Spotify web-player cookie so
   // extension fetch() requests can authenticate with credentials: include.
-  await chrome.storage.local.set({ spotifySpDc: value, spotifyDisconnected: false });
-  // Only install the cookie when the browser does not already have this
-  // login: rewriting it would turn a remembered login into a session cookie.
-  const existing = await chrome.cookies.get({ url: SPOTIFY_HOME, name: 'sp_dc' }).catch(() => null);
-  if (existing?.value === value) return;
+  await chrome.storage.local.set({ spotifySpDc: value });
   await chrome.cookies.set({
     url: SPOTIFY_HOME,
     name: 'sp_dc',
@@ -124,23 +47,15 @@ async function setSpDc(value) {
     path: '/',
     secure: true,
     httpOnly: true,
-    sameSite: 'lax',
-    expirationDate: Math.floor(Date.now() / 1000) + 365 * 24 * 3600,
+    sameSite: 'lax'
   });
 }
 
 async function getSecretDict() {
   if (spotifySecretCache) return spotifySecretCache;
-  try {
-    const r = await fetch(SPOTIFY_SECRET_URL, { cache: 'no-store' });
-    if (r.ok) {
-      spotifySecretCache = await r.json();
-      return spotifySecretCache;
-    }
-  } catch {}
-  spotifySecretCache = {
-    '12': [107, 81, 49, 57, 67, 93, 87, 81, 69, 67, 40, 93, 48, 50, 46, 91, 94, 113, 41, 47]
-  };
+  const r = await fetch(SPOTIFY_SECRET_URL, { cache: 'no-store' });
+  if (!r.ok) throw new Error(`TOTP secret source returned ${r.status}`);
+  spotifySecretCache = await r.json();
   return spotifySecretCache;
 }
 
@@ -582,59 +497,26 @@ async function spotifyStatus() {
 }
 
 async function spotifyConnectFromBrowser() {
-  // Read the browser's current login, not an older saved copy.
-  spotifyTokenCache = null;
-  await chrome.storage.local.remove('spotifySpDc');
-  await chrome.storage.local.set({ spotifyDisconnected: false });
-  // Without the Spotify host permission Firefox hides the cookie entirely.
-  try {
-    const allowed = await chrome.permissions.contains({ origins: ['https://open.spotify.com/*'] });
-    if (!allowed) {
-      console.warn('[Vivi Spotify] no host permission for open.spotify.com');
-      return spotifyJsonError('Vivimusic Web is not allowed to access Spotify. Allow it in about:addons → Vivimusic Web+ → Permissions, then press Connect again.');
-    }
-  } catch {}
-  // 1. First, check if sp_dc is ALREADY available right now in browser cookies!
-  const existingSpDc = await getSpDc();
-  if (existingSpDc) {
-    await setSpDc(existingSpDc);
-    return { ok: true };
-  }
-
-  // 2. If not found, focus existing Spotify tab or open open.spotify.com
-  let tab;
-  try {
-    const tabs = await chrome.tabs.query({ url: '*://*.spotify.com/*' });
-    if (tabs.length > 0) {
-      tab = tabs[0];
-      await chrome.tabs.update(tab.id, { active: true });
-    } else {
-      tab = await chrome.tabs.create({ url: SPOTIFY_HOME, active: true });
-    }
-  } catch {
-    tab = await chrome.tabs.create({ url: SPOTIFY_HOME, active: true });
-  }
-
-  // 3. Poll for cookie for up to 120 seconds
+  // Open Spotify so the user can authenticate normally. We never collect a password.
+  const tab = await chrome.tabs.create({ url: SPOTIFY_HOME, active: true });
+  // Poll the cookie store until the user has logged in.
   const deadline = Date.now() + 120000;
   while (Date.now() < deadline) {
-    await new Promise(r => setTimeout(r, 1200));
-    const val = await getSpDc();
-    if (val) {
-      await setSpDc(val);
+    await new Promise(r => setTimeout(r, 1500));
+    const c = await chrome.cookies.get({ url: SPOTIFY_HOME, name: 'sp_dc' });
+    if (c?.value) {
+      await setSpDc(c.value);
       return { ok: true };
     }
   }
-  return spotifyJsonError('No sp_dc cookie detected. Log in to Spotify in the opened tab and try again.');
+  return spotifyJsonError('No sp_dc cookie detected. Finish logging in to Spotify and try again.');
 }
 
 async function clearSpotify() {
   spotifyTokenCache = null;
   spotifyClientTokenCache = null;
-  // Forget the session here only. Removing the browser's sp_dc cookie (as
-  // before) logged the user out of open.spotify.com as well.
   await chrome.storage.local.remove(['spotifySpDc']);
-  await chrome.storage.local.set({ spotifyDisconnected: true });
+  try { await chrome.cookies.remove({ url: SPOTIFY_HOME, name: 'sp_dc' }); } catch {}
   return { ok: true };
 }
 

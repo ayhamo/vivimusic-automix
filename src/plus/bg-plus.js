@@ -111,11 +111,28 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   }
 });
 
+// Inject / remove theme.css for the sending tab (VIVI_THEME_CSS, from content.js).
+// Done from here (not with a <link> in the page) so the browser's page-side
+// extension-URL check is never involved.
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg?.type !== 'VIVI_THEME_CSS') return undefined;
+  if (!sender?.tab?.id) { sendResponse({ ok: false }); return undefined; }
+  const target = { tabId: sender.tab.id, frameIds: [sender.frameId || 0] };
+  const files = ['src/theme.css'];
+  const job = msg.on
+    ? chrome.scripting.insertCSS({ target, files })
+    : chrome.scripting.removeCSS({ target, files });
+  Promise.resolve(job)
+    .then(() => sendResponse({ ok: true }))
+    .catch((e) => sendResponse({ ok: false, error: String(e?.message || e) }));
+  return true;
+});
+
 // Inject / remove our theme additions (theme-plus.css) for the sending tab,
 // next to upstream's theme.css.
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  // Upstream's own listener (background.js, registered first) adds theme.css and
-  // answers; this one only adds our additions after it, without answering.
+  // The listener above (registered first) adds theme.css and answers; this one
+  // only adds our additions after it, without answering.
   if (msg?.type !== 'VIVI_THEME_CSS' || !sender?.tab?.id) return undefined;
   const target = { tabId: sender.tab.id, frameIds: [sender.frameId || 0] };
   const files = ['src/plus/theme-plus.css'];
@@ -376,3 +393,457 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   }
   return undefined;
 });
+
+/* ── Our versions of upstream background functions ─────────────────────────
+ * background.js, spotify.js and apple-canvas.js are upstream's files, unchanged
+ * apart from a few `// vivi+ hook` lines. All background scripts share one global
+ * scope (Firefox: background.scripts; Chrome: importScripts), and upstream calls
+ * these functions by name at call time, so reassigning them here replaces them.
+ * Nothing calls them before this file has loaded, except background.js's
+ * top-level ensureAmpHeaderSpoofRule() (see below).
+ */
+
+// ── background.js: no DNR in the Firefox build (fx-headers.js spoofs the headers) ──
+// background.js's own top-level call runs before this file in Firefox; there upstream's
+// try/catch just logs one console.debug line ("Could not register AMP header-spoof rule").
+{
+  const upstreamAmpRule = ensureAmpHeaderSpoofRule;
+  ensureAmpHeaderSpoofRule = async function ensureAmpHeaderSpoofRule() {
+    if (!chrome.declarativeNetRequest?.updateSessionRules) return; // Firefox build: handled by fx-headers.js (webRequest)
+    return upstreamAmpRule();
+  };
+}
+
+// ── background.js: update check against this fork's releases ──
+{
+  // This fork's own releases (the repo is private: an unauthenticated check gets a 404).
+  const REPO = 'ayhamo/vivimusic-automix';
+  const RELEASES_API = `https://api.github.com/repos/${REPO}/releases/latest`;
+  const RELEASES_PAGE = `https://github.com/${REPO}/releases/latest`;
+  checkForUpdate = async function checkForUpdate() {
+    const currentVersion = chrome.runtime.getManifest().version;
+    let result;
+    try {
+      const res = await fetch(RELEASES_API, {
+        headers: { Accept: 'application/vnd.github+json' },
+      });
+      if (res.status === 404) throw new Error('the fork repo is private, open its releases page while signed in to GitHub');
+      if (!res.ok) throw new Error(`GitHub API ${res.status}`);
+      const data = await res.json();
+      // Fork release titles read "Vivimusic Web+ 10.2.0.12 (upstream …)"; the tag
+      // (fork-v10.2.0-amo10.2.0-<sha>) carries upstream's version, not ours.
+      const latestVersion = (String(data.name || '').match(/\d+(?:\.\d+)+/) || [data.tag_name || ''])[0];
+      const updateAvailable = latestVersion ? isNewer(latestVersion, currentVersion) : false;
+      const releaseUrl = data.html_url || RELEASES_PAGE, source = 'github';   // Vivimusic Web+: our releases, not AMO's listing
+      result = {
+        ok: true,
+        currentVersion,
+        latestVersion: latestVersion.replace(/^v/i, ''),
+        updateAvailable,
+        releaseUrl,
+        source,
+        checkedAt: Date.now(),
+      };
+    } catch (e) {
+      result = {
+        ok: false,
+        currentVersion,
+        error: e.message,
+        releaseUrl: RELEASES_PAGE,
+        checkedAt: Date.now(),
+      };
+    }
+
+    await chrome.storage.local.set({ vivi_update_check: result });
+
+    if (result.ok && result.updateAvailable) {
+      chrome.action.setBadgeText({ text: '1' });
+      chrome.action.setBadgeBackgroundColor({ color: '#5b6cf5' });
+    } else {
+      chrome.action.setBadgeText({ text: '' });
+    }
+
+    return result;
+  };
+}
+
+// ── background.js: keep the event page alive during long background work ──
+{
+  const upstreamLastfmWebPoll = lastfmWebPoll;
+  lastfmWebPoll = function lastfmWebPoll() {
+    if (lastfmWebPolling) return upstreamLastfmWebPoll();
+    const stopKA = viviKeepAlive();
+    return upstreamLastfmWebPoll().finally(stopKA);
+  };
+}
+// Used by the hook in background.js's VIVI_YTM_TRANSFER case: keeps the event page
+// alive until that case answers.
+function viviKeepAliveUntilReply(sendResponse) {
+  const stopKA = viviKeepAlive();
+  return (response) => { stopKA(); sendResponse(response); };
+}
+
+// ── spotify.js: login via the browser's own Spotify cookie (any cookie store),
+// a remembered Disconnect, the TOTP secret fallback, keep-alive while connecting ──
+getSpDc = async function getSpDc() {
+  const { spotifySpDc, spotifyDisconnected } = await chrome.storage.local.get(['spotifySpDc', 'spotifyDisconnected']);
+  if (spotifySpDc) return spotifySpDc;
+  // After "Disconnect" the browser's own Spotify login is left alone, so do
+  // not pick it up again until the user presses Connect.
+  if (spotifyDisconnected) return null;
+
+  // Upstream's plain lookup first: the normal first-party login cookie.
+  try {
+    const c = await chrome.cookies.get({ url: SPOTIFY_HOME, name: 'sp_dc' });
+    if (c?.value) {
+      await chrome.storage.local.set({ spotifySpDc: c.value });
+      return c.value;
+    }
+  } catch {}
+
+  try {
+    const stores = await chrome.cookies.getAllCookieStores().catch(() => [{ id: null }]);
+    const storeIds = [null, ...stores.map(s => s.id).filter(Boolean)];
+
+    for (const storeId of storeIds) {
+      const storeOpt = storeId ? { storeId } : {};
+      const queries = [
+        { name: 'sp_dc', ...storeOpt, partitionKey: {}, firstPartyDomain: null },
+        { name: 'sp_dc', ...storeOpt, firstPartyDomain: null },
+        { name: 'sp_dc', ...storeOpt, partitionKey: {} },
+        { name: 'sp_dc', ...storeOpt },
+        { domain: 'spotify.com', name: 'sp_dc', ...storeOpt },
+        { domain: '.spotify.com', name: 'sp_dc', ...storeOpt },
+        { url: 'https://open.spotify.com/', name: 'sp_dc', ...storeOpt },
+        { url: 'https://spotify.com/', name: 'sp_dc', ...storeOpt },
+        { url: 'https://accounts.spotify.com/', name: 'sp_dc', ...storeOpt }
+      ];
+
+      for (const q of queries) {
+        try {
+          let results;
+          if (q.url) {
+            const single = await chrome.cookies.get(q).catch(() => null);
+            results = single ? [single] : [];
+          } else {
+            results = await chrome.cookies.getAll(q).catch(() => []);
+          }
+          for (const c of results) {
+            if (c && c.name === 'sp_dc' && c.value) {
+              const val = String(c.value).trim();
+              if (val) {
+                await chrome.storage.local.set({ spotifySpDc: val });
+                return val;
+              }
+            }
+          }
+        } catch {}
+      }
+    }
+
+    // Direct check of open Spotify tabs
+    try {
+      const tabs = await chrome.tabs.query({ url: '*://*.spotify.com/*' });
+      for (const tab of tabs) {
+        if (tab.cookieStoreId) {
+          const cks = await chrome.cookies.getAll({ name: 'sp_dc', storeId: tab.cookieStoreId }).catch(() => []);
+          for (const c of cks) {
+            if (c && c.name === 'sp_dc' && c.value) {
+              const val = String(c.value).trim();
+              if (val) {
+                await chrome.storage.local.set({ spotifySpDc: val });
+                return val;
+              }
+            }
+          }
+        }
+      }
+    } catch {}
+
+    return null;
+  } catch (e) {
+    console.warn('[Vivi Spotify] Error getting sp_dc:', e);
+    return null;
+  }
+};
+
+setSpDc = async function setSpDc(value) {
+  value = String(value || '').trim();
+  if (!value) throw new Error('Empty sp_dc');
+  // Keep a local copy and also install it as the Spotify web-player cookie so
+  // extension fetch() requests can authenticate with credentials: include.
+  await chrome.storage.local.set({ spotifySpDc: value, spotifyDisconnected: false });
+  // Only install the cookie when the browser does not already have this
+  // login: rewriting it would turn a remembered login into a session cookie.
+  const existing = await chrome.cookies.get({ url: SPOTIFY_HOME, name: 'sp_dc' }).catch(() => null);
+  if (existing?.value === value) return;
+  await chrome.cookies.set({
+    url: SPOTIFY_HOME,
+    name: 'sp_dc',
+    value,
+    domain: '.spotify.com',
+    path: '/',
+    secure: true,
+    httpOnly: true,
+    sameSite: 'lax',
+    expirationDate: Math.floor(Date.now() / 1000) + 365 * 24 * 3600,
+  });
+};
+
+getSecretDict = async function getSecretDict() {
+  if (spotifySecretCache) return spotifySecretCache;
+  try {
+    const r = await fetch(SPOTIFY_SECRET_URL, { cache: 'no-store' });
+    if (r.ok) {
+      spotifySecretCache = await r.json();
+      return spotifySecretCache;
+    }
+  } catch {}
+  spotifySecretCache = {
+    '12': [107, 81, 49, 57, 67, 93, 87, 81, 69, 67, 40, 93, 48, 50, 46, 91, 94, 113, 41, 47]
+  };
+  return spotifySecretCache;
+};
+
+{
+  const connect = async function spotifyConnectFromBrowser() {
+    // Read the browser's current login, not an older saved copy.
+    spotifyTokenCache = null;
+    await chrome.storage.local.remove('spotifySpDc');
+    await chrome.storage.local.set({ spotifyDisconnected: false });
+    // Without the Spotify host permission Firefox hides the cookie entirely.
+    try {
+      const allowed = await chrome.permissions.contains({ origins: ['https://open.spotify.com/*'] });
+      if (!allowed) {
+        console.warn('[Vivi Spotify] no host permission for open.spotify.com');
+        return spotifyJsonError('Vivimusic Web is not allowed to access Spotify. Allow it in about:addons → Vivimusic Web+ → Permissions, then press Connect again.');
+      }
+    } catch {}
+    // 1. First, check if sp_dc is ALREADY available right now in browser cookies!
+    const existingSpDc = await getSpDc();
+    if (existingSpDc) {
+      await setSpDc(existingSpDc);
+      return { ok: true };
+    }
+
+    // 2. If not found, focus existing Spotify tab or open open.spotify.com
+    let tab;
+    try {
+      const tabs = await chrome.tabs.query({ url: '*://*.spotify.com/*' });
+      if (tabs.length > 0) {
+        tab = tabs[0];
+        await chrome.tabs.update(tab.id, { active: true });
+      } else {
+        tab = await chrome.tabs.create({ url: SPOTIFY_HOME, active: true });
+      }
+    } catch {
+      tab = await chrome.tabs.create({ url: SPOTIFY_HOME, active: true });
+    }
+
+    // 3. Poll for cookie for up to 120 seconds
+    const deadline = Date.now() + 120000;
+    while (Date.now() < deadline) {
+      await new Promise(r => setTimeout(r, 1200));
+      const val = await getSpDc();
+      if (val) {
+        await setSpDc(val);
+        return { ok: true };
+      }
+    }
+    return spotifyJsonError('No sp_dc cookie detected. Log in to Spotify in the opened tab and try again.');
+  };
+  spotifyConnectFromBrowser = function spotifyConnectFromBrowser() { return viviWithKeepAlive(connect); };
+}
+
+clearSpotify = async function clearSpotify() {
+  spotifyTokenCache = null;
+  spotifyClientTokenCache = null;
+  // Forget the session here only. Removing the browser's sp_dc cookie (as
+  // before) logged the user out of open.spotify.com as well.
+  await chrome.storage.local.remove(['spotifySpDc']);
+  await chrome.storage.local.set({ spotifyDisconnected: true });
+  return { ok: true };
+};
+
+// ── apple-canvas.js (ported from BitChord's AppleMusicCanvas.kt) ──
+//  - the web player's own JWT is scraped from music.apple.com's bundles,
+//    picked by its kid/iss, not just the first JWT that parses;
+//  - the last good one is saved in storage as the backup for when a scrape
+//    fails, until it expires (no baked-in token, those die within weeks);
+//  - a 401 strikes the token off (never picked again), re-scrapes and retries
+//    the request once; a failed scrape waits 30 min before the next try;
+//  - motion art: the square clip first, an alternate to retry with, the 3:4 one
+//    for portrait, older key names too; the browser's storefront; a failed
+//    lookup is reported and not cached as "no Canvas".
+// Upstream's search/scoring (searchAndFetchMotion, fetchMotionArtwork) stays in use.
+{
+  const APPLE_TOKEN_BACKUP_KEY = 'viviAppleTokenBackup';
+  const APPLE_TOKEN_RETRY_MS = 30 * 60 * 1000;
+  let ampScrapeRetryAt = 0;
+  const rejectedAmpTokens = new Set();
+
+  function jwtExpiryMs(jwt) {
+    try {
+      const payload = JSON.parse(base64UrlDecode(jwt.split('.')[1]));
+      return payload && payload.exp ? payload.exp * 1000 : null;
+    } catch { return null; }
+  }
+
+  // The web player's token names itself: header kid "WebPlayKid", payload iss "AMPWebPlay".
+  function isWebPlayerToken(jwt) {
+    try {
+      const [h, p] = jwt.split('.');
+      return base64UrlDecode(h).includes('WebPlayKid') || base64UrlDecode(p).includes('AMPWebPlay');
+    } catch { return false; }
+  }
+
+  async function useBackupAmpToken(now) {
+    try {
+      const { [APPLE_TOKEN_BACKUP_KEY]: b } = await chrome.storage.local.get(APPLE_TOKEN_BACKUP_KEY);
+      if (b?.jwt && b.exp - 60_000 > now && !rejectedAmpTokens.has(b.jwt)) {
+        cachedAmpToken = b.jwt;
+        ampTokenExpiryMs = b.exp;
+        return b.jwt;
+      }
+    } catch { /* storage unavailable */ }
+    return null;
+  }
+
+  async function scrapeAmpToken(now) {
+    const htmlRes = await fetch('https://music.apple.com/us/browse');
+    const html = await htmlRes.text();
+    const scripts = [...new Set(html.match(/\/assets\/index(?:-legacy)?[~-][a-zA-Z0-9_-]+\.js/g) || [])];
+    for (const scriptPath of scripts) {
+      let scriptText;
+      try {
+        scriptText = await (await fetch(`https://music.apple.com${scriptPath}`)).text();
+      } catch { continue; }
+      const candidates = [...new Set(scriptText.match(/ey[a-zA-Z0-9_-]+\.ey[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+/g) || [])]
+        .filter((t) => !rejectedAmpTokens.has(t))
+        .map((t) => ({ t, exp: jwtExpiryMs(t) }))
+        .filter((c) => c.exp && c.exp > now);
+      if (!candidates.length) continue;
+      // The web player's own token first; any other is a guess, kept so a change
+      // in how Apple labels it is not fatal.
+      return candidates.find((c) => isWebPlayerToken(c.t)) || candidates[0];
+    }
+    return null;
+  }
+
+  getOrFetchAmpToken = async function getOrFetchAmpToken() {
+    const now = Date.now();
+    if (cachedAmpToken && now < ampTokenExpiryMs - 60_000) return cachedAmpToken;
+    if (now < ampScrapeRetryAt) return useBackupAmpToken(now);
+
+    let found = null;
+    try { found = await scrapeAmpToken(now); } catch { /* network hiccup */ }
+    if (found) {
+      cachedAmpToken = found.t;
+      ampTokenExpiryMs = found.exp;
+      try { await chrome.storage.local.set({ [APPLE_TOKEN_BACKUP_KEY]: { jwt: found.t, exp: found.exp } }); } catch { /* ignore */ }
+      return found.t;
+    }
+    console.warn('[Vivi Apple] no usable web player token found; retrying in 30 min, using the saved one meanwhile');
+    ampScrapeRetryAt = now + APPLE_TOKEN_RETRY_MS;
+    return useBackupAmpToken(now);
+  };
+
+  async function rejectAmpToken(token) {
+    rejectedAmpTokens.add(token);
+    if (cachedAmpToken === token) { cachedAmpToken = null; ampTokenExpiryMs = 0; }
+    ampScrapeRetryAt = 0;   // a rejected token is worth an immediate re-scrape
+    try {
+      const { [APPLE_TOKEN_BACKUP_KEY]: b } = await chrome.storage.local.get(APPLE_TOKEN_BACKUP_KEY);
+      if (b?.jwt === token) await chrome.storage.local.remove(APPLE_TOKEN_BACKUP_KEY);
+    } catch { /* ignore */ }
+  }
+
+  // Throws on network errors, a missing token and a 401 that a fresh token did
+  // not fix, so callers report a failed lookup instead of caching "no Canvas".
+  ampGet = async function ampGet(path, params, retried = false) {
+    const token = await getOrFetchAmpToken();
+    if (!token) throw new Error('no Apple Music token');
+    const url = new URL(AMP_BASE_URL + path);
+    for (const [k, v] of Object.entries(params || {})) {
+      if (v !== undefined && v !== null && v !== '') url.searchParams.set(k, String(v));
+    }
+    // Origin/Referer are rewritten to music.apple.com's by fx-headers.js.
+    const res = await fetch(url.toString(), { headers: { Authorization: `Bearer ${token}` } });
+    if (res.status === 401) {
+      console.warn('[Vivi Apple] token rejected by the catalog API; re-scraping');
+      await rejectAmpToken(token);
+      if (retried) throw new Error('Apple Music token rejected');
+      return ampGet(path, params, true);
+    }
+    if (!res.ok) return null;
+    try {
+      return await res.json();
+    } catch {
+      return null;
+    }
+  };
+
+  // Apple's motion-artwork payload can carry the actual media URL under any of
+  // a few keys depending on the asset's shape (segmented HLS or a plain file),
+  // and older payloads use motionSquareVideo1x1 / motionTallVideo3x4.
+  function motionLink(ev, key) {
+    const asset = ev?.[key];
+    const v = asset && (asset.video || asset.videoUrl || asset.hlsUrl || asset.url);
+    return v || null;
+  }
+  // { primary, alternate, tall }: the square clip first (fills a square cover
+  // uncropped), a different one to retry with when it won't play, and the 3:4
+  // one for portrait surfaces.
+  function motionUrls(ev) {
+    const square = motionLink(ev, 'motionDetailSquare') || motionLink(ev, 'motionSquareVideo1x1');
+    const raw = motionLink(ev, 'motionDetailRaw');
+    const tall = motionLink(ev, 'motionDetailTall') || motionLink(ev, 'motionTallVideo3x4');
+    const primary = square || raw || tall || motionLink(ev, 'motionDetailStatic');
+    if (!primary) return null;
+    const alternate = [square, raw, tall].find((u) => u && u !== primary) || null;
+    return { primary, alternate, tall };
+  }
+
+  // Upstream's search calls extractEditorialVideoUrl(ev, false) for the clip and
+  // (ev, true) for the tall one; the alternate rides along here, keyed by the clip.
+  const motionAltByPrimary = new Map();
+  extractEditorialVideoUrl = function extractEditorialVideoUrl(ev, preferTall) {
+    const m = motionUrls(ev);
+    if (!m) return null;
+    motionAltByPrimary.delete(m.primary);
+    motionAltByPrimary.set(m.primary, m.alternate);
+    if (motionAltByPrimary.size > 200) motionAltByPrimary.delete(motionAltByPrimary.keys().next().value);
+    return preferTall ? m.tall : m.primary;
+  };
+
+  // Motion art is per storefront: use the browser's region (en-GB -> gb), else us.
+  function defaultStorefront() {
+    try {
+      const region = new Intl.Locale(navigator.language).maximize().region;
+      if (region && /^[A-Z]{2}$/.test(region)) return region.toLowerCase();
+    } catch { /* ignore */ }
+    return 'us';
+  }
+
+  resolveAppleCanvasDirect = async function resolveAppleCanvasDirect(track, storefront = defaultStorefront()) {
+    const { song, artist, album } = track || {};
+    if (!song || !artist) return null;
+
+    const key = cacheKey('song', song, artist, album || '', storefront);
+    const cached = canvasCache.get(key);
+    if (cached && cached.expiresAtMs > Date.now()) return cached.value;
+
+    let result = null;
+    try {
+      const motion = await searchAndFetchMotion(song, artist, album || null, storefront, 'songs');
+      if (motion) result = { videoUrl: motion.animated || null, fallbackUrl: motionAltByPrimary.get(motion.animated) || null, tallUrl: motion.animatedTall || null };
+    } catch (e) {
+      // A failed lookup (network, token) is not "this song has no Canvas":
+      // report it and keep it out of the cache so it is tried again.
+      return { videoUrl: null, error: String(e?.message || e) };
+    }
+
+    canvasCache.set(key, { value: result, expiresAtMs: Date.now() + CACHE_TTL_MS });
+    return result;
+  };
+}

@@ -16,6 +16,14 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DELETED_HERE = {'src/gate.js', 'src/gate.css', 'src/stargate.js', 'src/loader.js', 'src/favicon-main.js', 'icons/custom-logo-full.png', 'icons/custom-logo-icon.png', '.github/FUNDING.yml'}
+# files this fork rewrote: upstream's copy stays in the tree unchanged (so it merges cleanly) and the
+# manifest runs ours (manifest-plus.json "replace"); upstream's edits to it are ported by hand
+FORKED = {'src/crossfade.js': 'src/automix/crossfade.js', 'src/crossfade-page.js': 'src/automix/crossfade-page.js'}
+# upstream files whose functions src/plus/bg-plus.js replaces by reassigning them (copies of ours):
+# upstream's edits to those functions merge without a conflict and then do nothing, so look at them
+SHADOWED = {'src/spotify.js': 'getSpDc, setSpDc, getSecretDict, clearSpotify, spotifyConnectFromBrowser',
+            'src/apple-canvas.js': 'getOrFetchAmpToken, ampGet, extractEditorialVideoUrl, resolveAppleCanvasDirect',
+            'src/background.js': 'checkForUpdate, lastfmWebPoll, ensureAmpHeaderSpoofRule'}
 VERSION_LINE = re.compile(r'^\s*"version"\s*:')
 
 
@@ -50,6 +58,14 @@ def main():
     if len(sys.argv) < 2:
         sys.exit(__doc__)
     tag, commit = sys.argv[1], '--commit' in sys.argv
+    base = git('merge-base', 'HEAD', tag).stdout.strip()
+    changed = set(git('diff', '--name-only', base, tag).stdout.split())
+    for up, ours in FORKED.items():
+        if up in changed:
+            print(f'port by hand: upstream changed {up} (ours is {ours}); see git diff {base[:9]} {tag} -- {up}')
+    for up, names in SHADOWED.items():
+        if up in changed:
+            print(f'check by hand: upstream changed {up}; src/plus/bg-plus.js replaces {names}')
     r = git('merge', '--no-ff', '--no-commit', tag, check=False)
     print(r.stdout + r.stderr)
     unmerged = [p for p in git('diff', '--name-only', '--diff-filter=U').stdout.splitlines() if p]

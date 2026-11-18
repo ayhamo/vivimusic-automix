@@ -109,7 +109,7 @@
   header.after(home, settings, announcements, store);
 
   // ── Update notice ────────────────────────────────────────────────────────
-  // The background worker checks the Firefox store twice a day and stores the result in
+  // The background worker checks GitHub twice a day and stores the result in
   // vivi_update_check. If a newer version exists, show a red "1" on the
   // corner of the Updates card so users know to open it.
   const updatesCard = updatesCardRef;

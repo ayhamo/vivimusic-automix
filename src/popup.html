@@ -1418,6 +1418,16 @@
     .uh-btn:hover svg { transform: translateY(2px); }
     .update-hero:hover .uh-btn { transform: none; }
     .uh-btn:hover { transform: translateY(-2px) !important; }
+    button.uh-btn { width: 100%; border: 0; font-family: inherit; }
+    button.uh-btn:disabled { opacity: .65; cursor: default; transform: none !important; }
+    .uh-alt { display: block; margin-top: 8px; text-align: center; font-size: 10.5px; opacity: .7; color: inherit; text-decoration: underline; }
+    .uh-alt:hover { opacity: 1; }
+    .uh-bar { display: none; height: 4px; margin-top: 10px; border-radius: 99px; background: rgba(255,255,255,.22); overflow: hidden; }
+    .uh-bar.on { display: block; }
+    .uh-bar i { display: block; height: 100%; width: 0; border-radius: 99px; background: #fff; transition: width .2s ease; }
+    .uh-step { display: none; margin-top: 6px; font-size: 10.5px; text-align: center; opacity: .85; }
+    .uh-step.on { display: block; }
+    .uh-err { display: block; margin-top: 8px; font-size: 10.5px; line-height: 1.4; text-align: center; color: #ffb4b4; }
     .uh-note { display: block; margin-top: 10px; font-size: 10.5px; line-height: 1.4; opacity: .72; text-align: center; }
     .update-hero .uh-btn, .update-status .uh-btn { color: #111 !important; text-decoration: none !important; }
 
@@ -2143,6 +2153,19 @@
       <button class="update-btn" id="checkUpdateBtn">Check for updates</button>
     </div>
     <div class="update-status" id="updateStatus"></div>
+
+    <div class="row" style="margin-top:14px;">
+      <span class="row-label">Smoother Updates Process</span>
+      <label class="switch">
+        <input type="checkbox" id="smoothUpdatesToggle" checked/>
+        <span class="slider"></span>
+      </label>
+    </div>
+    <p class="theme-sub">Install updates with one click: Xten replaces its own files in the folder you loaded it from, then reloads. Off = download and Load unpacked manually.</p>
+    <div class="update-row" id="smoothFolderRow" style="margin-top:8px;">
+      <span class="update-version" id="smoothFolderState">—</span>
+      <button class="update-btn" id="smoothSetupBtn">Set up</button>
+    </div>
   </div>
 
   <div class="footer">

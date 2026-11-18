@@ -10,6 +10,7 @@
   const OFFSET_PANEL_ID = 'vivi-lyrics-offset-panel';
   const DEBUG      = false;
   const log        = (...a) => DEBUG && console.log('[Vivi:LyricsUI]', ...a);
+  const VP = window.__viviPlus.lyricsUi; // vivi+ hook (src/plus/lyrics-ui-plus.js)
   const OFFSET_DB_PFX  = 'vivi_lyrics_offset_';
   const OFFSET_STEP_MS = 100;
   const EXCLUDED_DB_PFX = 'vivi_lyrics_excluded_';
@@ -91,9 +92,9 @@
   }
 
   chrome.storage.local.get(
-    { lyricsEnabled: true, autoSwitchLyrics: true, lyricsShowForVideos: false, dancerOnNotFound: true, dancerForVideos: true, resourceSaverEnabled: false, lyricsAlign: 'center', lyricsAnimationStyle: 'apple', lyricsFont: 'default', lyricsRoman: 'off', lyricsRomanJa: true, lyricsRomanLangs: false },
+    { lyricsEnabled: true, autoSwitchLyrics: true, lyricsShowForVideos: false, dancerOnNotFound: true, dancerForVideos: true, resourceSaverEnabled: false, lyricsAlign: 'center', lyricsAnimationStyle: 'apple', lyricsFont: 'default', lyricsRoman: 'off', lyricsRomanJa: true, lyricsRomanLangs: false }, // vivi+ false, not null
     (s) => {
-      if (s) settings = s;
+      if (s) settings = s; // vivi+
       if (settings.lyricsAnimationStyle === 'fluidglow' || settings.lyricsAnimationStyle === 'spring') settings.lyricsAnimationStyle = 'fluid';
       applyLyricsStyleClasses();
     }
@@ -154,10 +155,10 @@
   });
 
   
-  // YT Music's tab order is fixed: Up next, Lyrics, (Comments), Related.
-  const TAB_POSITION = { lyrics: 1 };
+  // Resolves a tab by kind ('lyrics', 'comments', ...). Language handling
+  // lives in tab-locale.js (setting: Appearance → Language localization).
   function findTabByLabel(label) {
-    const tabs = [...document.querySelectorAll('ytmusic-player-page tp-yt-paper-tab, ytmusic-player-page yt-tab-shape')];
+    const tabs = document.querySelectorAll('ytmusic-player-page tp-yt-paper-tab, ytmusic-player-page yt-tab-shape');
     const T = window.__viviTabs;
     for (const tab of tabs) {
       if (T) {
@@ -166,12 +167,7 @@
         return tab;
       }
     }
-    // Starting the first song from a playlist, YT Music can draw the tab bar
-    // with every label still empty and fill the names in only later (seen in
-    // Firefox). Fall back to the tab's position while all labels are empty.
-    if (label in TAB_POSITION && tabs.length >= 3 && tabs.every((t) => !(t.textContent || '').trim())) {
-      return tabs[TAB_POSITION[label]] || null;
-    }
+    { const t = VP.tabByPosition(label, tabs); if (t) return t; } // vivi+ hook
     return null;
   }
 
@@ -207,26 +203,16 @@
   // at that moment can silently miss the "Lyrics" tab element entirely and,
   // unlike the render path, nothing else ever retries the click on its own.
   let lyricsTabRetryId = null;
-  // The user picking a tab themselves ends the wait for the Lyrics tab.
-  document.addEventListener('click', (e) => {
-    if (!e.isTrusted || !lyricsTabRetryId) return;
-    if (e.target?.closest?.('ytmusic-player-page tp-yt-paper-tab, ytmusic-player-page yt-tab-shape')) {
-      clearTimeout(lyricsTabRetryId);
-      lyricsTabRetryId = null;
-    }
-  }, true);
+  VP.onUserTabClick(() => { clearTimeout(lyricsTabRetryId); lyricsTabRetryId = null; }); // vivi+ hook
   function clickLyricsTabWithRetry(attemptsLeft) {
     if (lyricsTabRetryId) { clearTimeout(lyricsTabRetryId); lyricsTabRetryId = null; }
-    // ~15 s at 150 ms apart: after a page reload YT Music can open the player
-    // with an empty tab bar and only fill in Up next / Lyrics / Related
-    // seconds later, so a short wait gave up before the Lyrics tab existed.
-    if (attemptsLeft == null) attemptsLeft = 100;
+    if (attemptsLeft == null) attemptsLeft = 100; // vivi+ ~15s at 150ms apart: after a reload the tab bar can fill in seconds late
     const tab = findTabByLabel('lyrics');
     if (tab) {
       enableLyricsTabIfDisabled();
       if (tab.getAttribute('aria-selected') !== 'true' && !tab.hasAttribute('selected')) {
         tab.click();
-        log('auto-switched to Lyrics tab (attempt', 101 - attemptsLeft, ')');
+        log('auto-switched to Lyrics tab (attempt', 101 - attemptsLeft, ')'); // vivi+
       }
       return;
     }
@@ -360,22 +346,6 @@
     document.getElementById(INFO_BTN_ID)?.remove();
   }
 
-  // Circular-arrow "refresh" icon, used on the tab-bar button and on the
-  // "Refetch from other providers" button in the info panel.
-  function makeRefreshIcon() {
-    const NS = 'http://www.w3.org/2000/svg';
-    const svg = document.createElementNS(NS, 'svg');
-    svg.setAttribute('viewBox', '0 0 24 24');
-    svg.setAttribute('aria-hidden', 'true');
-    svg.setAttribute('class', 'vivi-refresh-icon');
-    ['M20 12a8 8 0 1 1-2.34-5.66L20 8', 'M20 3v5h-5'].forEach((d) => {
-      const path = document.createElementNS(NS, 'path');
-      path.setAttribute('d', d);
-      svg.appendChild(path);
-    });
-    return svg;
-  }
-
   function ensureInfoButton() {
     const tab = findTabByLabel('lyrics');
     const canShowOffset = settings.lyricsEnabled && !!(currentResult && !currentResult.videoBlocked && currentResult.provider);
@@ -406,26 +376,8 @@
         toggleOffsetPanel();
       });
 
-      // Refresh: same as "Refetch from other providers" in the info panel,
-      // one click away without opening it.
-      const refetch = document.createElement('button');
-      refetch.type = 'button';
-      refetch.className = 'vivi-lyrics-refetch-tab-btn';
-      refetch.setAttribute('aria-label', 'Refetch lyrics from other providers');
-      refetch.title = 'Refetch lyrics from other providers';
-      refetch.appendChild(makeRefreshIcon());
-      refetch.addEventListener('click', async (e) => {
-        e.stopPropagation();
-        e.preventDefault();
-        const found = await refetchFromOtherProviders();
-        if (found === false) {
-          // Nothing else had lyrics for this song: a short red flash.
-          refetch.classList.add('vivi-lyrics-refetch-none');
-          setTimeout(() => refetch.classList.remove('vivi-lyrics-refetch-none'), 1500);
-        }
-      });
-
-      wrap.append(refetch, btn); // refresh sits above the "i"
+      wrap.appendChild(btn);
+      wrap.prepend(VP.makeRefetchTabButton(refetchFromOtherProviders)); // vivi+ hook: refresh sits above the "i"
       tab.insertAdjacentElement('afterend', wrap);
     }
 
@@ -434,11 +386,7 @@
       btnEl.classList.toggle('vivi-lyrics-info-btn-active', offsetPanelOpen);
       btnEl.setAttribute('aria-expanded', offsetPanelOpen ? 'true' : 'false');
     }
-    const refetchEl = wrap.querySelector('.vivi-lyrics-refetch-tab-btn');
-    if (refetchEl) {
-      refetchEl.disabled = isRefetchingLyrics;
-      refetchEl.classList.toggle('vivi-lyrics-refetch-spinning', isRefetchingLyrics);
-    }
+    VP.syncRefetchTabButton(wrap, isRefetchingLyrics); // vivi+ hook
   }
 
   function seekTo(ms) {
@@ -789,7 +737,8 @@
     const refetchBtn = document.createElement('button');
     refetchBtn.type = 'button';
     refetchBtn.className = 'vivi-offset-refetch-btn';
-    refetchBtn.append(makeRefreshIcon(), document.createTextNode('Refetch from other providers'));
+    refetchBtn.textContent = 'Refetch from other providers';
+    refetchBtn.prepend(VP.makeRefreshIcon()); // vivi+ hook
     refetchBtn.disabled = isRefetchingLyrics;
     refetchBtn.classList.toggle('vivi-offset-refetch-btn-loading', isRefetchingLyrics);
     refetchBtn.addEventListener('click', (e) => {
@@ -816,19 +765,14 @@
   // actually been found and displayed — if nothing else is out there, the
   // existing lyrics are left alone rather than being replaced with nothing.
   async function refetchFromOtherProviders() {
-    // Returns true when other lyrics were found and shown, false when no other
-    // provider had any, undefined when a refetch could not start.
-    if (isRefetchingLyrics || !currentTrack || !currentResult || currentResult.videoBlocked) return undefined;
+    if (isRefetchingLyrics || !currentTrack || !currentResult || currentResult.videoBlocked) return;
     const currentKey = window.__viviLyrics.providerKeyForName(currentResult.provider);
-    if (!currentKey) return undefined;
+    if (!currentKey) return;
 
     isRefetchingLyrics = true;
     contentDirty = true;
     syncPanelVisibility();
-
-    // Re-read the song's length in case the first lookup got a wrong one.
-    const { vd, pb, ad } = readDurationSources();
-    if (!ad && (pb || vd)) currentTrack.duration = (vd && (!pb || Math.abs(vd - pb) <= 2)) ? vd : (pb || vd);
+    VP.recheckDuration(currentTrack); // vivi+ hook
 
     try {
       const alreadyExcluded = await loadExcludedProviders(currentTrack);
@@ -839,7 +783,7 @@
         // Nothing else out there — leave the current lyrics as-is and
         // don't persist the exclusion, so a future refetch (or a later
         // relisten once a provider catches up) can try again.
-        return false;
+        return false; // vivi+ the tab-bar refresh button flashes red
       }
 
       addExcludedProvider(currentTrack, currentKey);
@@ -847,10 +791,8 @@
       contentDirty = true;
       manualOffsetMs = await loadOffset(currentTrack, result.provider);
       savedOffsetMs = manualOffsetMs;
-      // Leave the info panel as it was: open when refetched from inside it,
-      // closed when refetched with the tab-bar refresh button.
+      // offsetPanelOpen = true; // vivi+ the info panel stays as it was
       syncPanelVisibility();
-      return true;
     } finally {
       isRefetchingLyrics = false;
       contentDirty = true;
@@ -971,13 +913,6 @@
   // Scripts where splitting into letters is safe. Joined scripts (Arabic, Indic,
   // Thai …) would lose their shaping, so those words keep the plain sweep.
   const FLOW_SAFE = /^[\p{Script=Latin}\p{Script=Cyrillic}\p{Script=Greek}\p{Script=Hangul}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Han}\p{N}\p{P}\p{S}\p{Zs}\p{M}]+$/u;
-
-  // Right-to-left lines (Arabic, Hebrew …): decided by the first letter, the
-  // way the browser's dir="auto" does it. Their fill runs right to left, so the
-  // sung/unsung background positions are swapped (see .vivi-lyrics-rtl in CSS).
-  const RTL_SCRIPT = /[\p{Script=Arabic}\p{Script=Hebrew}\p{Script=Syriac}\p{Script=Thaana}\p{Script=Nko}]/u;
-  const isRtlText = (t) => { const m = String(t || '').match(/\p{L}/u); return !!m && RTL_SCRIPT.test(m[0]); };
-  const fillPos = (w, sung) => ((w.closest('.vivi-lyrics-rtl') ? !sung : sung) ? '0% 0' : '100% 0');
 
   function canFlow(w) {
     if (w.querySelector('.vivi-fl-ch')) return true;
@@ -1247,10 +1182,7 @@
     const romanText = rl && !rl.pending ? (rl.online || rl.text) : null;
     const romanOnly = mode === 'only' && !!romanText;
     const hasWords = (result.mode === 'word' || result.mode === 'syllable') && Array.isArray(line.words) && line.words.length;
-    const shownText = romanOnly ? romanText : (line.text || (hasWords ? line.words.map((w) => w.text).join(' ') : ''));
-    const rtl = isRtlText(shownText);
-    lineEl.classList.toggle('vivi-lyrics-rtl', rtl);
-    if (rtl) lineEl.dir = 'rtl'; else lineEl.removeAttribute('dir');
+    VP.markRtl(lineEl, romanOnly, romanText, line, hasWords); // vivi+ hook
 
     const makeUnit = (u, extra, text) => {
       const span = document.createElement('span');
@@ -1300,7 +1232,7 @@
     if (mode === 'both' && romanText) {
       const sub = document.createElement('span');
       sub.className = 'vivi-lyrics-roman';
-      sub.dir = 'ltr';   // Latin letters, even under an Arabic/Hebrew line
+      sub.dir = 'ltr'; // vivi+ hook: Latin letters, even under an Arabic/Hebrew line
       sub.textContent = romanText;
       lineEl.appendChild(sub);
     }
@@ -1446,9 +1378,7 @@
     // Shift the raw video position back by whatever SponsorBlock already
     // skipped past (so lyrics stay aligned to the real song, not the video
     // file's timeline), then apply the user's manual fine-tune correction.
-    const hold = crossfadeHold();
-    const songSec = hold ? hold.timeSec : video.currentTime;
-    const nowMs = (songSec * 1000) - sponsorOffsetMs + manualOffsetMs;
+    const nowMs = (VP.songSec(video) * 1000) - sponsorOffsetMs + manualOffsetMs; // vivi+ hook: held during a crossfade
 
     const panel = document.getElementById(PANEL_ID);
     if (!panel) return;
@@ -1472,7 +1402,7 @@
         w.classList.add('vivi-lyrics-word-sung');
         w.classList.remove('vivi-lyrics-word-glowing', 'vivi-lyrics-word-bouncing', 'vivi-lyrics-syl-swell');
         w.style.transitionDuration = '0s';
-        w.style.backgroundPosition = fillPos(w, true);
+        w.style.backgroundPosition = VP.fillPos(w, true); // vivi+ hook: RTL
       });
       activeLineEl?.querySelectorAll('.vivi-lyrics-wordgroup').forEach((g) => {
         g.dataset.gState = 'sung';
@@ -1558,21 +1488,21 @@
           // Snap straight to fully filled (covers seeks/skips landing past
           // the word's end without ever passing through 'active').
           w.style.transitionDuration = '0s';
-          w.style.backgroundPosition = fillPos(w, true);
+          w.style.backgroundPosition = VP.fillPos(w, true); // vivi+ hook: RTL
         } else if (state === 'active') {
           // Reset to unfilled, force a reflow, then animate the fill sweep
           // across exactly this word's spoken duration so it lands right
           // as the word finishes — a smooth "karaoke" fill instead of a glow.
           w.style.transitionDuration = '0s';
-          w.style.backgroundPosition = fillPos(w, false);
+          w.style.backgroundPosition = VP.fillPos(w, false); // vivi+ hook: RTL
           void w.offsetWidth;
           const dur = Math.max(0, we - ws);
           w.style.transitionDuration = dur + 'ms';
           w.style.transitionTimingFunction = 'linear';
-          w.style.backgroundPosition = fillPos(w, true);
+          w.style.backgroundPosition = VP.fillPos(w, true); // vivi+ hook: RTL
         } else {
           w.style.transitionDuration = '0s';
-          w.style.backgroundPosition = fillPos(w, false);
+          w.style.backgroundPosition = VP.fillPos(w, false); // vivi+ hook: RTL
         }
       });
 
@@ -1601,75 +1531,18 @@
     if (fromUrl) return fromUrl;
     const player = document.querySelector('#movie_player, ytmusic-player');
     try {
-      const data = player?.getVideoData?.() || window.__viviPageVideoData?.();
+      const data = player?.getVideoData?.() || window.__viviPageVideoData?.(); // vivi+
       if (data?.video_id) return data.video_id;
     } catch { /* ignore */ }
     return null;
-  }
-
-  // During a crossfade the next song's title arrives while the old song is
-  // still the louder one: keep the old lyrics until crossfade.js says the
-  // blend is past its middle, then switch.
-  let heldTrack = null;
-  let holdTimer = null;
-  const crossfadeHold = () => {
-    const h = window.__viviCrossfade?.lyricsHold?.();
-    return h && currentTrack && h.id === currentTrack.videoId ? h : null;
-  };
-
-  // The song's length, for the lyrics timing check. Reading <video>.duration
-  // the moment the title changes is not safe: during an ad it is the ad's
-  // length, and right after a song change it can still be the previous
-  // song's. A wrong length makes every correctly synced result look
-  // "implausible", so only weaker (plain) lyrics got through. Wait until no
-  // ad is showing and the video agrees with the player bar's own length
-  // (taken from the song's metadata). null if the track changes meanwhile.
-  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-  function readDurationSources() {
-    const v = getVideoEl();
-    const vd = v && Number.isFinite(v.duration) && v.duration > 0 ? Math.round(v.duration) : null;
-    const pb = Number(document.querySelector('ytmusic-player-bar #progress-bar')?.getAttribute('aria-valuemax')) || null;
-    const ad = !!window.__viviTrackInfo?.adIsShowing?.();
-    return { vd, pb, ad };
-  }
-  async function resolveSongDuration(key, previousDuration) {
-    const started = Date.now();
-    while (Date.now() - started < 120000) { // ads can run long; the song is not playing meanwhile
-      if (key !== currentTrackKey) return null;
-      const { vd, pb, ad } = readDurationSources();
-      const waited = Date.now() - started;
-      if (!ad && vd) {
-        const agrees = pb ? Math.abs(vd - pb) <= 2 : waited > 3000;
-        // Same length as the song before, just after the change: maybe stale.
-        const maybeStale = previousDuration && vd === previousDuration && waited < 2000;
-        if (agrees && !maybeStale) return vd;
-        if (waited > 8000) return pb || vd; // never agreed: trust the player bar
-      }
-      await sleep(250);
-    }
-    const { vd, pb } = readDurationSources();
-    return pb || vd;
   }
 
   async function handleTrack(track) {
     if (!settings.lyricsEnabled) return;
     if (!track) return;
     const key = `${track.artist}—${track.song}`;
-    if (key === currentTrackKey) { heldTrack = null; return; }
-    if (crossfadeHold()) {
-      heldTrack = track;
-      if (!holdTimer) {
-        holdTimer = setInterval(() => {
-          if (crossfadeHold()) return;
-          clearInterval(holdTimer);
-          holdTimer = null;
-          const next = heldTrack;
-          heldTrack = null;
-          if (next) handleTrack(next);
-        }, 150);
-      }
-      return;
-    }
+    if (VP.holdTrack(track, key === currentTrackKey, handleTrack)) return; // vivi+ hook
+    if (key === currentTrackKey) return;
     currentTrackKey = key;
     currentResult = null;
     isLoadingLyrics = true;
@@ -1682,12 +1555,13 @@
     enableLyricsTabIfDisabled();
     if (settings.autoSwitchLyrics) clickLyricsTabWithRetry();
 
-    const previousDuration = currentTrack?.duration || null;
+    const durationEl = getVideoEl();
     const trackWithDuration = {
       ...track,
-      duration: null, // filled in below, once the song's real length is known
+      duration: durationEl?.duration ? Math.round(durationEl.duration) : null,
       videoId: getCurrentVideoId(),
     };
+    const previousDuration = VP.takeDuration(trackWithDuration, currentTrack); // vivi+ hook
     currentTrack = trackWithDuration;
     currentIsVideo = !!window.__viviTrackInfo?.isRealMusicVideo?.();
 
@@ -1707,10 +1581,7 @@
 
     syncPanelVisibility();
 
-    const duration = await resolveSongDuration(key, previousDuration);
-    if (key !== currentTrackKey) return; // track changed while waiting
-    trackWithDuration.duration = duration;
-
+    if (!(await VP.fillDuration(trackWithDuration, key, previousDuration))) return; // vivi+ hook
     await runLyricsFetch(trackWithDuration, key, { keepOffsetPanelOpen: false });
   }
 
@@ -1821,5 +1692,6 @@
   document.addEventListener('timeupdate', requestLyricsTick, true);
   document.addEventListener('visibilitychange', requestLyricsTick);
 
-  window.__viviLyricsUI = { handleTrack, setSponsorOffset, loadExcludedProviders };
+  window.__viviLyricsUI = { handleTrack, setSponsorOffset };
+  VP.bind({ getVideoEl, currentTrack: () => currentTrack, currentTrackKey: () => currentTrackKey, loadExcludedProviders }); // vivi+ hook
 })();

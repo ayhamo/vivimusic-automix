@@ -32,6 +32,14 @@ def git_show(ref, path):
 
 def list_ops(items, ops, what):
     items = list(items or [])
+    # replace: our copy takes the place of upstream's file (a file this fork rewrote: upstream's stays
+    # in the tree unchanged, so its edits merge cleanly and are ported by hand)
+    for old, new in ops.get('replace', {}).items():
+        if old in items:
+            items[items.index(old)] = new
+        else:
+            problems.append(f'{what}: {old} (replaced by {new}) is gone; added at the end')
+            items.append(new)
     for x in ops.get('remove', []):
         if x in items:
             items.remove(x)

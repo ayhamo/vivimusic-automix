@@ -78,9 +78,6 @@
     "https://*.ggpht.com/*",
     "https://*.ytimg.com/*"
   ],
-  "optional_host_permissions": [
-    "https://*/*"
-  ],
   "background": {
     "scripts": [
       "src/md5.js",
@@ -107,7 +104,7 @@
         "https://music.youtube.com/*"
       ],
       "js": [
-        "src/crossfade-page.js",
+        "src/automix/crossfade-page.js",
         "src/seek-page.js",
         "src/plus/video-canvas-page.js"
       ],
@@ -134,13 +131,16 @@
         "src/net.js",
         "src/fx-compat.js",
         "src/layout-compat.js",
+        "src/plus/lyrics-plus.js",
         "src/lyrics.js",
         "src/vendor/pinyin-pro.min.js",
         "src/romanize.js",
         "src/tab-locale.js",
+        "src/plus/lyrics-ui-plus.js",
         "src/lyrics-ui.js",
         "src/sponsorblock.js",
         "src/kawarp.js",
+        "src/plus/fx-plus.js",
         "src/kawarp-bg.js",
         "src/equalizer.js",
         "src/automix/automix.js",
@@ -149,12 +149,13 @@
         "src/addons/buffer-deck.js",
         "src/addons/offset-fit.js",
         "src/addons/page-addons.js",
-        "src/crossfade.js",
+        "src/automix/crossfade.js",
         "src/automix-overview.js",
         "src/music-only.js",
         "src/plus/video-canvas.js",
         "src/vendor/hls.min.js",
         "src/fullscreen-mode.js",
+        "src/plus/content-plus.js",
         "src/content.js"
       ],
       "css": [
@@ -211,6 +212,9 @@
   "content_security_policy": {
     "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
   },
+  "optional_host_permissions": [
+    "https://*/*"
+  ],
   "browser_specific_settings": {
     "gecko": {
       "id": "vivimusic-automix@ayhamo",

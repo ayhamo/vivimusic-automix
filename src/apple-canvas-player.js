@@ -57,22 +57,15 @@
     if (hls) hls.stopLoad();
   }
 
-  // The page pauses this frame when the song is paused; becoming visible
-  // again must not restart it until the page says the song plays again.
-  var pausedByPage = false;
+  var pausedByPage = false; // vivi+ hook: a song pause holds the frame until 'resume'; becoming visible does not restart it
   window.addEventListener('message', function (event) {
     if (event.source !== window.parent) return;
-    if (event.data && event.data.__viviAppleCanvasControl === 'pause') {
-      pausedByPage = true;
-      if (playbackRequested || !video.paused) pausePlayback();
-    } else if (event.data && event.data.__viviAppleCanvasControl === 'resume') {
-      pausedByPage = false;
-      startPlayback();
-    }
+    if (event.data && event.data.__viviAppleCanvasControl === 'pause') { pausedByPage = true; if (playbackRequested || !video.paused) pausePlayback(); } // vivi+ hook
+    else if (event.data && event.data.__viviAppleCanvasControl === 'resume') { pausedByPage = false; startPlayback(); } // vivi+ hook
   });
   document.addEventListener('visibilitychange', function () {
     if (document.hidden) pausePlayback();
-    else if (!pausedByPage) startPlayback();
+    else if (!pausedByPage) startPlayback(); // vivi+ hook
   });
 
   if (!(window.Hls && window.Hls.isSupported()) && !nativeHls) {
