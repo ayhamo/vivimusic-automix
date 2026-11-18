@@ -166,6 +166,7 @@ These rules, and the tier, kbps, probe, parameter, stream-answer and base-URL re
   - The loop decks and a glide stretch time, so what they play is the file's sound, not its samples.
 - Phone (as built, phone commit 5f16dfe): its own media3 player plays the addon file, with YouTube's player muted underneath as the clock. Resolve and fit happen during the previous song (the look-ahead above, then OPEN and the fit before the hand-over).
   - Clock: the media3 player locks to YouTube's position through `StepClock` (file position = YouTube's time + `offsetSec`); when it drifts or YouTube seeks, it re-locks silently.
+  - Start: a prepared song starts on the addon file from 0. A song started cold (nothing prepared) plays on YouTube first while the file is resolved, fitted and silently locked (measured about 3.6–4.3 s after opening), then upgrades mid-song with the crossfade in.
   - Hand-over: a 200 ms crossfade in from YouTube to the addon file; a 30 ms crossfade out back to YouTube (on a failure or a hand-back).
   - Level: YouTube's normalisation gain times the source gain (`offset-map.md`, Level), applied as the player's volume. ExoPlayer's volume is at most 1, so on the phone the level is capped at 0 dB: it only cuts, never boosts (PC can boost up to +6 dB, true peak kept at or under −1 dBTP).
 - PC stays deck-only (above).
