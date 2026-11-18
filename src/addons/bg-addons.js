@@ -8,7 +8,7 @@
  *   storage.local:
  *     addonsEnabled   false        the master switch
  *     addonsList      []           [{ id, base, name, host, enabled }] in priority order
- *     addonsTier      'LOSSLESS'   'LOSSLESS' | 'HIGH' | 'LOW'
+ *     addonsTier      'LOSSLESS'   'LOSSLESS' (the best) | 'HIRES' | 'CD' | 'HIGH' | 'LOW'
  *     addonsSlackSec  5            length slack, 0-10 s
  *
  *   messages (type, then fields):
@@ -29,7 +29,7 @@
   'use strict';
   const C = globalThis.__viviAddonClient || (typeof require === 'function' ? require('./client.js') : null);
 
-  const TIERS = ['LOSSLESS', 'HIGH', 'LOW'];
+  const TIERS = ['LOSSLESS', 'HIRES', 'CD', 'HIGH', 'LOW'];   // (LOSSLESS: the addon's best)
   const DEFAULTS = { addonsEnabled: false, addonsList: [], addonsTier: 'LOSSLESS', addonsSlackSec: 5 };
   const MAX_ADDONS = 12;
 

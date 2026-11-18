@@ -181,13 +181,32 @@
       || (st.state === 'ready' && (!st.play || st.play.state === 'fetching' || st.play.state === 'fitting'));
     return pending ? { kind: 'upgrading', label: 'Upgrading Quality', glyph: 'wave', title: 'Looking for a better copy of this song in your addons' } : null;
   }
+  // the clock's width held at its widest for this many digits (the font's digits differ in width,
+  // and YouTube's font has no tabular figures): the badge after it then stays where it is
+  let measure = null;
+  function holdWidth(time, on) {
+    if (!time) return;
+    if (!on) { if (time.dataset.viviW) { time.style.minWidth = ''; delete time.dataset.viviW; } return; }
+    const cs = getComputedStyle(time), font = `${cs.fontStyle} ${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+    const txt = (time.textContent || '').replace(/\s+/g, ' ').trim(), key = txt.replace(/\d/g, '0') + '|' + font;
+    if (time.dataset.viviW === key) return;
+    measure ??= document.createElement('canvas').getContext('2d');
+    measure.font = font;
+    let widest = '0', w = 0;
+    for (const d of '0123456789') { const x = measure.measureText(d).width; if (x > w) { w = x; widest = d; } }
+    const px = Math.ceil(measure.measureText(txt.replace(/\d/g, widest)).width + (parseFloat(cs.letterSpacing) || 0) * txt.length) + 1;
+    if (cs.display === 'inline') time.style.display = 'inline-block';
+    time.style.minWidth = px + 'px';
+    time.dataset.viviW = key;
+  }
   function badge() {
     try {
       const st = statusOf(curId);
       let b = document.getElementById(BADGE_ID);
       const q = badgeOf(curId, st);
-      if (!q) { if (b) b.hidden = true; return; }
       const time = document.querySelector('ytmusic-player-bar .time-info');
+      if (!q) { if (b) b.hidden = true; holdWidth(time, false); return; }
+      holdWidth(time, true);
       const host = time?.parentElement || document.querySelector('ytmusic-player-bar .right-controls-buttons');
       if (!host) return;
       if (!b) {

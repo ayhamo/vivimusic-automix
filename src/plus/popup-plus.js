@@ -493,7 +493,9 @@
     <div class="row" style="margin-top:8px;">
       <span class="row-label">Quality</span>
       <select id="addonsTierSelect" style="background:rgba(255,255,255,0.06); color:var(--text-1); border:1px solid rgba(255,255,255,0.12); border-radius:8px; padding:5px 8px; font-size:12.5px;">
-        <option value="LOSSLESS" selected>Lossless (FLAC)</option>
+        <option value="LOSSLESS" selected>Best (Hi-Res Lossless)</option>
+        <option value="HIRES">Hi-Res Lossless (24-bit)</option>
+        <option value="CD">Lossless (CD, 16-bit)</option>
         <option value="HIGH">High (320 kbps)</option>
         <option value="LOW">Low (128 kbps)</option>
       </select>

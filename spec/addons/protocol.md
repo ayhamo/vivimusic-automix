@@ -19,9 +19,10 @@ Headers:
 Every search and stream request carries these query parameters, percent-encoded, in this order:
 1. Each declared setting default, `key=default`.
 2. `quality=`:
-   - lossless tier: the user's pick if the manifest still lists it, else the first option;
-   - other tiers: an exact option match, else the first option containing `low|96|128|min` (LOW) or `high|320|normal|standard` (HIGH), else the first option;
-   - no quality setting declared: the tier name `LOSSLESS`, `HIGH` or `LOW`.
+   - lossless tier (the best): the user's pick if the manifest still lists it, else the first option;
+   - Hi-Res or CD tier **(ours)**: the first option whose value or label names it (`hi-res`, `24-bit`, `192 k`, `96 k`; `CD`, `16-bit`, `44.1`), else (CD) an option called `lossless`, else the first option;
+   - other tiers: an exact option match, else the first option containing `low|96|128|min` (LOW) or `high|320|normal|standard` (HIGH), else the first option (LOW: else the HIGH one, else the last option **(ours)**);
+   - no quality setting declared: the tier name `LOSSLESS`, `HIGH` or `LOW` (Hi-Res and CD send `LOSSLESS`).
    This overrides any declared quality default.
 3. `atmos=`: not sent. The extension and the phone app play stereo **(ours)**. An addon that declares an `atmos` setting (NullBeat: a toggle, default true) gets `atmos=false` in its place, overriding the default **(ours)**.
 

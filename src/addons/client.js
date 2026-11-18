@@ -12,7 +12,7 @@
  *   C.open(found, target, opt)   -> { addon, row, stream } or { none, tried }   /stream + probe, just before use
  *   C.resolve(target, addons, opt) -> find, then open
  *        addons: [{ base, quality? }] in priority order (on ones only)
- *        opt: { slackSec, tier ('LOSSLESS' | 'HIGH' | 'LOW') }
+ *        opt: { slackSec, tier ('LOSSLESS' (the best) | 'HIRES' | 'CD' | 'HIGH' | 'LOW') }
  *   C.health()                   -> { [host]: { fails, coolUntil, last, ms } }
  *
  * An addon's URL holds its owner's token: logs show only the host (redact).
@@ -91,6 +91,8 @@
   const looksLikeManifest = (j) => j && typeof j === 'object' && (Array.isArray(j.resources) || (text(j.id) && (j.name != null || j.version != null)));
 
   // §1: settings' defaults in order, then quality; atmos=false in place of a declared atmos default (ours)
+  // tiers: LOSSLESS (the addon's best: its first option), HIRES, CD, HIGH, LOW
+  const WANT = { HIRES: /hi-?res|24[\s-]?bit|192\s*k|96\s*k/i, CD: /\bcd\b|16[\s-]?bit|44\.1/i };
   function paramsFor(manifest, tier = 'LOSSLESS', picked = null) {
     const out = [];
     for (const s of manifest?.settings || []) {
@@ -99,13 +101,17 @@
       if (s.default !== undefined && s.default !== null) out.push([s.key, text(s.default)]);
     }
     const q = (manifest?.settings || []).find((s) => s.key === 'quality');
-    let quality = tier;
+    let quality = WANT[tier] ? 'LOSSLESS' : tier;
     if (q && q.options.length) {
       const vals = q.options.map((o) => text(o.value));
       if (tier === 'LOSSLESS') quality = picked != null && vals.includes(text(picked)) ? text(picked) : vals[0];
+      // Hi-Res or CD: the option that names it, else (CD) one called "lossless", else the first
+      else if (WANT[tier]) quality = vals.find((v, i) => WANT[tier].test(v) || WANT[tier].test(text(q.options[i].label))) ?? (tier === 'CD' ? vals.find((v) => v.toLowerCase() === 'lossless') : null) ?? vals[0];
       else {
         const re = tier === 'LOW' ? /low|96|128|min/i : /high|320|normal|standard/i;
-        quality = vals.find((v) => v.toUpperCase() === tier) ?? vals.find((v, i) => re.test(v) || re.test(q.options[i].label)) ?? vals[0];
+        const by = (r) => vals.find((v, i) => r.test(v) || r.test(text(q.options[i].label)));
+        // (Low with no low option: the high one, else the last, which addons list as the smallest)
+        quality = vals.find((v) => v.toUpperCase() === tier) ?? by(re) ?? (tier === 'LOW' ? by(/high|320|normal|standard/i) ?? vals[vals.length - 1] : vals[0]);
       }
     }
     out.push(['quality', quality]);

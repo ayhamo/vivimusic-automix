@@ -1150,7 +1150,7 @@
    ]
   },
   {
-   "name": "LOW: nothing matches: the first option",
+   "name": "LOW: no low option: the high one (ours; BitChord: the first)",
    "manifest": {
     "id": "case.5",
     "settings": [
@@ -1197,7 +1197,59 @@
     ],
     [
      "quality",
-     "max"
+     "high"
+    ]
+   ]
+  },
+  {
+   "name": "LOW: no low or high option: the last (ours)",
+   "manifest": {
+    "id": "case.5",
+    "settings": [
+     {
+      "key": "region",
+      "default": "eu",
+      "options": []
+     },
+     {
+      "key": "atmos",
+      "default": true,
+      "options": []
+     },
+     {
+      "key": "quality",
+      "default": "hires",
+      "options": [
+       {
+        "value": "max",
+        "label": "MAX"
+       },
+       {
+        "value": "hires",
+        "label": "HiRes"
+       },
+       {
+        "value": "cd",
+        "label": "CD"
+       }
+      ]
+     }
+    ]
+   },
+   "tier": "LOW",
+   "picked": null,
+   "expect": [
+    [
+     "region",
+     "eu"
+    ],
+    [
+     "atmos",
+     "false"
+    ],
+    [
+     "quality",
+     "cd"
     ]
    ]
   },
