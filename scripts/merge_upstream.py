@@ -9,6 +9,7 @@ Anything else is left unmerged and the script exits 2, so CI fails loudly.
 
 Usage: python scripts/merge_upstream.py <tag> [--commit]
 """
+import json
 import os
 import re
 import subprocess
@@ -54,6 +55,23 @@ def resolve_manifest(path):
     return not MARKER.search(result)
 
 
+def rebuild_manifest(tag):
+    """manifest.json is built: upstream's (the tag) + manifest-plus.json, with our version line."""
+    ours = json.loads(git('show', 'HEAD:manifest.json').stdout)
+    r = subprocess.run([sys.executable, os.path.join(ROOT, 'scripts', 'apply_manifest.py'), '--ref', tag],
+                       cwd=ROOT, capture_output=True, text=True, encoding='utf-8')
+    print(r.stdout + r.stderr, end='')
+    if r.returncode not in (0, 1):
+        return False
+    path = os.path.join(ROOT, 'manifest.json')
+    m = json.load(open(path, encoding='utf-8'))
+    m['version'] = ours.get('version', m.get('version'))
+    with open(path, 'w', encoding='utf-8', newline='\n') as fh:
+        json.dump(m, fh, indent=2, ensure_ascii=False)
+        fh.write('\n')
+    return r.returncode == 0
+
+
 def main():
     if len(sys.argv) < 2:
         sys.exit(__doc__)
@@ -77,6 +95,9 @@ def main():
         elif p == 'manifest.json' and resolve_manifest(os.path.join(ROOT, p)):
             git('add', '--', p)
             print('manifest.json: only the version differed, kept ours')
+        elif p == 'manifest.json' and rebuild_manifest(tag):
+            git('add', '--', p)
+            print('manifest.json: rebuilt from upstream', tag, '+ manifest-plus.json, our version kept')
         else:
             left.append(p)
     # Upstream re-adding a file we deleted (no conflict, just "added by them").
