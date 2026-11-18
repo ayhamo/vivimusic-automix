@@ -10,7 +10,7 @@
 if (typeof importScripts === 'function') {
   // fx-headers.js holds the keep-alive and the VIVI_FETCH proxy; its
   // webRequest header rewrite is Firefox-only and skips itself in Chrome.
-  importScripts('fx-headers.js', 'md5.js', 'lastfm.js', 'listenbrainz.js', 'spotify.js', 'apple-canvas.js', 'lrcred.js', 'discord-rpc.js', 'plus/bg-plus.js');
+  importScripts('fx-headers.js', 'md5.js', 'lastfm.js', 'listenbrainz.js', 'spotify.js', 'apple-canvas.js', 'lrcred.js', 'discord-rpc.js', 'plus/bg-plus.js', 'addons/track-matcher.js', 'addons/pick.js', 'addons/client.js', 'addons/bg-addons.js');
 }
 
 /* -------------------------------------------------------------------------

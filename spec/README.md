@@ -8,10 +8,13 @@ spec/
     analysis.schema.json   one song's analysis (beats, downbeats, key, energy, vocals, sections, loudness)
     plan.schema.json       one transition plan (loop mix and blend/filter/crossfade)
     pairs/*.json           5 real song pairs, captured from the extension
-    golden/*.json          today's planner's plans for those pairs, engine versions 1 and 2
+    golden/*.json          the planner's plans for those pairs: Classic (key v2) and Automix v2 (key v3)
+    versions.md            how the engines differ, and Automix v2's rules
   addons/
     protocol.md            the BitChord-compatible addon protocol and matching rules
-    matcher-cases.json     YouTube song + addon rows → the row the matcher must pick
+    matcher-cases.json     YouTube song + addon rows → the row the matcher must pick; queries() per song
+    pick-cases.json        our rules on top of the matcher, and the client's readings (tier, kbps, probe, params, stream answer, base URL)
+    offset-map.md          an addon file's timeline against YouTube's, and its level
 ```
 
 ## Automix fixtures
@@ -30,7 +33,7 @@ Every plan carries `curves`: each song's fader, filters, bass and high shelves a
 
 Each song's loudness: `loudness20Hz` (optional in the analysis, used by the overview's waveform; the pair files carry it beside the analysis) and `ytLoudnessDb` (YouTube's own `loudnessDb`, which both decks level against; see analysis.schema.json for where each app reads it and when `perceptualLoudnessDb` is preferred).
 
-Golden plans today: pairs 1 and 2 loop, 3–5 blend. Pair 2's loop is the known bad pick (a 2-bar outgoing loop checked only by the vocal mask); the next planner should not loop it.
+Golden plans today (Classic / Automix v2): pair 1 loop / loop, pair 2 loop / hand-over, pair 3 blend / hand-over, pair 4 blend / glide blend, pair 5 blend / hand-over. Two rules are hard and checked by the script: pair 1 must stay a loop under Automix v2 (the user's favourite), and pair 2 must never loop under it (a 2-bar outgoing loop checked only by the vocal mask, tempos 11% apart).
 
 ### Recapturing a pair
 
@@ -45,6 +48,18 @@ Lyrics availability changes between captures: a song with synced lyrics one day 
 ```
 node scripts/addon_matcher_fixtures.mjs --matcher path/to/trackMatcher.js
 ```
+
+The extension's port is `src/addons/track-matcher.js` (BitChord's file with its types stripped):
+
+```
+node scripts/addon_matcher_fixtures.mjs --matcher src/addons/track-matcher.js
+```
+
+Our rules on top of the matcher (ISRC first, Atmos rows, previews, length slack, the range probe, at most 3 rows; protocol.md §7) are in `src/addons/pick.js`. Their cases, and the client's readings (tierOf, kbps, probeVerdict, paramsFor, readStream, baseOf, sameAddon), are data in `pick-cases.json`: `node scripts/addon_pick_tests.mjs` reads it, and so does the phone's JVM test.
+
+The offset fit and the level (`offset-map.md`, `src/addons/offset-fit.js`): `node scripts/addon_offset_fixtures.mjs` builds synthetic songs from the PRNG and generator spelled out in `offset-map.md` (about 10 s).
+
+The client (`src/addons/client.js`: discovery, request shape, caching, statuses, health, resolve) is tested against a local mock server by `node scripts/addon_client_tests.mjs`. The PC's addon list and its popup messages (`src/addons/bg-addons.js`; links stay in the background, the popup sees name and host) by `node scripts/addon_store_tests.mjs`. The page side of the look-ahead (`src/addons/page-addons.js`) by `node scripts/addon_page_tests.mjs`.
 
 To check against BitChord itself, export its matcher from the BitChord clone and run it (Node 23.6+ runs the .ts file directly):
 

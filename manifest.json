@@ -77,6 +77,9 @@
     "https://*.ggpht.com/*",
     "https://*.ytimg.com/*"
   ],
+  "optional_host_permissions": [
+    "https://*/*"
+  ],
   "background": {
     "scripts": [
       "src/md5.js",
@@ -88,7 +91,11 @@
       "src/listenbrainz.js",
       "src/fx-headers.js",
       "src/background.js",
-      "src/plus/bg-plus.js"
+      "src/plus/bg-plus.js",
+      "src/addons/track-matcher.js",
+      "src/addons/pick.js",
+      "src/addons/client.js",
+      "src/addons/bg-addons.js"
     ],
     "service_worker": "src/background.js"
   },
@@ -136,6 +143,9 @@
         "src/automix/automix.js",
         "src/vendor/signalsmith-stretch.js",
         "src/plus/stream-deck.js",
+        "src/addons/buffer-deck.js",
+        "src/addons/offset-fit.js",
+        "src/addons/page-addons.js",
         "src/crossfade.js",
         "src/automix-overview.js",
         "src/music-only.js",
@@ -186,6 +196,7 @@
         "src/apple-canvas-player.html",
         "src/vendor/automix/*",
         "src/vendor/signalsmith-stretch.js",
+        "src/addons/tap-worklet.js",
         "src/automix/*"
       ],
       "matches": [

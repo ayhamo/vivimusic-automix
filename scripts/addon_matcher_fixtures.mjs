@@ -20,7 +20,9 @@ if (at < 0 || !args[at + 1]) {
   console.error('usage: node scripts/addon_matcher_fixtures.mjs --matcher <path to trackMatcher.ts|.js> [--update]');
   process.exit(2);
 }
-const M = await import(pathToFileURL(resolve(args[at + 1])).href);
+const loaded = await import(pathToFileURL(resolve(args[at + 1])).href);
+// (an ES module's exports, or a classic script's module.exports: src/addons/track-matcher.js)
+const M = typeof loaded.score === 'function' ? loaded : loaded.default;
 const update = args.includes('--update');
 const FILE = new URL('../spec/addons/matcher-cases.json', import.meta.url);
 const doc = JSON.parse(readFileSync(FILE, 'utf8'));
@@ -43,6 +45,14 @@ for (const c of doc.cases) {
   const same = JSON.stringify(got) === JSON.stringify(c.expect);
   if (!same) failed++;
   console.log(same ? 'ok  ' : 'DIFF', c.name, same ? '→ ' + got.pick : '| want ' + JSON.stringify(c.expect) + ' got ' + JSON.stringify(got));
+}
+// queries(target): the search queries, in the order they are tried
+for (const q of doc.queries || []) {
+  const got = M.queries(q.target);
+  if (update) { q.expect = got; console.log('wrote queries', q.name, '→', JSON.stringify(got)); continue; }
+  const same = JSON.stringify(got) === JSON.stringify(q.expect);
+  if (!same) failed++;
+  console.log(same ? 'ok  ' : 'DIFF', 'queries:', q.name, same ? '→ ' + JSON.stringify(got) : '| want ' + JSON.stringify(q.expect) + ' got ' + JSON.stringify(got));
 }
 if (update) writeFileSync(FILE, JSON.stringify(doc, null, 2) + '\n');
 process.exit(failed ? 1 : 0);

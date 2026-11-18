@@ -113,18 +113,26 @@
   window.addEventListener('message', (e) => {
     const d = e.data;
     if (e.source !== window || !d || d.ch !== 'vivi-xfade' || d.dir !== 'out' || d.type !== 'bytes') return;
-    const w = byteWaits.get(d.id);
-    if (!w) return;
+    const ws = byteWaits.get(d.id);
+    if (!ws) return;
     byteWaits.delete(d.id);
-    if (d.ok && d.bytes) w.resolve({ bytes: d.bytes, musicVideo: !!d.musicVideo });
-    else w.reject(new Error(d.why || 'song not downloaded'));
+    // each asker gets its own copy: the analysis hands its bytes on to the analyzer frame
+    ws.forEach((w, i) => {
+      if (d.ok && d.bytes) w.resolve({ bytes: i === 0 ? d.bytes : d.bytes.slice(0), musicVideo: !!d.musicVideo });
+      else w.reject(new Error(d.why || 'song not downloaded'));
+    });
   });
   function songBytes(id) {
     return new Promise((resolve, reject) => {
-      byteWaits.get(id)?.reject(new Error('asked again'));
-      byteWaits.set(id, { resolve, reject });
+      // one ask per song at a time; a second asker (the addon deck, the analysis) waits for the same download
+      const ws = byteWaits.get(id), w = { resolve, reject };
+      if (ws) { ws.push(w); return; }
+      byteWaits.set(id, [w]);
       window.postMessage({ ch: 'vivi-xfade', dir: 'in', type: 'bytes', id }, window.location.origin);
-      setTimeout(() => { if (byteWaits.get(id)?.resolve === resolve) { byteWaits.delete(id); reject(new Error('download timed out')); } }, 120000);
+      setTimeout(() => {
+        const left = byteWaits.get(id);
+        if (left?.[0] === w) { byteWaits.delete(id); left.forEach((x) => x.reject(new Error('download timed out'))); }
+      }, 120000);
     });
   }
 

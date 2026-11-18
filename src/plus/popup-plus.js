@@ -461,6 +461,165 @@
 
 
   /* -------------------------------------------------------------------------
+   * Addons (spec/addons/protocol.md): BitChord-compatible addons that play a
+   * song from another source, YouTube's player kept as the clock. The list,
+   * its order and the links live in the background (src/addons/bg-addons.js);
+   * this page only ever sees each addon's name and host, never its link.
+   * ------------------------------------------------------------------------- */
+  place(`  <div class="section" id="addonsSection">
+    <div class="section-title"><span class="dot-ico"></span>Addons <span class="beta-tag" style="background:rgba(255,255,255,0.15);color:#fff;">Test</span></div>
+    <div class="row">
+      <span class="row-label">Play songs from addons</span>
+      <label class="switch">
+        <input type="checkbox" id="addonsEnabledToggle"/>
+        <span class="slider"></span>
+      </label>
+    </div>
+    <p class="theme-sub">Off by default. Needs Crossfade and Automix on (the copy is lined up against the audio Automix downloads). BitChord addons (links with your own token) can have a song in better quality than YouTube. When one has the playing song, that copy plays in step with YouTube's player, which keeps running muted, so play, pause, seek, skip and Automix work as usual. A copy that isn't the same recording, or falls out of step, goes back to YouTube's sound. Firefox asks once for access to all https sites: the songs come from whatever servers the addons send them from.</p>
+    <form id="addonsAddForm" style="display:flex; gap:6px; margin-top:8px;">
+      <input type="password" id="addonsUrl" placeholder="Paste an addon link (manifest.json)" autocomplete="off" spellcheck="false" style="flex:1; min-width:0;"/>
+      <button type="submit" id="addonsAddBtn" class="clear-btn" style="color:var(--text-1);">Add</button>
+    </form>
+    <p class="theme-sub" id="addonsMsg" style="display:none; margin-top:4px;"></p>
+    <div id="addonsList" style="display:flex; flex-direction:column; gap:4px; margin-top:8px;"></div>
+    <p class="theme-sub" id="addonsEmpty" style="margin-top:2px;">No addons yet. They are asked in this order; the first one that has the song plays it.</p>
+    <div class="row" style="margin-top:8px;">
+      <span class="row-label">Quality</span>
+      <select id="addonsTierSelect" style="background:rgba(255,255,255,0.06); color:var(--text-1); border:1px solid rgba(255,255,255,0.12); border-radius:8px; padding:5px 8px; font-size:12.5px;">
+        <option value="LOSSLESS" selected>Lossless (FLAC)</option>
+        <option value="HIGH">High (320 kbps)</option>
+        <option value="LOW">Low (128 kbps)</option>
+      </select>
+    </div>
+    <div class="kawarp-slider-row" style="margin-top:8px;">
+      <div class="kw-label-row"><span>Length difference allowed</span><span class="kw-val" id="addonsSlackVal">5 s</span></div>
+      <input type="range" id="addonsSlackSec" min="0" max="10" step="1" value="5"/>
+    </div>
+    <p class="theme-sub" style="margin-top:2px;">An addon's song may be this much longer or shorter than YouTube's and still be used. Atmos versions and short previews are never used.</p>
+  </div>
+`, document.getElementById('eqToggle')?.closest('.section'), 'afterend');
+
+  const ALL_HTTPS = { origins: ['https://*/*'] };
+  const permissionsApi = globalThis.browser?.permissions || chrome.permissions;
+  // permissions.request must run straight from the click: call it first thing
+  const askAccess = () => (permissionsApi?.request ? Promise.resolve(permissionsApi.request(ALL_HTTPS)).catch(() => false) : Promise.resolve(true));
+  const addonsMsg = document.getElementById('addonsMsg');
+  const say = (text, bad) => {
+    addonsMsg.textContent = text || '';
+    addonsMsg.style.display = text ? 'block' : 'none';
+    addonsMsg.style.color = bad ? '#ff6b6b' : '';
+  };
+  const ask = (msg) => new Promise((resolve) => chrome.runtime.sendMessage(msg, (r) => resolve(chrome.runtime.lastError ? { ok: false, error: chrome.runtime.lastError.message } : r)));
+
+  const addonsEnabledToggle = document.getElementById('addonsEnabledToggle');
+  const addonsTierSelect = document.getElementById('addonsTierSelect');
+  const addonsSlack = document.getElementById('addonsSlackSec');
+  const addonsSlackVal = document.getElementById('addonsSlackVal');
+  const addonsListEl = document.getElementById('addonsList');
+
+  const HEALTH = {
+    unused: ['rgba(255,255,255,0.3)', 'Not asked yet'],
+    ok: ['#3ecf6e', 'Answering'],
+    failing: ['#f2c230', 'Failing'],
+    resting: ['#ff6b6b', 'Resting after failures'],
+  };
+  function healthText(h) {
+    const [, label] = HEALTH[h?.state] || HEALTH.unused;
+    if (h?.state === 'ok' && h.ms != null) return `${label} (${(h.ms / 1000).toFixed(1)} s)`;
+    if (h?.state === 'resting' && h.until) return `${label}, back at ${new Date(h.until).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}${h.last ? ': ' + h.last : ''}`;
+    if (h?.state === 'failing') return `${label}${h.last ? ': ' + h.last : ''}`;
+    return label;
+  }
+
+  function renderAddons(state) {
+    addonsListEl.textContent = '';
+    document.getElementById('addonsEmpty').style.display = state.addons.length ? 'none' : 'block';
+    state.addons.forEach((a, i) => {
+      const row = document.createElement('div');
+      row.className = 'row';
+      row.style.cssText = 'gap:6px; align-items:center;';
+      const dot = document.createElement('span');
+      const [color] = HEALTH[a.health?.state] || HEALTH.unused;
+      dot.style.cssText = `width:8px; height:8px; border-radius:50%; flex:none; background:${color};`;
+      dot.title = healthText(a.health);
+      const label = document.createElement('span');
+      label.className = 'row-label';
+      label.style.cssText = 'flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;';
+      label.textContent = `${i + 1}. ${a.name}`;
+      const host = document.createElement('small');
+      host.style.cssText = 'display:block; color:var(--text-3); font-weight:400;';
+      host.textContent = `${a.host} · ${healthText(a.health)}`;
+      label.appendChild(host);
+      label.title = `${a.name} (${a.host})`;
+      const btn = (text, title, onClick, disabled) => {
+        const b = document.createElement('button');
+        b.type = 'button'; b.className = 'clear-btn'; b.textContent = text; b.title = title; b.disabled = !!disabled;
+        b.addEventListener('click', onClick);
+        return b;
+      };
+      const sw = document.createElement('label');
+      sw.className = 'switch small';
+      sw.innerHTML = '<input type="checkbox"/><span class="slider"></span>';
+      const box = sw.querySelector('input');
+      box.checked = a.enabled;
+      box.addEventListener('change', () => ask({ type: 'VIVI_ADDONS_TOGGLE', id: a.id, enabled: box.checked }).then(refreshAddons));
+      row.append(dot, label,
+        btn('↑', 'Ask it earlier', () => ask({ type: 'VIVI_ADDONS_MOVE', id: a.id, by: -1 }).then(refreshAddons), i === 0),
+        btn('↓', 'Ask it later', () => ask({ type: 'VIVI_ADDONS_MOVE', id: a.id, by: 1 }).then(refreshAddons), i === state.addons.length - 1),
+        sw,
+        btn('✕', 'Remove', () => ask({ type: 'VIVI_ADDONS_REMOVE', id: a.id }).then(refreshAddons)));
+      addonsListEl.appendChild(row);
+    });
+  }
+  function refreshAddons() {
+    return ask({ type: 'VIVI_ADDONS_LIST' }).then((state) => {
+      if (!state?.addons) return;
+      addonsEnabledToggle.checked = state.enabled;
+      addonsTierSelect.value = state.tier;
+      addonsSlack.value = state.slackSec;
+      addonsSlackVal.textContent = state.slackSec + ' s';
+      renderAddons(state);
+    });
+  }
+  refreshAddons();
+
+  addonsEnabledToggle.addEventListener('change', () => {
+    if (!addonsEnabledToggle.checked) { ask({ type: 'VIVI_ADDONS_SETTINGS', enabled: false }); relay({ addonsEnabled: false }); return; }
+    askAccess().then((granted) => {
+      if (!granted) {
+        addonsEnabledToggle.checked = false;
+        say('Firefox access to the addons\' servers was not allowed, so addons stay off.', true);
+        return;
+      }
+      say('');
+      ask({ type: 'VIVI_ADDONS_SETTINGS', enabled: true });
+      relay({ addonsEnabled: true });
+    });
+  });
+  document.getElementById('addonsAddForm').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const input = document.getElementById('addonsUrl');
+    const url = input.value.trim();
+    if (!url) return;
+    const addBtn = document.getElementById('addonsAddBtn');
+    addBtn.disabled = true;
+    askAccess().then((granted) => {
+      if (!granted) { say('Firefox access to the addon\'s server was not allowed.', true); return null; }
+      say('Asking the addon…');
+      return ask({ type: 'VIVI_ADDONS_ADD', url });
+    }).then((r) => {
+      if (!r) return;
+      if (!r.ok) { say(r.error || 'The addon could not be added.', true); return; }
+      input.value = '';
+      say(`Added ${r.addon.name} (${r.addon.host}).`);
+      return refreshAddons();
+    }).finally(() => { addBtn.disabled = false; });
+  });
+  addonsTierSelect.addEventListener('change', () => ask({ type: 'VIVI_ADDONS_SETTINGS', tier: addonsTierSelect.value }));
+  addonsSlack.addEventListener('input', () => { addonsSlackVal.textContent = addonsSlack.value + ' s'; });
+  addonsSlack.addEventListener('change', () => ask({ type: 'VIVI_ADDONS_SETTINGS', slackSec: Number(addonsSlack.value) }));
+
+  /* -------------------------------------------------------------------------
    * ListenBrainz Scrobbling
    * ------------------------------------------------------------------------- */
   const lbEnabledToggle    = document.getElementById('listenbrainzEnabledToggle');

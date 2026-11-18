@@ -170,8 +170,10 @@
       // Automix (BitChord's deck): high-shelf cross, and the filter mix's
       // high- and low-pass. All flat / open unless a blend is running.
       xfHighFilter = new BiquadFilterNode(audioCtx, { type: 'highshelf', frequency: 4000, gain: 0 });
-      xfHighpass = new BiquadFilterNode(audioCtx, { type: 'highpass', frequency: 20, Q: 0.7 });
-      xfLowpass = new BiquadFilterNode(audioCtx, { type: 'lowpass', frequency: 20000, Q: 0.7 });
+      // at rest exactly transparent: Web Audio's high-pass at 0 Hz and low-pass at Nyquist pass the
+      // samples through unchanged (20 Hz / 20 kHz were still filters, on every song)
+      xfHighpass = new BiquadFilterNode(audioCtx, { type: 'highpass', frequency: 0, Q: 0.7 });
+      xfLowpass = new BiquadFilterNode(audioCtx, { type: 'lowpass', frequency: audioCtx.sampleRate / 2, Q: 0.7 });
       sourceNode.connect(xfGate);
       xfGate.connect(xfBassFilter);
       xfBassFilter.connect(xfHighFilter);
@@ -199,7 +201,7 @@
 
       boundVideo = video;
       // Shared handle so crossfade.js can feed the same processing chain.
-      window.__viviAudioGraph = { ctx: audioCtx, video, source: sourceNode, gate: xfGate, bassFilter: xfBassFilter, highFilter: xfHighFilter, highpass: xfHighpass, lowpass: xfLowpass, entry: lowShelf };
+      window.__viviAudioGraph = { ctx: audioCtx, video, source: sourceNode, gate: xfGate, bassFilter: xfBassFilter, highFilter: xfHighFilter, highpass: xfHighpass, lowpass: xfLowpass, entry: lowShelf, mix: masterGain, out: compressor };   // (mix: before the safety compressor, out: what the graph plays; for tests)
       applySettingsToGraph();
       return true;
     } catch (e) {

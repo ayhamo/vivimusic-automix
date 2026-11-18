@@ -331,11 +331,12 @@ html.vivi-lyrics-canvas-visible #vivi-lyrics-canvas {
 
 /* ─── Automix overview (automix-overview.js) ─── */
 #vivi-automix-toast.vivi-automix-visible { pointer-events: auto; cursor: pointer; }
-/* its button in the player bar: grey with no mix to show, blue once one is planned, pulsing while it plays */
+/* its button in the player bar: white like YouTube's own buttons; while a mix
+   plays it pulses with the seek bar's mix fill (crossfade.js drawMixUi): the bar's colour, on the beat */
 .vivi-amx-ov-open {
   flex: none; width: 40px; height: 40px; padding: 8px; margin: 0 2px;
   border: 0; border-radius: 50%; background: transparent;
-  color: rgba(255, 255, 255, 0.5); cursor: pointer;
+  color: #fff; cursor: pointer;
   display: inline-flex; align-items: center; justify-content: center;
   transition: color 0.2s, background-color 0.2s;
 }
@@ -343,10 +344,9 @@ html.vivi-lyrics-canvas-visible #vivi-lyrics-canvas {
 .vivi-amx-ov-open svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
 .vivi-amx-ov-open:hover { background: rgba(255, 255, 255, 0.1); color: #fff; }
 .vivi-amx-ov-open:focus-visible { outline: 2px solid #3A9BDC; outline-offset: 1px; }
-.vivi-amx-ov-open[data-state="planned"] { color: #3A9BDC; }
-.vivi-amx-ov-open[data-state="mixing"] { color: #3A9BDC; animation: vivi-amx-ov-pulse 1.2s ease-in-out infinite; }
-@keyframes vivi-amx-ov-pulse { 50% { color: #F2C230; } }
-@media (prefers-reduced-motion: reduce) { .vivi-amx-ov-open[data-state="mixing"] { animation: none; color: #F2C230; } }
+.vivi-amx-ov-open[data-state="planned"] { color: #fff; }
+.vivi-amx-ov-open[data-state="mixing"] { color: var(--vivi-mix-color, #fff); opacity: var(--vivi-mix-pulse, 1); transition: color 0.2s, background-color 0.2s; }
+@media (prefers-reduced-motion: reduce) { .vivi-amx-ov-open[data-state="mixing"] { opacity: 1; } }
 /* a narrow bar: YouTube's "More player controls" menu opens over the right controls; the button
    gives way to it like YouTube's own expand button (theme.css), else it shows through behind repeat */
 /* (open: the menu loses aria-hidden="true" and its display: none; theme.css's [aria-hidden="false"] never matches) */
@@ -441,3 +441,12 @@ ytmusic-player-bar:has(ytmusic-player-expanding-menu:not([aria-hidden="true"]):n
 @media (prefers-reduced-motion: reduce) {
   .vivi-amx-ov, .vivi-amx-ov-card { transition: none; }
 }
+
+/* ─── Addon quality badge (addons/page-addons.js): what the addon's copy is, while it plays ─── */
+.vivi-addon-badge {
+  flex: none; align-self: center; margin: 0 6px 0 2px; padding: 2px 6px;
+  border: 1px solid rgba(255, 255, 255, 0.6); border-radius: 4px;
+  color: #fff; font-size: 11px; font-weight: 600; line-height: 14px; letter-spacing: 0.3px;
+  white-space: nowrap; cursor: default; user-select: none;
+}
+.vivi-addon-badge[hidden] { display: none; }

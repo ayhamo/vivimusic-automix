@@ -432,6 +432,351 @@
           "show"
         ]
       }
+    },
+    {
+      "name": "CJK: an equal Japanese title wins; its live version and another song are refused",
+      "target": {
+        "title": "夜に駆ける",
+        "artist": "YOASOBI",
+        "durationSec": 261,
+        "album": null
+      },
+      "candidates": [
+        {
+          "id": "live",
+          "title": "夜に駆ける (Live)",
+          "artist": "YOASOBI",
+          "durationSec": 270,
+          "album": null
+        },
+        {
+          "id": "other",
+          "title": "群青",
+          "artist": "YOASOBI",
+          "durationSec": 249,
+          "album": null
+        },
+        {
+          "id": "same",
+          "title": "夜に駆ける",
+          "artist": "YOASOBI",
+          "durationSec": 261,
+          "album": null
+        }
+      ],
+      "expect": {
+        "pick": "same",
+        "ranked": [
+          "same"
+        ],
+        "scores": {
+          "same": 165
+        },
+        "rejected": [
+          "live",
+          "other"
+        ]
+      }
+    },
+    {
+      "name": "CJK: corner brackets read as round ones, punctuation and spaces dropped from the core",
+      "target": {
+        "title": "アイドル",
+        "artist": "YOASOBI",
+        "durationSec": 213,
+        "album": null
+      },
+      "candidates": [
+        {
+          "id": "bracketed",
+          "title": "アイドル「推しの子」",
+          "artist": "YOASOBI",
+          "durationSec": 213,
+          "album": null
+        },
+        {
+          "id": "spaced",
+          "title": "ア イ ド ル",
+          "artist": "YOASOBI",
+          "durationSec": 213,
+          "album": null
+        }
+      ],
+      "expect": {
+        "pick": "bracketed",
+        "ranked": [
+          "bracketed",
+          "spaced"
+        ],
+        "scores": {
+          "bracketed": 165,
+          "spaced": 165
+        },
+        "rejected": []
+      }
+    },
+    {
+      "name": "romaji: a kana title against its romanised row",
+      "target": {
+        "title": "ハルジオン",
+        "artist": "YOASOBI",
+        "durationSec": 203,
+        "album": null
+      },
+      "candidates": [
+        {
+          "id": "romaji",
+          "title": "Harujion",
+          "artist": "YOASOBI",
+          "durationSec": 203,
+          "album": null
+        }
+      ],
+      "expect": {
+        "pick": "romaji",
+        "ranked": [
+          "romaji"
+        ],
+        "scores": {
+          "romaji": 165
+        },
+        "rejected": []
+      }
+    },
+    {
+      "name": "translation: a Korean title with its English name against the Korean row and the English one",
+      "target": {
+        "title": "봄날 (Spring Day)",
+        "artist": "BTS",
+        "durationSec": 274,
+        "album": null
+      },
+      "candidates": [
+        {
+          "id": "korean",
+          "title": "봄날",
+          "artist": "BTS",
+          "durationSec": 274,
+          "album": null
+        },
+        {
+          "id": "english",
+          "title": "Spring Day",
+          "artist": "BTS",
+          "durationSec": 274,
+          "album": null
+        }
+      ],
+      "expect": {
+        "pick": "korean",
+        "ranked": [
+          "korean",
+          "english"
+        ],
+        "scores": {
+          "korean": 165,
+          "english": 165
+        },
+        "rejected": []
+      }
+    },
+    {
+      "name": "Turkish: dotless ı and Ş fold to plain Latin (Şımarık / Simarik), artist case ignored",
+      "target": {
+        "title": "Şımarık",
+        "artist": "Tarkan",
+        "durationSec": 236,
+        "album": null
+      },
+      "candidates": [
+        {
+          "id": "plain",
+          "title": "Simarik",
+          "artist": "TARKAN",
+          "durationSec": 236,
+          "album": null
+        }
+      ],
+      "expect": {
+        "pick": "plain",
+        "ranked": [
+          "plain"
+        ],
+        "scores": {
+          "plain": 165
+        },
+        "rejected": []
+      }
+    },
+    {
+      "name": "Turkish: dotted İ against plain I",
+      "target": {
+        "title": "İstanbul Ağlıyor",
+        "artist": "Ezhel",
+        "durationSec": 180,
+        "album": null
+      },
+      "candidates": [
+        {
+          "id": "plain",
+          "title": "Istanbul Agliyor",
+          "artist": "Ezhel",
+          "durationSec": 180,
+          "album": null
+        }
+      ],
+      "expect": {
+        "pick": "plain",
+        "ranked": [
+          "plain"
+        ],
+        "scores": {
+          "plain": 165
+        },
+        "rejected": []
+      }
+    },
+    {
+      "name": "casing: \"(LIVE)\" is the live version whatever the case (a Turkish locale must not make it \"lıve\")",
+      "target": {
+        "title": "Kuzu Kuzu (Live)",
+        "artist": "Tarkan",
+        "durationSec": 250,
+        "album": null
+      },
+      "candidates": [
+        {
+          "id": "upper",
+          "title": "Kuzu Kuzu (LIVE)",
+          "artist": "Tarkan",
+          "durationSec": 250,
+          "album": null
+        },
+        {
+          "id": "studio",
+          "title": "Kuzu Kuzu",
+          "artist": "Tarkan",
+          "durationSec": 250,
+          "album": null
+        }
+      ],
+      "expect": {
+        "pick": "upper",
+        "ranked": [
+          "upper"
+        ],
+        "scores": {
+          "upper": 165
+        },
+        "rejected": [
+          "studio"
+        ]
+      }
+    },
+    {
+      "name": "casing: a studio song refuses an upper-case LIVE row",
+      "target": {
+        "title": "Kuzu Kuzu",
+        "artist": "Tarkan",
+        "durationSec": 250,
+        "album": null
+      },
+      "candidates": [
+        {
+          "id": "upper",
+          "title": "Kuzu Kuzu (LIVE)",
+          "artist": "Tarkan",
+          "durationSec": 250,
+          "album": null
+        },
+        {
+          "id": "studio",
+          "title": "KUZU KUZU",
+          "artist": "Tarkan",
+          "durationSec": 250,
+          "album": null
+        }
+      ],
+      "expect": {
+        "pick": "studio",
+        "ranked": [
+          "studio"
+        ],
+        "scores": {
+          "studio": 165
+        },
+        "rejected": [
+          "upper"
+        ]
+      }
+    }
+  ],
+  "queries": [
+    {
+      "name": "title and primary artist, then the title alone",
+      "target": {
+        "title": "Blinding Lights",
+        "artist": "The Weeknd",
+        "durationSec": 200,
+        "album": null
+      },
+      "expect": [
+        "blinding lights the weeknd",
+        "blinding lights"
+      ]
+    },
+    {
+      "name": "packaging words dropped from the searchable title",
+      "target": {
+        "title": "Shape of You (Official Video)",
+        "artist": "Ed Sheeran",
+        "durationSec": 200,
+        "album": null
+      },
+      "expect": [
+        "shape of you ed sheeran",
+        "shape of you"
+      ]
+    },
+    {
+      "name": "a featured artist: the primary artist only",
+      "target": {
+        "title": "Stay (with Justin Bieber)",
+        "artist": "The Kid LAROI, Justin Bieber",
+        "durationSec": 200,
+        "album": null
+      },
+      "expect": [
+        "stay the kid laroi",
+        "stay"
+      ]
+    },
+    {
+      "name": "CJK title: its romaji added",
+      "target": {
+        "title": "ハルジオン",
+        "artist": "YOASOBI",
+        "durationSec": 200,
+        "album": null
+      },
+      "expect": [
+        "ハルジオン yoasobi",
+        "ハルジオン",
+        "harujion"
+      ]
+    },
+    {
+      "name": "Turkish title kept as written",
+      "target": {
+        "title": "Şımarık",
+        "artist": "Tarkan",
+        "durationSec": 200,
+        "album": null
+      },
+      "expect": [
+        "şımarık tarkan",
+        "şımarık"
+      ]
     }
   ]
 }

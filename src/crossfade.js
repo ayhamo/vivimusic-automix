@@ -68,7 +68,7 @@
   function applyConfig() {
     log('config: seconds =', seconds(), '| enabled:', userOn, '| manualSkip:', userManualSkip, '| autoAdvance:', userAutoAdvance, '| resource saver:', saver);
     post({ type: 'config', enabled: seconds() > 0 });
-    if (seconds() === 0 || !userStreamDeck) streamDeckBack('turned off');
+    if (seconds() === 0 || (!userStreamDeck && !sdeck?.addon)) streamDeckBack('turned off');
     if (seconds() === 0) { if (live) abortLive(); dropPlan(); }
     else if (navigator.userActivation?.hasBeenActive) wake();
   }
@@ -98,6 +98,7 @@
       if ('crossfadeAutoAdvance' in ch) userAutoAdvance = ch.crossfadeAutoAdvance.newValue !== false;
       if ('resourceSaverEnabled' in ch) saver = ch.resourceSaverEnabled.newValue === true;
       if ('automixStreamDeck' in ch) userStreamDeck = ch.automixStreamDeck.newValue === true;
+      if ('addonsEnabled' in ch && ch.addonsEnabled.newValue !== true) { if (sdeck?.addon) streamDeckBack('addons turned off'); adeck = null; prepared.clear(); }
       applyConfig();
     });
   } catch { /* extension context gone */ }
@@ -245,6 +246,8 @@
         engine: a?.getLiveState(),
         crossfade: window.__viviCrossfade?.status(),
       }));
+    } else if (d.type === 'vivi-addon-rec') {
+      addonRecTest(d);
     } else if (d.type === 'vivi-stream-deck-test') {
       streamDeckTest(d);
     } else if (d.type === 'vivi-automix-fixture') {
@@ -383,6 +386,14 @@
     const mono = new Float32Array(len);
     for (let i = 0; i < len; i++) mono[i] = (L[i] + R[i]) * 0.5;
     plan = { id: d.id, key: d.id + ':' + (++planSeq), buf, mono, rate: d.sampleRate, start: d.start };
+    // the addon deck plays this song: the tail is cut from its file instead (the same place, its
+    // sound), so the mix goes on in its quality; YouTube's copy (mono) still finds the place
+    const rec = readyRec(d.id);
+    if (rec && sdeck?.addon && sdeck.addonId === d.id && st?.id === d.id && rec.buf.sampleRate === d.sampleRate) {
+      plan.buf = addonSpan(g.ctx, rec, d.start - st.off, len);
+      plan.addon = true;
+      addonEvent('tail', { id: d.id, from: d.start - st.off, sec: len / d.sampleRate });
+    }
   }
 
   function amxGiveUp(why) {
@@ -732,8 +743,18 @@
       if (!hit || hit.score < 0.9) { retryOrGiveUp('alignment score too low'); return; }
       startIdx = hit.index;
     }
-    const T = ctx.currentTime + 0.1;
-    const idxT = startIdx + L + (T - tRead) * sr;
+    // on a whole frame, from a whole sample of the copy: its own samples, not interpolated ones
+    const T = Math.round((ctx.currentTime + 0.1) * sr) / sr;
+    let idxT = Math.round(startIdx + L + (T - tRead) * sr);
+    // the addon deck plays the song and the tail is cut from the same file: the tail goes on from
+    // the deck's own sample there (what is heard), not from where YouTube's copy was found
+    const deckRec = p.addon && sdeck?.audible && sdeck.addonId === st.id ? readyRec(st.id) : null;
+    const deckAt = deckRec ? sdeck.fileAt(T) : null;
+    if (deckAt != null) {
+      const fromDeck = Math.round(deckAt * sr) - Math.round((p.start - st.off + deckRec.off) * sr);
+      if (Math.abs(fromDeck - idxT) > 0.002 * sr) log(`addons: the tail follows the addon deck, ${((fromDeck - idxT) / sr * 1000).toFixed(1)} ms from YouTube's copy`);
+      idxT = fromDeck;
+    }
     if (idxT < 0 || p.mono.length - idxT < sr * 0.8) { retryOrGiveUp('tail too short'); return; }
 
     // The element's own volume/normalisation is already baked into what we
@@ -748,9 +769,10 @@
     // filter mix's high-pass. Flat / open for a plain crossfade.
     const bass = new BiquadFilterNode(ctx, { type: 'lowshelf', frequency: 250, gain: 0 });
     const high = new BiquadFilterNode(ctx, { type: 'highshelf', frequency: 4000, gain: 0 });
-    const hp = new BiquadFilterNode(ctx, { type: 'highpass', frequency: 20, Q: 0.7 });
+    // (open: a high-pass at 0 Hz and a low-pass at Nyquist pass the samples through unchanged)
+    const hp = new BiquadFilterNode(ctx, { type: 'highpass', frequency: 0, Q: 0.7 });
     // AutoDJ (version 2): the outgoing song's highs close through a low-pass
-    const lp = mix?.v2 && (mix.style === 'blend' || mix.style === 'filter') ? new BiquadFilterNode(ctx, { type: 'lowpass', frequency: 20000, Q: 0.7 }) : null;
+    const lp = mix?.v2 && (mix.style === 'blend' || mix.style === 'filter') ? new BiquadFilterNode(ctx, { type: 'lowpass', frequency: ctx.sampleRate / 2, Q: 0.7 }) : null;
     const vol = ctx.createGain();
     const srcGain = ctx.createGain();
     src.buffer = p.buf;
@@ -814,6 +836,7 @@
     }
     live = me;
     plan = null;
+    addonEvent('handover', { id: me.oldId, T, aPos: me.aPos, addonTail: !!p.addon, base, t0: me.t0 ?? null, style: mix?.style || null, outRate: mix?.outRate ?? null, glide: !!mix?.glide });
     log('handover done, tail gain', base.toFixed(2), mix ? `, blend in ${(me.t0 - ctx.currentTime).toFixed(2)} s, pressing next in ${(me.askAt - ctx.currentTime).toFixed(2)} s` : ', pressing next');
     // (a speed-up stops the copy at its start on purpose: the stretch deck plays on, so the mix goes on)
     if (!me.deckRamp) src.onended = () => { if (live === me) finishLive(); };
@@ -854,7 +877,8 @@
   // Flat / open again: the player path's automix EQ and filters.
   function resetPlayerFilters(g) {
     const now = g.ctx.currentTime;
-    for (const [param, v] of [[g.bassFilter?.gain, 0], [g.highFilter?.gain, 0], [g.highpass?.frequency, 20], [g.lowpass?.frequency, 20000]]) {
+    // (at rest exactly transparent: a high-pass at 0 Hz and a low-pass at Nyquist pass the samples through)
+    for (const [param, v] of [[g.bassFilter?.gain, 0], [g.highFilter?.gain, 0], [g.highpass?.frequency, 0], [g.lowpass?.frequency, g.ctx.sampleRate / 2]]) {
       if (!param) continue;
       param.cancelScheduledValues(now);
       param.setValueAtTime(v, now);
@@ -1248,20 +1272,48 @@
       await ensureLoopDecks(g);
       if (!still()) return;
       if (live?.mix?.style === 'loop') return none('a loop mix is still playing');
+      // an addon's copy (ready, at this rate): the decks and the tail play its sound in YouTube's
+      // copy's place (the plan stays YouTube's); the playing song's only while its addon deck plays
+      // (the tail and the outgoing deck are then the same samples). A copy that comes after the
+      // load (the next song's file, the playing song's addon deck) is loaded then (me.reload).
+      const AP = window.__viviAddonsPage;
+      const outPlayOf = () => { const r = AP?.isOn() ? readyRec(curId) : null; return r && sdeck?.addon && sdeck.addonId === curId && r.buf.sampleRate === outBuffer.sampleRate ? addonView(r, outBuffer) : null; };
+      const inPlayOf = () => { const r = AP?.isOn() ? readyRec(nextId) : null; return r && r.buf.sampleRate === inBuffer.sampleRate ? addonView(r, inBuffer) : null; };
+      const outAddon = outPlayOf(), inAddon = inPlayOf();
+      const outRegion = [Math.max(0, cur.durationSec - A.LOOP.OUT_REGION_SEC), cur.durationSec];
+      const inRegion = [0, Math.min(nxt.durationSec, A.LOOP.IN_REGION_SEC)];
       const load = deckLoads.then(async () => {
         if (!still()) return false;
-        await loopDecks[0].load(curId, outBuffer, Math.max(0, cur.durationSec - A.LOOP.OUT_REGION_SEC), cur.durationSec);
-        await loopDecks[1].load(nextId, inBuffer, 0, Math.min(nxt.durationSec, A.LOOP.IN_REGION_SEC));
+        await loopDecks[0].load(curId, outAddon || outBuffer, ...outRegion);
+        await loopDecks[1].load(nextId, inAddon || inBuffer, ...inRegion);
         return true;
       });
       deckLoads = load.catch(() => false);
       if (!(await load)) return;
       const from = Math.max(0, plan.out.loop[0] - HAND_LEAD - 4);
       const a = Math.floor(from * outBuffer.sampleRate);
-      const channels = [];
-      for (let c = 0; c < Math.min(2, outBuffer.numberOfChannels); c++) channels.push(outBuffer.getChannelData(c).slice(a));
+      const cut = (src) => { const ch = []; for (let c = 0; c < Math.min(2, outBuffer.numberOfChannels); c++) ch.push(src.getChannelData(c).slice(a)); return ch; };
       if (!still()) return;
-      Object.assign(me, { state: 'ready', plan, tail: { channels, sampleRate: outBuffer.sampleRate, start: a / outBuffer.sampleRate } });
+      Object.assign(me, { state: 'ready', plan, tail: { channels: cut(outAddon || outBuffer), sampleRate: outBuffer.sampleRate, start: a / outBuffer.sampleRate }, outAddon: !!outAddon, inAddon: !!inAddon });
+      // a copy ready after the load: its deck is loaded again, before the mix only; the playing
+      // song's only while its tail isn't cut yet (the tail and the outgoing deck stay the same samples)
+      me.reload = () => {
+        if (loopPrep !== me || live?.mix?.style === 'loop' || !st || st.id !== curId) return;
+        const vin = me.inAddon ? null : inPlayOf();
+        const vout = me.outAddon || (plan && plan.id === curId && plan.loop) ? null : outPlayOf();
+        if (!vin && !vout) return;
+        if (vin) me.inAddon = true;
+        if (vout) { me.outAddon = true; me.tail = { ...me.tail, channels: cut(vout) }; }
+        const ok = () => loopPrep === me && live?.mix?.style !== 'loop';
+        deckLoads = deckLoads.then(async () => {
+          if (vout && ok()) await loopDecks[0].load(curId, vout, ...outRegion);
+          if (vin && ok()) await loopDecks[1].load(nextId, vin, ...inRegion);
+        }).catch(() => false);
+        addonEvent('loopdecks', { id: nextId, out: me.outAddon, in: me.inAddon, late: true });
+        log(`addons: the loop mix now plays ${[vout && 'the playing song', vin && 'the next song'].filter(Boolean).join(' and ')} from the addon's copy`);
+      };
+      addonEvent('loopdecks', { id: nextId, out: me.outAddon, in: me.inAddon });
+      if (me.outAddon || me.inAddon) log(`addons: the loop mix plays ${[me.outAddon && 'the playing song', me.inAddon && 'the next song'].filter(Boolean).join(' and ')} from the addon's copy`);
       log(`automix: loop mix ready: ${plan.out.bars}-bar loop at ${plan.out.loop[0].toFixed(2)} s (${plan.out.bpm.toFixed(1)} BPM, ${plan.out.checkedBy === 'lyrics' ? 'no lyric line' : 'sung ' + ((plan.out.vocal ?? 0) * 100).toFixed(1) + '%'}) into a ${plan.in.bars}-bar loop at ${plan.in.loop[0].toFixed(2)} s (${plan.in.bpm.toFixed(1)} BPM, ${plan.in.checkedBy === 'lyrics' ? 'no lyric line' : 'sung ' + ((plan.in.vocal ?? 0) * 100).toFixed(1) + '%'}), ramp ${plan.rampBars} bars, ${plan.totalBars} bars in all`);
     } catch (e) {
       if (loopPrep !== me) return;
@@ -1365,7 +1417,9 @@
     deckTapOf(idk, g.ctx);
     setTimeout(() => matchInLevel(L, tk - 0.05, 'loop'), Math.max(0, (tk - 0.45 - now) * 1000));
     log(`automix: the new song waits on the player, taking over in ${(tk - now).toFixed(2)} s`);
-    startStreamDeck(g, v, st.id, tk, H, L);
+    addonEvent('takeover', { id: st.id, tk, H, startPos: trackAt(tk), inAddon: !!loopPrep.inAddon, style: 'loop' });
+    // (an addon deck takes over from the incoming deck where the schedule puts the song)
+    startStreamDeck(g, v, st.id, tk, H, L, trackAt(tk));
     L.phase = 'mixing';
     L.mixId = st.id;
   }
@@ -1421,8 +1475,9 @@
       f.setValueAtTime(s.inHp[0], pre);
       if (t0 > pre + 0.002) f.setValueAtTime(s.inHp[0], t0 - 0.001);
       fadeCurve(f, s.inHp, t0, D);
+      f.setValueAtTime(0, t0 + D + 0.002);   // the curve ends open (20 Hz): then exactly transparent
     }
-    for (const [node, curve, open] of [[live.lp, s.outLp, 20000], [live.hp, s.outHp, 20]]) {
+    for (const [node, curve, open] of [[live.lp, s.outLp, g.ctx.sampleRate / 2], [live.hp, s.outHp, 0]]) {
       if (!node) continue;
       const f = node.frequency, ease = Math.max(live.T + SWITCH + 0.01, t0 - 0.03);
       f.cancelScheduledValues(ease);
@@ -1491,7 +1546,7 @@
     } else if (style === 'filter') {
       if (g.bassFilter) swap(g.bassFilter.gain, live.bass.gain);
       live.hp.frequency.setValueAtTime(20, t0); live.hp.frequency.exponentialRampToValueAtTime(1800, t0 + D);
-      if (g.lowpass) { const lp = g.lowpass.frequency; lp.setValueAtTime(350, pre); lp.setValueAtTime(350, t0); lp.exponentialRampToValueAtTime(20000, t0 + D); }
+      if (g.lowpass) { const lp = g.lowpass.frequency; lp.setValueAtTime(350, pre); lp.setValueAtTime(350, t0); lp.exponentialRampToValueAtTime(20000, t0 + D); lp.setValueAtTime(g.ctx.sampleRate / 2, t0 + D + 0.002); }
     }
 
     const name = m.v2 && style !== 'crossfade' ? (window.__viviAutomix?.getVersion?.() === 3 ? 'Automix v2' : 'Automix Classic') : 'Automix';
@@ -1553,7 +1608,8 @@
     // the start of the song, past where a late take-over could still need it
     const want = Math.min(A.get(id)?.durationSec || Infinity, Math.max(120, p.mixInTrackTime + (p.durationSec + 45) * (p.rate || 1)));
     if (inPrep.key === id) {
-      if (inPrep.state === 'loading' || (inPrep.state === 'ready' && inPrep.want >= want - 1)) return;
+      // (YouTube's copy is on it and the addon's is ready now: loaded again with the addon's)
+      if (inPrep.state === 'loading' || (inPrep.state === 'ready' && inPrep.want >= want - 1 && (inPrep.addon || !readyRec(id)))) return;
       if (inPrep.state === 'none' && performance.now() < inPrep.retryAt) return;   // failed: tried again later
     }
     if (live?.inDeck) return;   // the deck still plays the last blend
@@ -1561,7 +1617,12 @@
     inPrep = me;
     try {
       await ensureInDeck(g);
-      const buf = await decodeAside(g, await A.audioBytes(id));
+      // an addon's copy of the next song when it is ready (on the song's timeline), else YouTube's
+      const rec = window.__viviAddonsPage?.isOn() ? readyRec(id) : null;
+      const buf = rec && rec.buf.sampleRate === g.ctx.sampleRate
+        ? addonSpan(g.ctx, rec, 0, Math.ceil(Math.max(1, Math.min(want, rec.buf.duration - rec.off)) * g.ctx.sampleRate))
+        : await decodeAside(g, await A.audioBytes(id));
+      me.addon = buf !== null && !!rec && rec.buf.sampleRate === g.ctx.sampleRate;
       if (inPrep !== me) return;
       if (live?.inDeck) { inPrep = { key: '', state: 'idle', end: 0, want: 0, why: '', retryAt: 0 }; return; }
       const end = Math.min(buf.duration, want);
@@ -1575,7 +1636,7 @@
         me.kick = A.kickSource(ch, buf.sampleRate, 0, 0, end);
       }
       me.state = 'ready';
-      log(`automix: the next song's first ${end.toFixed(0)} s are on the incoming deck`);
+      log(`automix: the next song's first ${end.toFixed(0)} s are on the incoming deck${me.addon ? ` (${rec.name}'s copy)` : ''}`);
     } catch (e) {
       if (inPrep !== me) return;
       me.state = 'none'; me.why = String(e?.message || e);
@@ -1617,6 +1678,7 @@
     out.cancelScheduledValues(now); out.setValueAtTime(1, now); fadeCurve(out, cOut, t0, D);
     blendShape(g, m.style, t0, D, rate);
     live.handoffAt = t0 + D / 2;
+    addonEvent('blend', { id: m.nextId, t0, D, rate, mixIn: m.mixInTrackTime, mixOut: m.mixOutTrackTime, glide: !!G, inAddon: !!inPrep.addon });
     live.src.onended = null;   // the mix may run on the deck past the old song's end (a late take-over)
     log(`automix: ${m.style}, ${D.toFixed(1)} s, starting in ${(t0 - now).toFixed(2)} s on the incoming deck (next song from ${m.mixInTrackTime.toFixed(2)} s at x${rate.toFixed(3)}); the player moves on in ${(live.askAt - now).toFixed(2)} s${djNote(m, m.style)}`);
   }
@@ -1693,7 +1755,8 @@
     if (!G && early < tk - 1.2) setTimeout(() => matchInLevel(L, early + 0.8), (early - now) * 1000);
     setTimeout(() => matchInLevel(L, tk - 0.05), Math.max(0, (tk - 0.45 - now) * 1000));
     log(`automix: the new song waits on the player, taking over from the incoming deck in ${(tk - now).toFixed(2)} s${G ? ` (the deck glides from x${rate.toFixed(3)} to x1.000 first, ${(G.end - L.t0 - L.D).toFixed(1)} s; the player stays at x1.000)` : ''}`);
-    startStreamDeck(g, v, st.id, tk, H, L);
+    addonEvent('takeover', { id: st.id, tk, H, startPos: trackAt(tk), inAddon: !!inPrep.addon });
+    startStreamDeck(g, v, st.id, tk, H, L, trackAt(tk));
     L.mixEnd = tk;
     L.phase = 'mixing';
     L.mixId = st.id;
@@ -1707,7 +1770,14 @@
   // between two copies of the same audio. On any trouble it hands the sound back
   // to the player, already at the same spot. It plays until the next mix's hand-over.
   let sdeck = null;
-  async function startStreamDeck(g, v, id, takeAt, takeSec, L) {
+  async function startStreamDeck(g, v, id, takeAt, takeSec, L, startPos = null) {
+    // an addon's copy of the new song is ready: the addon deck takes over from the incoming deck
+    // at the blend's end, where the schedule puts the song (startPos), instead of YouTube's copy
+    const AP = window.__viviAddonsPage, rec = AP?.isOn() ? readyRec(id) : null;
+    if (rec && startPos != null && window.__viviBufferDeck && rec.buf.sampleRate === g.ctx.sampleRate) {
+      const run = adeck = { id, state: 'starting' };
+      try { await playAddon(g, v, rec, run, AP, { takeAt, takeSec, startPos }); return; } catch (e) { log('addons: the addon deck could not take over:', e?.message || e); }
+    }
     streamDeckBack('a new song');
     const SD = window.__viviStreamDeck, A = window.__viviAutomix;
     if (!userStreamDeck || !SD || !A || !g.bassFilter) return;
@@ -1748,6 +1818,218 @@
     const d = sdeck;
     sdeck = null;
     d?.dispose(why);
+  }
+
+  // ───────── addon audio (spec/addons/protocol.md §8, PC; offset-map.md) ─────────
+  // When an addon has a song, its file is fetched (by the background), fitted to
+  // YouTube's own audio of the song, levelled and decoded: a `rec` (file seconds =
+  // song seconds + rec.off, at gain rec.k). The playing song's plays on the addon
+  // deck (addons/buffer-deck.js) in step with YouTube, muted underneath. It is
+  // `sdeck`, so the next mix releases it, onto a tail cut from the same file; the
+  // next song's rec is made ahead, so the blend's incoming deck plays it too and
+  // the addon deck takes over from that deck at the blend's end. On any trouble
+  // it hands the sound back to YouTube at the same spot.
+  let adeck = null;   // { id, state } for the song the addon deck last ran for
+  const prepared = new Map();   // song id -> { promise, rec?, none? }: the playing song's, the next one's, the last one's
+  const addonEvents = [];       // what the addon path did, on the audio clock (tests)
+  const addonEvent = (ev, x = {}) => { addonEvents.push({ ...x, ev, t: graph()?.ctx.currentTime ?? null }); if (addonEvents.length > 60) addonEvents.shift(); };
+  const readyRec = (id) => (id && prepared.get(id)?.rec) || null;
+  let addonTapFor = null, addonTapP = null;
+  function addonTap(g) {
+    if (addonTapFor !== g) {
+      addonTapFor = g;
+      addonTapP = window.__viviBufferDeck.tap(g.ctx, g.source).catch((e) => { log('addons: no tap on YouTube\'s output:', e?.message || e); return null; });
+    }
+    return addonTapP;
+  }
+  function addonTick(g, v) {
+    const AP = window.__viviAddonsPage;
+    if (!AP?.isOn() || !st || st.ad || !st.id) return;
+    if (adeck?.id !== st.id && !live) {
+      const run = adeck = { id: st.id, state: 'starting' };
+      startAddonDeck(g, v, run, AP).catch((e) => {
+        run.state = 'failed';
+        AP.note(run.id, { play: { state: 'failed', why: String(e?.message || e) } });
+        log('addons: no addon audio for this song:', e?.message || e);
+      });
+    }
+    loopPrep.reload?.();   // a loop mix loaded before an addon copy was there
+    // the next song, ahead of the mix: fetched, fitted and decoded while this one plays
+    const nx = st.next;
+    if (nx && nx !== st.id && !prepared.has(nx) && adeck?.id === st.id && !['starting', 'fetching', 'fitting'].includes(adeck.state)
+      && v.currentTime - st.off > 10 && window.__viviAutomix?.isEnabled?.()) {
+      prepareAddon(g, nx, AP, 0).then((r) => {
+        if (r.rec) log(`addons: the next song is ready from ${r.rec.name}: offset ${(r.rec.off * 1000).toFixed(1)} ms, level ${r.rec.gainDb >= 0 ? '+' : ''}${r.rec.gainDb.toFixed(2)} dB`);
+        else log('addons: no addon audio for the next song:', r.none);      });
+    }
+  }
+  async function decodeAt(bytes, rate, channels) {
+    const c = new OfflineAudioContext(channels, 1, rate);
+    return c.decodeAudioData(bytes.slice(0));   // (decoding detaches its input)
+  }
+  // a channel copied into an array of our own: in a Firefox content script getChannelData's
+  // array is the page's, and every read through its wrapper is slow (a song's level took 25 s)
+  const ownChannel = (buf, c) => { const x = new Float32Array(buf.length); buf.copyFromChannel(x, c); return x; };
+  const monoOf = (buf) => {
+    if (buf.numberOfChannels === 1) return ownChannel(buf, 0);
+    const out = new Float32Array(buf.length), n = buf.numberOfChannels;
+    for (let c = 0; c < n; c++) { const d = ownChannel(buf, c); for (let i = 0; i < out.length; i++) out[i] += d[i] / n; }
+    return out;
+  };
+  // an addon's audio on the song's own timeline: `len` samples from song second `from`, at its level
+  // (what the tail and the incoming deck play: YouTube's copy's place, the file's sound)
+  function addonSpan(ctx, rec, from, len) {
+    const out = ctx.createBuffer(2, Math.max(1, len), rec.buf.sampleRate);
+    for (let c = 0; c < 2; c++) out.copyToChannel(addonSamples(rec, c, from, Math.max(1, len)), c);
+    return out;
+  }
+  // one channel of it (silence where the file has none)
+  function addonSamples(rec, c, from, len) {
+    const sr = rec.buf.sampleRate, dst = new Float32Array(Math.max(0, len));
+    const start = Math.round((from + rec.off) * sr), s = Math.max(0, start);
+    if (dst.length && s < rec.buf.length && s - start < dst.length) rec.buf.copyFromChannel(dst.subarray(s - start), Math.min(c, rec.buf.numberOfChannels - 1), s);
+    if (rec.k !== 1) for (let i = 0; i < dst.length; i++) dst[i] *= rec.k;
+    return dst;
+  }
+  // an addon's copy standing in for YouTube's decoded copy `like` (song seconds from 0): the loop
+  // decks and the tail read slices of it, the same timeline with the file's sound
+  const addonView = (rec, like) => ({
+    sampleRate: like.sampleRate, length: like.length, duration: like.duration, numberOfChannels: 2,
+    getChannelData: (c) => ({ slice: (a = 0, b = like.length) => addonSamples(rec, c, a / like.sampleRate, Math.min(b, like.length) - a) }),
+  });
+  // FIND, OPEN, the file, YouTube's audio, the fit, the level and the decode, once per song
+  function prepareAddon(g, id, AP, durSec, say = () => {}) {
+    const have = prepared.get(id);
+    if (have) return have.promise;
+    // kept: the playing song's, the next one's and the last one's (the mix's tail)
+    for (const k of [...prepared.keys()]) if (prepared.size >= 3 && k !== st?.id && k !== st?.next && k !== adeck?.id && k !== live?.oldId) prepared.delete(k);
+    const me = {};
+    me.promise = (async () => {
+      const F = window.__viviOffsetFit, A = window.__viviAutomix;
+      const s = await AP.openFor(id, durSec);
+      if (s?.state !== 'ready') return { none: s?.why || 'no addon has it', state: 'none' };
+      say('fetching');
+      const t0 = performance.now();
+      const file = await AP.fetchFor(id);
+      if (!file.bytes) throw new Error(file.none);
+      say('fitting');
+      // YouTube's own audio of the song: Automix's download, which may not have started yet
+      // (the page answers "not downloaded" at once then), so it is asked again for up to a minute
+      let ytBytes = null, why = '';
+      for (let i = 0; i < 30 && !ytBytes && prepared.get(id) === me; i++) {
+        if (i) await new Promise((r) => setTimeout(r, 2000));
+        ytBytes = await A.audioBytes(id).catch((e) => { why = String(e?.message || e); return null; });
+        if (!ytBytes && !/not downloaded|loading/.test(why)) break;
+      }
+      if (!ytBytes) throw new Error('YouTube\'s audio of the song: ' + (why || 'not downloaded'));
+      const t1 = performance.now();
+      const [ytBuf, adBuf] = await Promise.all([decodeAt(ytBytes, F.FIT_RATE, 2), decodeAt(file.bytes, F.FIT_RATE, 2)]);
+      const yt = monoOf(ytBuf), ad = monoOf(adBuf);
+      const fit = F.fit(yt, ad, { slackSec: 5 });
+      if (fit.none) {
+        log(`addons: ${s.addon.name} (${s.addon.host}) refused for this song: ${fit.none}`, fit);
+        return { none: fit.none, state: 'refused', fit };
+      }
+      // the whole file at the audio context's rate (what the decks play), and its level: YouTube's
+      // loudness minus the file's, a boost at most +6 dB, the true peak kept at or under -1 dBTP
+      const full = await decodeAt(file.bytes, g.ctx.sampleRate, 2);
+      const ytLufs = F.integratedLufs(yt, F.FIT_RATE), addonLufs = F.integratedLufs(ad, F.FIT_RATE);
+      const addonChannels = ytLufs > addonLufs ? Array.from({ length: full.numberOfChannels }, (_, c) => ownChannel(full, c)) : [];
+      const lvl = F.sourceGainDb({ ytLufs, addonLufs, addonChannels, rate: g.ctx.sampleRate });
+      const t3 = performance.now();
+      const rec = {
+        id, buf: full, off: fit.offsetSec, k: 10 ** (lvl.gainDb / 20), gainDb: lvl.gainDb, lvl, fit,
+        name: s.addon.name, host: s.addon.host, stream: s.stream,
+        took: { all: t3 - t0, fetch: t1 - t0, fit: t3 - t1 },
+      };
+      log(`addons: ${rec.name} (${rec.host}) fits: offset ${(rec.off * 1000).toFixed(1)} ms (score ${fit.score.toFixed(3)}, check ${fit.checkScore.toFixed(3)} at ${fit.checkSec.toFixed(0)} s), ` +
+        `level ${lvl.gainDb >= 0 ? '+' : ''}${lvl.gainDb.toFixed(2)} dB (wanted ${lvl.wantDb?.toFixed(2)}${lvl.capped ? ', capped by ' + lvl.capped : ''}), ` +
+        `${full.sampleRate} Hz x ${full.numberOfChannels}, ready after ${((t3 - t0) / 1000).toFixed(1)} s (fetch and YouTube's audio ${((t1 - t0) / 1000).toFixed(1)} s, fit, level and decode ${((t3 - t1) / 1000).toFixed(1)} s)`);
+      return { rec };
+    })().then((r) => { if (prepared.get(id) === me) Object.assign(me, r); return r; },
+      (e) => { if (prepared.get(id) === me) prepared.delete(id); return { none: String(e?.message || e), state: 'failed' }; });
+    prepared.set(id, me);
+    return me.promise;
+  }
+  async function startAddonDeck(g, v, run, AP) {
+    const id = run.id;
+    const gone = () => adeck !== run || st?.id !== id || !!live;
+    const say = (state, extra = {}) => { run.state = state; AP.note(id, { play: { state, ...extra } }); };
+    const missing = [!window.__viviOffsetFit && 'offset fit', !window.__viviBufferDeck && 'addon deck', !window.__viviAutomix && 'automix', !g.bassFilter && 'audio graph'].filter(Boolean);
+    if (missing.length) throw new Error('missing parts: ' + missing.join(', '));
+    addonTap(g);   // made now, so it holds YouTube's last moments by the time the deck needs them
+    const r = await prepareAddon(g, id, AP, st.dur, (s) => { if (!gone()) say(s); });
+    if (gone()) return;
+    if (!r.rec) { if (r.state === 'failed') throw new Error(r.none); say(r.state, { why: r.none, fit: r.fit }); return; }
+    await playAddon(g, v, r.rec, run, AP, {});
+  }
+  // the addon deck plays `rec` from now (anchored on YouTube's output), or from takeAt at song second startPos
+  async function playAddon(g, v, rec, run, AP, { takeAt = 0, takeSec, startPos = null }) {
+    const id = rec.id, BD = window.__viviBufferDeck;
+    const say = (state, extra = {}) => { run.state = state; AP.note(id, { play: { state, ...extra } }); };
+    const tp = await addonTap(g);
+    if (adeck !== run || st?.id !== id) return;
+    streamDeckBack('the addon\'s copy takes over');
+    const d = BD.create(g.ctx, g.bassFilter);
+    d.addon = true;
+    d.addonId = id;
+    d.load(rec.buf, rec.off);
+    sdeck = d;
+    say('playing', { offsetSec: rec.off, gainDb: rec.lvl.gainDb, wantDb: rec.lvl.wantDb, capped: rec.lvl.capped, score: rec.fit.score, checkScore: rec.fit.checkScore });
+    addonEvent('deck', { id, takeAt, startPos, off: rec.off, k: rec.k });
+    d.follow({
+      clock: () => (st && st.id === id && !st.ad && graph() === g ? { pos: v.currentTime - st.off, playing: !v.paused && !v.seeking && v.readyState >= 3 } : null),
+      level: () => (v.muted ? 0 : v.volume) * rec.k,   // the element's volume times the file's correction
+      gate: g.gate.gain, tap: tp, takeAt, takeSec, startPos,
+      onHandback: (why) => { if (sdeck === d) sdeck = null; d.dispose(); if (adeck === run) say('handed back', { why }); addonEvent('handback', { id, why }); },
+    });
+  }
+
+  // Tests (the test Firefox): records what the audio graph plays (`out`: its output, `deck`: the
+  // addon deck, `yt`: YouTube's own output), with exact audio frames, and hands it over with the
+  // addon files' spans and the events; the numbers are worked out on the test's side.
+  const recTaps = {};
+  async function addonRecTest(d) {
+    const reply = (data, transfer = []) => window.postMessage({ ch: CHANNEL, dir: 'fixture', reqId: d.reqId, ...data }, window.location.origin, transfer);
+    try {
+      const g = graph(), BD = window.__viviBufferDeck;
+      if (!g || !BD) throw new Error('no audio graph');
+      if (d.op === 'start') {
+        const nodes = { out: g.out, mix: g.mix, deck: sdeck?.out, yt: g.source };
+        for (const name of d.sources || ['out']) {
+          if (!nodes[name]) throw new Error('nothing to record: ' + name);
+          recTaps[name]?.close();
+          recTaps[name] = await BD.tap(g.ctx, nodes[name], { frames: 4096 });
+          await recTaps[name].record(true);
+        }
+        reply({ ok: true, at: g.ctx.currentTime });
+      } else if (d.op === 'stop') {
+        const recs = {}, transfer = [];
+        for (const [name, t] of Object.entries(recTaps)) {
+          await t.record(false);
+          recs[name] = t.take();
+          transfer.push(...recs[name].chans.map((a) => a.buffer));
+          t.close(); delete recTaps[name];
+        }
+        const refs = {};
+        for (const r of d.refs || []) {
+          const rec = readyRec(r.id);
+          if (!rec) continue;
+          const sr = rec.buf.sampleRate, from = Math.max(0, Math.floor(r.from * sr)), to = Math.min(rec.buf.length, Math.ceil(r.to * sr));
+          const chans = [0, 1].map((c) => { const x = new Float32Array(Math.max(0, to - from)); rec.buf.copyFromChannel(x, Math.min(c, rec.buf.numberOfChannels - 1), from); return x; });
+          refs[r.id] = { from: from / sr, rate: sr, off: rec.off, k: rec.k, chans };
+          transfer.push(...chans.map((a) => a.buffer));
+        }
+        reply({ ok: true, rate: g.ctx.sampleRate, recs, refs, events: addonEvents.slice() }, transfer);
+      } else if (d.op === 'state') {
+        reply({
+          ok: true, now: g.ctx.currentTime, rate: g.ctx.sampleRate, events: addonEvents.slice(), deck: sdeck?.stats?.() || null, deckIsAddon: !!sdeck?.addon,
+          prepared: [...prepared.entries()].map(([id, p]) => ({ id, ready: !!p.rec, none: p.none || null, off: p.rec?.off, k: p.rec?.k, rate: p.rec?.buf.sampleRate, len: p.rec?.buf.duration, name: p.rec?.name, stream: p.rec?.stream })),
+          live: live ? { phase: live.phase, oldId: live.oldId, mixId: live.mixId, T: live.T, t0: live.t0, D: live.D, inDeck: !!live.inDeck, style: live.mix?.style } : null,
+          inPrep: { key: inPrep.key, state: inPrep.state, addon: !!inPrep.addon, end: inPrep.end },
+        });
+      }
+    } catch (e) { reply({ ok: false, error: String(e?.message || e) }); }
   }
 
   // The player's level for this song (YouTube's own volume and normalisation)
@@ -2080,6 +2362,9 @@
       const tw = track.getBoundingClientRect().width || 1;
       const base = clamp((primary?.getBoundingClientRect().width || 0) / tw, 0, 1);
       if (primary) fill.style.background = getComputedStyle(primary).backgroundColor;
+      // the overview's button (automix-overview.js) pulses with the fill: its colour, the label's beat
+      bar.style.setProperty('--vivi-mix-color', fill.style.background || '#fff');
+      bar.style.setProperty('--vivi-mix-pulse', (0.35 + 0.65 * m.alpha).toFixed(3));
       fill.style.width = ((base + (1 - base) * m.cover) * 100).toFixed(2) + '%';
       fill.style.opacity = String(m.alpha);
       if (time) time.style.opacity = String(1 - m.cover);
@@ -2094,6 +2379,8 @@
       fill.style.opacity = '0';
       if (time) time.style.opacity = '';
       if (label) label.style.opacity = '0';
+      bar.style.removeProperty('--vivi-mix-color');
+      bar.style.removeProperty('--vivi-mix-pulse');
       mixUiShown = false;
     }
     if (m?.active || beat) mixUiFrame = requestAnimationFrame(() => { mixUiFrame = 0; kickMixUi(); });
@@ -2141,6 +2428,7 @@
     if (!N || !g || !v || !st || performance.now() - stAt > 1500) return;
     if (g.ctx.state !== 'running' || g.video !== document.querySelector('#movie_player video, ytmusic-player video, video')) return;
     watchVideo(v);
+    addonTick(g, v);   // an addon's copy of the playing song, when one has it
     if (window.__viviAutomix?.isEnabled()) warmDecks(g);
     // The last blend's incoming song gliding back to its own tempo: its rate is ours, not the user's.
     if (deck && deck.id !== st.id) deck.cancel();
