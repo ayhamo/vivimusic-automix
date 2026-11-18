@@ -66,8 +66,7 @@
           { "item": "src/vendor/signalsmith-stretch.js", "before": "src/crossfade.js" },
           { "item": "src/plus/stream-deck.js", "before": "src/crossfade.js" },
           { "item": "src/automix-overview.js", "after": "src/crossfade.js" },
-          { "item": "src/music-only.js", "after": "src/automix-overview.js" },
-          { "item": "src/plus/pill-bar.js", "after": "src/music-only.js" }
+          { "item": "src/music-only.js", "after": "src/automix-overview.js" }
         ]
       },
       "css": {
