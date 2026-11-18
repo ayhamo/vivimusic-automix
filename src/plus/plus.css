@@ -462,6 +462,7 @@ ytmusic-player-bar .thumbnail-image-wrapper:has(> .vivi-addon-art-badge) { posit
 }
 .vivi-addon-art-badge[hidden] { display: none; }
 .vivi-addon-art-badge svg { width: 11px; height: 6px; fill: rgba(255, 255, 255, 0.85); }
+.vivi-addon-art-badge[data-kind="high"] svg { width: 10px; height: 10px; }   /* square glyph: not squashed */
 .vivi-addon-art-badge[data-kind="upgrading"] { animation: vivi-q-pulse 900ms cubic-bezier(0.4, 0, 0.2, 1) infinite alternate; }
 /* the shimmering (confirmed) state: the glyph at 0.7 white; the others stay at 0.45 like the text */
 .vivi-addon-badge[data-kind="lossless"] svg { fill: rgba(255, 255, 255, 0.7); }

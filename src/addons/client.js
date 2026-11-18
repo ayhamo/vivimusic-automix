@@ -92,7 +92,9 @@
 
   // §1: settings' defaults in order, then quality; atmos=false in place of a declared atmos default (ours)
   // tiers: LOSSLESS (the addon's best: its first option), HIRES, CD, HIGH, LOW
-  const WANT = { HIRES: /hi-?res|24[\s-]?bit|192\s*k|96\s*k/i, CD: /\bcd\b|16[\s-]?bit|44\.1/i };
+  // (sample rates only with their unit, so "96 kbps" is never Hi-Res; lossy options never count)
+  const WANT = { HIRES: /hi[\s_-]?res|24[\s-]?bit|(192|176\.4|96|88\.2)\s*k\s*hz/i, CD: /\bcd\b|16[\s-]?bit|44\.1\s*k\s*hz/i };
+  const LOSSY = /kbps|mp3|aac|opus|vorbis|\bogg\b/i;
   function paramsFor(manifest, tier = 'LOSSLESS', picked = null) {
     const out = [];
     for (const s of manifest?.settings || []) {
@@ -106,7 +108,7 @@
       const vals = q.options.map((o) => text(o.value));
       if (tier === 'LOSSLESS') quality = picked != null && vals.includes(text(picked)) ? text(picked) : vals[0];
       // Hi-Res or CD: the option that names it, else (CD) one called "lossless", else the first
-      else if (WANT[tier]) quality = vals.find((v, i) => WANT[tier].test(v) || WANT[tier].test(text(q.options[i].label))) ?? (tier === 'CD' ? vals.find((v) => v.toLowerCase() === 'lossless') : null) ?? vals[0];
+      else if (WANT[tier]) quality = vals.find((v, i) => { const l = text(q.options[i].label); return !LOSSY.test(v) && !LOSSY.test(l) && (WANT[tier].test(v) || WANT[tier].test(l)); }) ?? (tier === 'CD' ? vals.find((v) => v.toLowerCase() === 'lossless') : null) ?? vals[0];
       else {
         const re = tier === 'LOW' ? /low|96|128|min/i : /high|320|normal|standard/i;
         const by = (r) => vals.find((v, i) => r.test(v) || r.test(text(q.options[i].label)));

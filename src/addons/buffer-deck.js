@@ -71,7 +71,13 @@
       const w = waits.get(m.id);
       if (w) { waits.delete(m.id); w(m); }
     };
-    const ask = (msg) => new Promise((resolve) => { const id = ++seq; waits.set(id, resolve); node.port.postMessage({ ...msg, id }); });
+    // (a closed tap answers at once, empty: a deck anchoring on it must not wait forever)
+    let closed = false;
+    const empty = () => ({ chans: [new Float32Array(0), new Float32Array(0)], end: 0, filled: 0, closed: true });
+    const ask = (msg) => new Promise((resolve) => {
+      if (closed) { resolve(empty()); return; }
+      const id = ++seq; waits.set(id, resolve); node.port.postMessage({ ...msg, id });
+    });
     return {
       node,
       grab: (n) => ask({ cmd: 'grab', frames: n }),
@@ -86,7 +92,13 @@
         chunks.length = 0;
         return { start, chans, chunks: count, gaps };   // gaps: frames the worklet never handed over (0 expected)
       },
-      close() { try { source.disconnect(node); } catch { /* gone */ } node.port.postMessage({ cmd: 'close' }); node.port.onmessage = null; },
+      close() {
+        try { source.disconnect(node); } catch { /* gone */ }
+        node.port.postMessage({ cmd: 'close' }); node.port.onmessage = null;
+        closed = true;
+        for (const w of waits.values()) w(empty());
+        waits.clear();
+      },
     };
   }
 
@@ -200,7 +212,8 @@
       if (this.tp) {
         let g = await this.tp.grab(L + Math.round(0.05 * sr));
         // a tap only just made holds too little yet
-        for (let i = 0; i < 10 && g.filled < L + 128; i++) { await new Promise((r) => setTimeout(r, 100)); g = await this.tp.grab(L + Math.round(0.05 * sr)); }
+        for (let i = 0; i < 10 && !g.closed && g.filled < L + 128; i++) { await new Promise((r) => setTimeout(r, 100)); g = await this.tp.grab(L + Math.round(0.05 * sr)); }
+        if (g.closed || g.chans[0].length < L) return { t: tRead, at: est(tRead), score: null, by: 'time' };   // the tap closed meanwhile
         const guess = Math.round(est(g.end / sr) * sr) - L;
         const tmpl = new Float32Array(L), A = g.chans[0], B = g.chans[1], from = A.length - L;
         let e = 0;

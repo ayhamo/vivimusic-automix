@@ -70,7 +70,10 @@ try {
             if (!viviGetHeader(headers, 'Origin')) viviSetHeader(headers, 'Origin', 'https://open.spotify.com');
             viviSetHeader(headers, 'Referer', 'https://open.spotify.com/');
           }
-          if (host === 'open.spotify.com') {
+          // (not on the no-login canvas lookup's token request, src/plus/bg-canvas.js: reason=init,
+          // sent without cookies on purpose; upstream's signed-in request says reason=transport)
+          const anonymous = /\/api\/token\?(.*&)?reason=init(&|$)/.test(details.url);
+          if (host === 'open.spotify.com' && !anonymous) {
             const spDc = await viviSpDcForCookie();
             if (spDc) {
               const existing = viviGetHeader(headers, 'Cookie') || '';

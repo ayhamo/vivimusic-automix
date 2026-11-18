@@ -181,7 +181,10 @@ const viviSpotifyCanvas = (() => {
     const missed = misses.get(key);
     if (missed && Date.now() - missed < MISS_MS) return null;
     const url = await canvasUrl(title, artist);
-    if (!url) misses.set(key, Date.now());
+    if (!url) {
+      misses.delete(key); misses.set(key, Date.now());
+      if (misses.size > 500) misses.delete(misses.keys().next().value);
+    }
     return url;
   }
 

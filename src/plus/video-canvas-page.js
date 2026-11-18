@@ -762,10 +762,11 @@
   let visitorFromReply = '';
   const visitor = () => cfg('VISITOR_DATA') || visitorFromReply;
 
-  async function timed(url, init, ms) {
+  // the time limit covers the body too (read), so a stalled download can't hold the queue
+  async function timed(url, init, ms, read) {
     const ac = new AbortController();
     const t = setTimeout(() => ac.abort(), ms);
-    try { return await fetch(url, { ...init, signal: ac.signal }); } finally { clearTimeout(t); }
+    try { return await read(await fetch(url, { ...init, signal: ac.signal })); } finally { clearTimeout(t); }
   }
 
   /** Same-origin InnerTube call, signed out (as the phone asks). */
@@ -776,9 +777,11 @@
       credentials: 'omit',
       headers: { 'Content-Type': 'application/json', ...(v ? { 'X-Goog-Visitor-Id': v } : {}) },
       body: JSON.stringify(body),
-    }, 15000);
-    if (!res.ok) throw new Error(endpoint + ' HTTP ' + res.status);
-    return res.json();
+    }, 15000, (r) => {
+      if (!r.ok) throw new Error(endpoint + ' HTTP ' + r.status);
+      return r.json();
+    });
+    return res;
   }
 
   // ── relays: bytes the page may not fetch itself (CORS after redirects) ──
@@ -809,7 +812,8 @@
   async function getUrl(url, key) {
     if (viaExtension.has(key)) return relay(url);
     try {
-      return await timed(url, { credentials: 'omit' }, 20000);
+      return await timed(url, { credentials: 'omit' }, 20000,
+        async (r) => new Response([204, 205, 304].includes(r.status) ? null : await r.arrayBuffer(), { status: r.status }));
     } catch (e) {
       if (!(e instanceof TypeError)) throw e;
       if (viaExtension.size > 20) viaExtension.clear();
@@ -1233,6 +1237,13 @@
       if (hi && !job.started && queue.lo.includes(job)) { queue.lo.splice(queue.lo.indexOf(job), 1); queue.hi.push(job); }
       return job.done;
     }
+    if (hi) {
+      // skipping through songs: only the newest song's lookup is still wanted
+      for (const old of queue.hi.splice(0)) {
+        inflight.delete(old.song.id);
+        old.resolve({ none: false, why: 'not this time (skipped)' });
+      }
+    }
     job = { song, started: false };
     job.done = new Promise((resolve, reject) => { job.resolve = resolve; job.reject = reject; });
     inflight.set(song.id, job);
@@ -1264,7 +1275,9 @@
   const say = (m) => window.postMessage({ ch: CHANNEL, dir: 'out', ...m }, window.location.origin);
   const answer = (reqId, e, from) => ({ reqId, ok: true, blobUrl: e.blobUrl, ...e.meta, from });
 
+  let findSeq = 0;
   async function find(d) {
+    const my = ++findSeq;
     const id = String(d.id || '');
     if (!id || !d.title) return { reqId: d.reqId, ok: false, why: 'no song id or title' };
     const song = { id, title: String(d.title), artist: String(d.artist || ''), album: d.album || '', durationSec: Number(d.durationSec) || 0 };
@@ -1278,7 +1291,7 @@
     const saved = await lookup(id);
     if (saved && saved.miss) {
       log('cache hit: no video for', `'${song.title}'`, '(saved', Math.round((Date.now() - saved.at) / 60000), 'min ago)');
-      return { reqId: d.reqId, ok: false, why: 'no music video (saved miss: ' + (saved.why || 'none') + ')' };
+      return { reqId: d.reqId, ok: false, none: true, why: 'no music video (saved miss: ' + (saved.why || 'none') + ')' };
     }
     if (saved) {
       idbPut(keyOf(id), { ...saved, shown: Date.now() });
@@ -1288,8 +1301,8 @@
       return answer(d.reqId, e, 'cache');
     }
     const got = await run(song, true);
-    if (!got.meta) return { reqId: d.reqId, ok: false, why: got.why || 'not this time' };
-    lastShown = id;
+    if (!got.meta) return { reqId: d.reqId, ok: false, none: !!got.none, why: got.why || 'not this time' };
+    if (my === findSeq) lastShown = id;   // a stale answer must not shield its clip from eviction
     return answer(d.reqId, memPut(id, new Blob([got.bytes], { type: 'video/mp4' }), got.meta), 'net');
   }
 

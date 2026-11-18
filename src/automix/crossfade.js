@@ -1892,6 +1892,9 @@
     pruneAddons();
     if (adeck?.id !== st.id && !live) {
       const run = adeck = { id: st.id, state: 'starting' };
+      // back on a song whose copy played before (Song → Video → Song, a replay): its old 'playing'
+      // must not show the badge while YouTube's audio plays until the deck takes over again
+      AP.note(run.id, { play: { state: 'starting' } });
       startAddonDeck(g, v, run, AP).catch((e) => {
         run.state = 'failed';
         AP.note(run.id, { play: { state: 'failed', why: String(e?.message || e) } });
@@ -1989,13 +1992,13 @@
       // analysis frame's worker (addons/fit.worker.js): on this thread they held the page about
       // 1 s per song. This thread only when that frame is out (the arrays are then still here).
       let busy = performance.now();
-      const yt = monoOf(ytBuf), ad = monoOf(adBuf);
+      let yt = monoOf(ytBuf), ad = monoOf(adBuf);
       busy = performance.now() - busy;
       let where = 'worker';
       let fitted = await A.addonWork({ op: 'fit', yt, ad, opt: { slackSec: 5 } }, [yt.buffer, ad.buffer])
         .catch((e) => { log('addons: no fit worker:', e?.message || e); return null; });
       if (!fitted) {
-        if (!yt.length) throw new Error('the fit failed');
+        if (!yt.length || !ad.length) { yt = monoOf(ytBuf); ad = monoOf(adBuf); }   // (handed to the worker)
         const t = performance.now();
         const f = F.fit(yt, ad, { slackSec: 5 });
         fitted = f.none ? { fit: f } : { fit: f, ytLufs: F.integratedLufs(yt, F.FIT_RATE), addonLufs: F.integratedLufs(ad, F.FIT_RATE) };
@@ -2012,13 +2015,14 @@
       let lvl;
       if (ytLufs > addonLufs) {   // a boost: its true peak is read over the whole file at the context's rate
         let t = performance.now();
-        const addonChannels = Array.from({ length: full.numberOfChannels }, (_, c) => ownChannel(full, c));
+        let addonChannels = Array.from({ length: full.numberOfChannels }, (_, c) => ownChannel(full, c));
         busy += performance.now() - t;
         const args = { ytLufs, addonLufs, addonChannels, rate: g.ctx.sampleRate };
         lvl = (await A.addonWork({ op: 'gain', args }, addonChannels.map((x) => x.buffer)).catch(() => null))?.lvl;
         if (!lvl) {
-          if (!addonChannels[0]?.length) throw new Error('the level failed');
-          t = performance.now(); lvl = F.sourceGainDb(args); busy += performance.now() - t; where = 'main thread';
+          t = performance.now();
+          if (!addonChannels[0]?.length) args.addonChannels = addonChannels = Array.from({ length: full.numberOfChannels }, (_, c) => ownChannel(full, c));
+          lvl = F.sourceGainDb(args); busy += performance.now() - t; where = 'main thread';
         }
       } else lvl = F.sourceGainDb({ ytLufs, addonLufs, addonChannels: [], rate: g.ctx.sampleRate });
       const t3 = performance.now();
@@ -2083,10 +2087,10 @@
       const g = graph(), BD = window.__viviBufferDeck;
       if (!g || !BD) throw new Error('no audio graph');
       if (d.op === 'start') {
-        testRecording = true;   // (the songs' files stay until the stop hands them over)
         const nodes = { out: g.out, mix: g.mix, deck: sdeck?.out, yt: g.source };
+        for (const name of d.sources || ['out']) if (!nodes[name]) throw new Error('nothing to record: ' + name);
+        testRecording = true;   // (the songs' files stay until the stop hands them over)
         for (const name of d.sources || ['out']) {
-          if (!nodes[name]) throw new Error('nothing to record: ' + name);
           recTaps[name]?.close();
           recTaps[name] = await BD.tap(g.ctx, nodes[name], { frames: 4096 });
           await recTaps[name].record(true);

@@ -51,15 +51,16 @@
   // The video's own black bars (letterbox, measured on the storyboard) are zoomed out of the frame,
   // wherever upstream shows the clip: one CSS rule per clip, matched by its blob URL.
   const zooms = new Map();
+  const isOwnBlob = (u) => typeof u === 'string' && u.startsWith('blob:' + window.location.origin + '/');
   let zoomStyle = null;
   function zoomBars(url, bars) {
-    if (!Array.isArray(bars) || bars.length !== 4) return;
+    if (!Array.isArray(bars) || bars.length !== 4 || !isOwnBlob(url)) return;
     const keep = Math.min(1 - bars[0] - bars[2], 1 - bars[1] - bars[3]);
     if (!(keep > 0.5 && keep < 0.98)) return;
     zooms.set(url, (1 / keep).toFixed(3));
     if (zooms.size > 8) zooms.delete(zooms.keys().next().value);
     if (!zoomStyle) { zoomStyle = document.createElement('style'); zoomStyle.id = 'vivi-video-canvas-zoom'; (document.head || document.documentElement).append(zoomStyle); }
-    zoomStyle.textContent = [...zooms].map(([u, k]) => `video[src="${u}"] { transform: scale(${k}) !important; }`).join('\n');
+    zoomStyle.textContent = [...zooms].map(([u, k]) => `video[src="${CSS.escape(u)}"] { transform: scale(${k}) !important; }`).join('\n');
   }
 
   // the clip's blob URL for the playing song, or null (no music video, or turned off)
@@ -67,10 +68,10 @@
     if (!enabled || !track?.videoId || !track.song) return null;
     if (none.has(track.videoId)) return null;
     const r = await ask({ op: 'find', id: track.videoId, title: track.song, artist: track.artist || '' });
-    const url = r?.ok && r.blobUrl ? r.blobUrl : null;
+    const url = r?.ok && isOwnBlob(r.blobUrl) ? r.blobUrl : null;
     if (url) zoomBars(url, r.bars);
     console.info('[ViVi video canvas]', `'${track.song}':`, url ? `the music video ${r.videoId} from ${Math.round(r.startSec)} s (${r.from})` : `none (${r?.why || 'no answer'})`);
-    if (!url && !/no answer|not this time/.test(r?.why || '')) {
+    if (!url && r?.none === true) {   // only a real 'no music video', never a network error
       none.add(track.videoId);
       if (none.size > 200) none.delete(none.values().next().value);
     }

@@ -77,6 +77,13 @@ behaviour.params = {
   check('quality: the user\'s lossless pick when listed', C.paramsFor(man, 'LOSSLESS', 'hires').at(-1), ['quality', 'hires']);
   check('quality: HIGH tier by label', C.paramsFor(man, 'HIGH').at(-1), ['quality', 'high']);
   check('quality: no setting: the tier name', C.paramsFor({ settings: [] }, 'LOW'), [['quality', 'LOW']]);
+  const kbps = { settings: [{ key: 'quality', options: [{ value: 'LOSSLESS', label: 'FLAC' }, { value: 'HIGH', label: 'AAC 320 kbps' }, { value: 'LOW', label: 'AAC 96 kbps' }] }] };
+  check('quality: Hi-Res never takes "96 kbps"', C.paramsFor(kbps, 'HIRES').at(-1), ['quality', 'LOSSLESS']);
+  const tidal = { settings: [{ key: 'quality', options: [{ value: 'LOSSLESS', label: 'Lossless' }, { value: 'HI_RES_LOSSLESS', label: 'Max' }] }] };
+  check('quality: Hi-Res finds HI_RES_LOSSLESS', C.paramsFor(tidal, 'HIRES').at(-1), ['quality', 'HI_RES_LOSSLESS']);
+  const rate = { settings: [{ key: 'quality', options: [{ value: 'a', label: 'FLAC 44.1 kHz' }, { value: 'b', label: 'FLAC 96 kHz' }] }] };
+  check('quality: Hi-Res by sample rate with its unit', C.paramsFor(rate, 'HIRES').at(-1), ['quality', 'b']);
+  check('quality: CD by 44.1 kHz', C.paramsFor(rate, 'CD').at(-1), ['quality', 'a']);
 }
 
 // ---- caching and sharing (§6) ----

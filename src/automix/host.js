@@ -358,14 +358,32 @@
       }
     } else if (d.type === 'addonWork') {
       // the addon copy's fit and level (addons/fit.worker.js), off the page's main thread
-      fitWorker ??= new Worker(chrome.runtime.getURL('src/addons/fit.worker.js'));
-      const id = d.fileKey;
-      fitWorker.addEventListener('message', function on(m) {
-        if (m.data?.id !== id) return;
-        fitWorker.removeEventListener('message', on);
-        reply(m.data.ok ? { type: 'result', fileKey: id, result: m.data.result } : { type: 'error', fileKey: id, message: m.data.error });
-      });
-      fitWorker.postMessage({ id, ...d.job }, d.transfer || []);
+      // A worker that fails to load or dies answers every job it holds with an error (the page then
+      // fits on its own thread), and the next job starts a new one.
+      if (!fitWorker) {
+        const w = new Worker(chrome.runtime.getURL('src/addons/fit.worker.js'));
+        const jobs = w.jobs = new Set();
+        fitWorker = w;
+        w.addEventListener('message', (m) => {
+          const id = m.data?.id;
+          if (!jobs.delete(id)) return;
+          reply(m.data.ok ? { type: 'result', fileKey: id, result: m.data.result } : { type: 'error', fileKey: id, message: m.data.error });
+        });
+        const fail = (why) => () => {
+          if (fitWorker === w) fitWorker = null;
+          try { w.terminate(); } catch { /* gone */ }
+          for (const id of jobs) reply({ type: 'error', fileKey: id, message: why });
+          jobs.clear();
+        };
+        w.addEventListener('error', fail('the fit worker failed'));
+        w.addEventListener('messageerror', fail('the fit worker could not read a job'));
+      }
+      const w = fitWorker;
+      w.jobs.add(d.fileKey);
+      try { w.postMessage({ id: d.fileKey, ...d.job }, d.transfer || []); } catch (err) {
+        w.jobs.delete(d.fileKey);
+        reply({ type: 'error', fileKey: d.fileKey, message: String(err?.message || err) });
+      }
     } else if (d.type === 'analyze') {
       // a bare clip (the model warm-up): its own Beat This! window
       const { fileKey, samples, sampleRate, offsetSec } = d;

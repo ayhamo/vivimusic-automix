@@ -56,21 +56,29 @@
     let edits = Promise.resolve();
     const inTurn = (f) => (...a) => { const p = edits.then(() => f(...a)); edits = p.catch(() => {}); return p; };
 
-    const add = inTurn(async (url) => {
-      const s = await get();
+    // (the addon's own manifest is fetched outside the turn: a slow host must not hold up toggles
+    // and removals; the list is read again in the turn before it is written)
+    const add = async (url) => {
       let base;
       try { base = C.baseOf(url); new URL(base); } catch { return { ok: false, error: 'That is not an addon link.' }; }
       if (!/^https:/i.test(base) && !/^http:\/\/(127\.0\.0\.1|localhost)(:|\/)/i.test(base)) return { ok: false, error: 'Addon links must start with https://.' };
-      if (s.addonsList.some((a) => C.sameAddon(a.base, base))) return { ok: false, error: 'That addon is already in the list.' };
-      if (s.addonsList.length >= MAX_ADDONS) return { ok: false, error: `At most ${MAX_ADDONS} addons.` };
+      const refused = (list) => list.some((a) => C.sameAddon(a.base, base)) ? 'That addon is already in the list.'
+        : list.length >= MAX_ADDONS ? `At most ${MAX_ADDONS} addons.` : null;
+      const early = refused((await get()).addonsList);
+      if (early) return { ok: false, error: early };
       let found;
       try { found = await client.discover(url); } catch (e) { return { ok: false, error: `${C.redact(base)}: ${e.message}` }; }
       const res = found.manifest?.resources;
       if (Array.isArray(res) && res.length && !res.includes('search')) return { ok: false, error: `${C.redact(base)} has no search: it can't find songs.` };
-      const addon = { id: newId(), base: found.base, name: String(found.manifest?.name || C.redact(found.base)).slice(0, 60), host: C.redact(found.base), enabled: true };
-      await setList([...s.addonsList, addon]);
-      return { ok: true, addon: shown(addon, client.health()) };
-    });
+      return inTurn(async () => {
+        const s = await get();
+        const why = refused(s.addonsList);
+        if (why) return { ok: false, error: why };
+        const addon = { id: newId(), base: found.base, name: String(found.manifest?.name || C.redact(found.base)).slice(0, 60), host: C.redact(found.base), enabled: true };
+        await setList([...s.addonsList, addon]);
+        return { ok: true, addon: shown(addon, client.health()) };
+      })();
+    };
 
     const edit = inTurn(async (id, fn) => {
       const s = await get();

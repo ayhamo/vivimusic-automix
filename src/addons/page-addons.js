@@ -174,7 +174,12 @@
     return null;
   }
   function badgeOf(id, st) {
-    if (st.play?.state === 'playing' && st.stream) { const q = quality(st); known.set(id, q); return q; }
+    if (st.play?.state === 'playing' && st.stream) {
+      const q = quality(st);
+      known.delete(id); known.set(id, q);
+      if (known.size > 200) known.delete(known.keys().next().value);
+      return q;
+    }
     if (known.has(id)) return null;   // its copy played and was handed back: YouTube's own audio again
     if (!(Date.now() - deckAt < 2000)) return null;   // the addon deck isn't running (no audio graph): nothing will upgrade
     const pending = st.state === 'looking' || st.state === 'opening' || (st.state === 'found' && !st.why)

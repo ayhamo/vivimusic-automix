@@ -36,7 +36,7 @@
   function tierOf(s) {
     const t = text(s).toLowerCase();
     if (!t) return null;
-    if (/flac|alac|wav|hi-?res|(16|24)[\s-]?bit|lossless/.test(t)) return 'LOSSLESS';
+    if (/flac|alac|wav|hi[\s_-]?res|(16|24)[\s-]?bit|lossless/.test(t)) return 'LOSSLESS';
     if (/\blow\b|128|96|64/.test(t)) return 'LOW';
     if (/320|mp3|aac|opus|high/.test(t)) return 'HIGH';
     return null;
