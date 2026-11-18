@@ -152,7 +152,7 @@
   // addon copy is still being looked for or readied, then "Lossless" / "Hi-Res Lossless"
   // (lossless and more than 16 bits or 48 kHz) or "High Quality" (lossy, 256 kbps or more)
   // while that copy is what plays; nothing for YouTube's own audio. The exact format is the
-  // tooltip. YT Music redraws the bar now and then, so it is put back each check.
+  // tooltip. YT Music redraws its parts now and then, so they are put back each check.
   const BADGE_ID = 'vivi-addon-badge';
   const SVG_NS = 'http://www.w3.org/2000/svg';
   const GLYPHS = {
@@ -181,56 +181,63 @@
       || (st.state === 'ready' && (!st.play || st.play.state === 'fetching' || st.play.state === 'fitting'));
     return pending ? { kind: 'upgrading', label: 'Upgrading Quality', glyph: 'wave', title: 'Looking for a better copy of this song in your addons' } : null;
   }
-  // the clock's width held at its widest for this many digits (the font's digits differ in width,
-  // and YouTube's font has no tabular figures): the badge after it then stays where it is
-  let measure = null;
-  function holdWidth(time, on) {
-    if (!time) return;
-    if (!on) { if (time.dataset.viviW) { time.style.minWidth = ''; delete time.dataset.viviW; } return; }
-    const cs = getComputedStyle(time), font = `${cs.fontStyle} ${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
-    const txt = (time.textContent || '').replace(/\s+/g, ' ').trim(), key = txt.replace(/\d/g, '0') + '|' + font;
-    if (time.dataset.viviW === key) return;
-    measure ??= document.createElement('canvas').getContext('2d');
-    measure.font = font;
-    let widest = '0', w = 0;
-    for (const d of '0123456789') { const x = measure.measureText(d).width; if (x > w) { w = x; widest = d; } }
-    const px = Math.ceil(measure.measureText(txt.replace(/\d/g, widest)).width + (parseFloat(cs.letterSpacing) || 0) * txt.length) + 1;
-    if (cs.display === 'inline') time.style.display = 'inline-block';
-    time.style.minWidth = px + 'px';
-    time.dataset.viviW = key;
+  // Two places, neither in the bar's row (the label's length changes with the state and moved the
+  // bar's parts): a round icon on the corner of the song art in the player bar (in the pill too;
+  // the label and the exact format are its tooltip), and the glyph with the label under the big art
+  // on the player page.
+  const ART_BADGE_ID = 'vivi-addon-art-badge';
+  function glyph(el, q) {
+    if (el.dataset.kind === q.kind) return;
+    const g = GLYPHS[q.glyph], svg = el.querySelector('svg');
+    svg.setAttribute('viewBox', g.box); svg.setAttribute('width', g.w); svg.setAttribute('height', g.h);
+    svg.firstElementChild.setAttribute('d', g.d);
+    el.dataset.kind = q.kind;
+  }
+  function newSvg() {
+    const svg = document.createElementNS(SVG_NS, 'svg'); svg.setAttribute('aria-hidden', 'true');
+    svg.appendChild(document.createElementNS(SVG_NS, 'path'));
+    return svg;
+  }
+  function artBadge(q) {
+    let a = document.getElementById(ART_BADGE_ID);
+    const wrap = document.querySelector('ytmusic-player-bar .thumbnail-image-wrapper');
+    if (!q || !wrap) { if (a) a.hidden = true; return; }
+    if (!a) { a = document.createElement('span'); a.id = ART_BADGE_ID; a.className = 'vivi-addon-art-badge'; a.append(newSvg()); }
+    if (a.parentElement !== wrap) wrap.append(a);
+    glyph(a, q);
+    const tip = q.label + ': ' + q.title;
+    if (a.title !== tip) a.title = tip;
+    a.hidden = false;
+  }
+  function pageLabel(q) {
+    let b = document.getElementById(BADGE_ID);
+    const open = document.querySelector('ytmusic-app-layout[player-page-open]');
+    const player = open && document.querySelector('ytmusic-player-page #player');
+    const panel = player?.parentElement;
+    if (!q || !player || !panel || !player.offsetHeight) { if (b) b.hidden = true; return; }
+    if (!b) {
+      b = document.createElement('span'); b.id = BADGE_ID; b.className = 'vivi-addon-badge';
+      const label = document.createElement('span'); label.className = 'vivi-addon-badge-label';
+      b.append(newSvg(), label);
+    }
+    if (b.parentElement !== panel) panel.append(b);
+    if (getComputedStyle(panel).position === 'static') panel.style.position = 'relative';
+    // under the art, centred on it (the art's place in its panel is read each check)
+    const top = player.offsetTop + player.offsetHeight + 14 + 'px', left = player.offsetLeft + 'px', width = player.offsetWidth + 'px';
+    if (b.style.top !== top) b.style.top = top;
+    if (b.style.left !== left) b.style.left = left;
+    if (b.style.width !== width) b.style.width = width;
+    glyph(b, q);
+    const label = b.lastElementChild;
+    if (label.textContent !== q.label) label.textContent = q.label;
+    if (b.title !== q.title) b.title = q.title;
+    b.hidden = false;
   }
   function badge() {
-    try {
-      const st = statusOf(curId);
-      let b = document.getElementById(BADGE_ID);
-      const q = badgeOf(curId, st);
-      const time = document.querySelector('ytmusic-player-bar .time-info');
-      // not in the pill player bar: its length changes with the state and moved the pill's parts
-      const pill = document.documentElement.classList.contains('vivi-pill-player');
-      if (!q || pill) { if (b) b.hidden = true; holdWidth(time, false); return; }
-      holdWidth(time, true);
-      const host = time?.parentElement || document.querySelector('ytmusic-player-bar .right-controls-buttons');
-      if (!host) return;
-      if (!b) {
-        b = document.createElement('span'); b.id = BADGE_ID; b.className = 'vivi-addon-badge';
-        const svg = document.createElementNS(SVG_NS, 'svg'); svg.setAttribute('aria-hidden', 'true');
-        svg.appendChild(document.createElementNS(SVG_NS, 'path'));
-        const label = document.createElement('span'); label.className = 'vivi-addon-badge-label';
-        b.append(svg, label);
-      }
-      if (time) { if (b.previousElementSibling !== time) time.after(b); }
-      else if (b !== host.firstElementChild) host.prepend(b);
-      if (b.dataset.kind !== q.kind) {
-        const g = GLYPHS[q.glyph], svg = b.firstElementChild;
-        svg.setAttribute('viewBox', g.box); svg.setAttribute('width', g.w); svg.setAttribute('height', g.h);
-        svg.firstElementChild.setAttribute('d', g.d);
-        b.dataset.kind = q.kind;
-      }
-      const label = b.lastElementChild;
-      if (label.textContent !== q.label) label.textContent = q.label;
-      if (b.title !== q.title) b.title = q.title;
-      b.hidden = false;
-    } catch { /* no player bar */ }
+    let q = null;
+    try { q = badgeOf(curId, statusOf(curId)); } catch { /* no state yet */ }
+    try { artBadge(q); } catch { /* no player bar */ }
+    try { pageLabel(q); } catch { /* no player page */ }
   }
   if (typeof setInterval === 'function') setInterval(badge, 1000);
 
