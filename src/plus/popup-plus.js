@@ -13,12 +13,17 @@
     priorityLabels: { paxsenix: 'Paxsenix (Apple Music)', lyricsplus: 'LyricsPlus (Syllable / Word)' },
     // popup.js: where the update button leads (upstream's points at its own AMO listing)
     updatePage: 'https://github.com/ayhamo/vivimusic-automix/releases/latest',
-    // popup-ui.js: the ListenBrainz home card, after Last.fm
+    // popup-ui.js: the ListenBrainz home card, after Last.fm, and the Addons card, after Audio
+    // playback (its section title reads "Addons Test" with the tag; without an entry here it
+    // would fall into the hidden Updates slot and could not be opened)
     extendCards(rsNotes, meta, order) {
       rsNotes.listenbrainz = 'ListenBrainz scrobbling is paused while Optimized & resource saving mode is on.';
       meta.ListenBrainz = ['ListenBrainz', 'Open-source scrobbling to ListenBrainz', 'listenbrainz', 'static'];
       const at = order.indexOf('Last.fm');
       if (!order.includes('ListenBrainz')) order.splice(at < 0 ? order.length : at + 1, 0, 'ListenBrainz');
+      meta['Addons Test'] = ['Addons', 'Play songs from your addons, lossless when they have it', 'addons', 'static'];
+      const ap = order.indexOf('Audio playback');
+      if (!order.includes('Addons Test')) order.splice(ap < 0 ? order.length : ap + 1, 0, 'Addons Test');
     },
   };
 
@@ -35,6 +40,8 @@
   style.textContent = `
     .home-card[data-feature="listenbrainz"] { --card-accent: #eb743b; }
     .view-settings[data-feature="listenbrainz"] { --panel-accent: #eb743b; }
+    .home-card[data-feature="addons"] { --card-accent: #38bdf8; }
+    .view-settings[data-feature="addons"] { --panel-accent: #38bdf8; }
   `;
   document.head.appendChild(style);
 

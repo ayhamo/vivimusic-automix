@@ -101,9 +101,11 @@
       return outward(got);
     }
     // what the page gets of an answer: names, hosts, row and stream facts; no link, no file URL
+    // what leaves the background: no links (an addon's text may hold one), reasons kept short
+    const plain = (t) => (t == null ? t : String(t).replace(/https?:\/\/[^\s'"<>)]+/gi, '[link]').slice(0, 160));
     function outward(got) {
-      const tried = (got.tried || []).map(({ addon, row, why }) => ({ addon, row, why }));
-      if (!got.addon) return { none: got.none, tried };
+      const tried = (got.tried || []).map(({ addon, row, why }) => ({ addon, row, why: plain(why) }));
+      if (!got.addon) return { none: plain(got.none), tried };
       const { row: r, stream: st } = got;
       return {
         addon: { name: got.addon.name, host: got.addon.host },
@@ -152,6 +154,24 @@
     // headers) and the file URL. Only the stream answer's headers go with it (§1).
     const FILE_MAX_BYTES = 300e6;
     const FILE_TIMEOUT_MS = 120e3;
+    // a response body read up to `max` bytes (more: cancelled, null); into one array sized by
+    // Content-Length when there is one, else gathered. Without a stream body (tests' mocks): read whole.
+    async function readCapped(r, max) {
+      if (!r.body?.getReader) { const b = r.arrayBuffer ? await r.arrayBuffer() : new TextEncoder().encode(await r.text()).buffer; return b.byteLength > max ? null : b; }
+      const rd = r.body.getReader(), len = Number(r.headers?.get?.('content-length')) || 0;
+      let one = len > 0 && len <= max ? new Uint8Array(len) : null, parts = [], n = 0;
+      for (;;) {
+        const { done, value } = await rd.read();
+        if (done) break;
+        if (n + value.byteLength > max) { try { await rd.cancel(); } catch { /* gone */ } return null; }
+        if (one && n + value.byteLength <= one.length) one.set(value, n); else { if (one) { parts.push(one.subarray(0, n)); one = null; } parts.push(value); }
+        n += value.byteLength;
+      }
+      if (one) return n === one.length ? one.buffer : one.slice(0, n).buffer;
+      const out = new Uint8Array(n); let o = 0;
+      for (const p of parts) { out.set(p, o); o += p.byteLength; }
+      return out.buffer;
+    }
     async function fetchFile(ticket) {
       const t = tickets.get(ticket);
       const s = t?.got?.stream;
@@ -163,8 +183,8 @@
         if (!r.ok) return { none: `the file answered ${r.status}` };
         const size = Number(r.headers.get('content-length'));
         if (size > FILE_MAX_BYTES) { try { await r.body?.cancel(); } catch { /* gone */ } return { none: `the file is too big (${Math.round(size / 1e6)} MB)` }; }
-        const bytes = await r.arrayBuffer();
-        if (bytes.byteLength > FILE_MAX_BYTES) return { none: `the file is too big (${Math.round(bytes.byteLength / 1e6)} MB)` };
+        const bytes = await readCapped(r, FILE_MAX_BYTES);   // (no Content-Length: counted as it comes)
+        if (!bytes) return { none: `the file is too big (over ${Math.round(FILE_MAX_BYTES / 1e6)} MB)` };
         const mime = (r.headers.get('content-type') || '').split(';')[0].trim();
         return { bytes, mime: /^audio\//.test(mime) ? mime : s.mimeType || mimeOf(s.codec) };
       } catch (e) {
@@ -198,8 +218,13 @@
   // the extension's background: one store, one listener for our message types only
   if (typeof chrome === 'object' && chrome?.runtime?.onMessage && chrome?.storage?.local) {
     const store = create({ storage: chrome.storage.local });
-    chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+    // content scripts (YouTube Music's tab) may only FIND, OPEN and FETCH; the list and its
+    // settings change only from the extension's own pages (the popup)
+    const PAGE_TYPES = new Set(['VIVI_ADDONS_FIND', 'VIVI_ADDONS_OPEN', 'VIVI_ADDONS_FETCH']);
+    const ours = (sender) => typeof sender?.url === 'string' && sender.url.startsWith(chrome.runtime.getURL(''));
+    chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       if (typeof msg?.type !== 'string' || !msg.type.startsWith('VIVI_ADDONS_')) return undefined;
+      if (!PAGE_TYPES.has(msg.type) && !ours(sender)) { sendResponse({ ok: false, error: 'Only the add-on settings can do that.' }); return undefined; }
       store.handle(msg).then(sendResponse, (e) => sendResponse({ ok: false, error: C.scrub(e?.message || e) }));
       return true;
     });

@@ -200,9 +200,18 @@
   let live = null;
   let startDelay = 0.5;   // learned: seconds between pressing next and hearing it
 
+  // the test hooks (recordings, the deck test, fixtures, the net test) answer only where
+  // storage.local viviDebug is set (the test Firefox's profile): any page script could post them
+  let debugHooks = false;
+  const DEBUG_TYPES = new Set(['vivi-dev-test', 'vivi-addon-rec', 'vivi-stream-deck-test', 'vivi-automix-fixture']);
+  try {
+    chrome.storage.local.get({ viviDebug: false }, (r) => { debugHooks = r.viviDebug === true; });
+    chrome.storage.onChanged.addListener((ch, area) => { if (area === 'local' && ch.viviDebug) debugHooks = ch.viviDebug.newValue === true; });
+  } catch { /* no storage */ }
   window.addEventListener('message', (e) => {
     const d = e.data;
     if (e.source !== window || !d || d.ch !== CHANNEL || d.dir !== 'out') return;
+    if (DEBUG_TYPES.has(d.type) && !debugHooks) return;
     if (d.type === 'state') {
       st = d; stAt = performance.now();
       if (d.id !== seenId) {
@@ -785,8 +794,11 @@
     if (sdeck?.audible) {
       // the stream deck plays the song (YouTube's gate is down): it gives way to the copy instead
       g.gate.gain.setValueAtTime(0, T);
-      sdeck.release(T, SWITCH);
+      const d = sdeck;
+      d.release(T, SWITCH);
       sdeck = null;
+      // and freed once faded (its file, blob URL and nodes); a released deck's dispose leaves the gate alone
+      setTimeout(() => d.dispose('released'), Math.max(0, T - ctx.currentTime + SWITCH + 0.3) * 1000);
     } else {
       streamDeckBack('the next mix');   // (one not in step yet: gone before the gate moves below)
       g.gate.gain.setValueAtTime(1, T);
@@ -1300,7 +1312,7 @@
       me.reload = () => {
         if (loopPrep !== me || live?.mix?.style === 'loop' || !st || st.id !== curId) return;
         const vin = me.inAddon ? null : inPlayOf();
-        const vout = me.outAddon || (plan && plan.id === curId && plan.loop) ? null : outPlayOf();
+        const vout = me.outAddon || me.tailCut ? null : outPlayOf();   // (once the tail is cut, the deck stays its copy)
         if (!vin && !vout) return;
         if (vin) me.inAddon = true;
         if (vout) { me.outAddon = true; me.tail = { ...me.tail, channels: cut(vout) }; }
@@ -1602,14 +1614,16 @@
     Promise.all([ensureLoopDecks(g), ensureInDeck(g)]).catch((e) => log('automix: decks not made ahead:', e?.message || e));
   }
 
-  async function prepareInDeck(g, p) {
+  async function prepareInDeck(g, p, pos = 0) {
     const A = window.__viviAutomix, id = p.nextId;
     if (!id || !g.bassFilter || typeof SignalsmithStretch !== 'function') return;
     // the start of the song, past where a late take-over could still need it
     const want = Math.min(A.get(id)?.durationSec || Infinity, Math.max(120, p.mixInTrackTime + (p.durationSec + 45) * (p.rate || 1)));
     if (inPrep.key === id) {
       // (YouTube's copy is on it and the addon's is ready now: loaded again with the addon's)
-      if (inPrep.state === 'loading' || (inPrep.state === 'ready' && inPrep.want >= want - 1 && (inPrep.addon || !readyRec(id)))) return;
+      // (not when the mix is under 12 s away: the load takes some seconds and the blend would go without the deck)
+      const late = p.mixOutTrackTime - pos < 12;
+      if (inPrep.state === 'loading' || (inPrep.state === 'ready' && inPrep.want >= want - 1 && (inPrep.addon || !readyRec(id) || late))) return;
       if (inPrep.state === 'none' && performance.now() < inPrep.retryAt) return;   // failed: tried again later
     }
     if (live?.inDeck) return;   // the deck still plays the last blend
@@ -1632,7 +1646,9 @@
       // Automix v2's kick lock reads the opening's low end (automix.js kickSource)
       if (A.getVersion() === 3) {
         const ch = [];
-        for (let c = 0; c < Math.min(2, buf.numberOfChannels); c++) ch.push(buf.getChannelData(c));
+        // copied into arrays of our own first: reads through the page's array wrapper are very slow (ownChannel)
+        const n = Math.min(buf.length, Math.ceil(end * buf.sampleRate) + 1);
+        for (let c = 0; c < Math.min(2, buf.numberOfChannels); c++) { const x = new Float32Array(n); buf.copyFromChannel(x, c); ch.push(x); }
         me.kick = A.kickSource(ch, buf.sampleRate, 0, 0, end);
       }
       me.state = 'ready';
@@ -1837,6 +1853,7 @@
   let addonTapFor = null, addonTapP = null;
   function addonTap(g) {
     if (addonTapFor !== g) {
+      addonTapP?.then((t) => t?.close());   // the equalizer rebuilt the graph: the old tap goes
       addonTapFor = g;
       addonTapP = window.__viviBufferDeck.tap(g.ctx, g.source).catch((e) => { log('addons: no tap on YouTube\'s output:', e?.message || e); return null; });
     }
@@ -1845,6 +1862,7 @@
   function addonTick(g, v) {
     const AP = window.__viviAddonsPage;
     if (!AP?.isOn() || !st || st.ad || !st.id) return;
+    AP.deckAlive?.();   // the badge's "Upgrading Quality" only while this runs (no audio graph: no deck)
     if (adeck?.id !== st.id && !live) {
       const run = adeck = { id: st.id, state: 'starting' };
       startAddonDeck(g, v, run, AP).catch((e) => {
@@ -1856,12 +1874,21 @@
     loopPrep.reload?.();   // a loop mix loaded before an addon copy was there
     // the next song, ahead of the mix: fetched, fitted and decoded while this one plays
     const nx = st.next;
-    if (nx && nx !== st.id && !prepared.has(nx) && adeck?.id === st.id && !['starting', 'fetching', 'fitting'].includes(adeck.state)
+    if (nx && nx !== st.id && (!prepared.has(nx) || retryable(prepared.get(nx))) && adeck?.id === st.id && !['starting', 'fetching', 'fitting'].includes(adeck.state)
       && v.currentTime - st.off > 10 && window.__viviAutomix?.isEnabled?.()) {
       prepareAddon(g, nx, AP, 0).then((r) => {
         if (r.rec) log(`addons: the next song is ready from ${r.rec.name}: offset ${(r.rec.off * 1000).toFixed(1)} ms, level ${r.rec.gainDb >= 0 ? '+' : ''}${r.rec.gainDb.toFixed(2)} dB`);
         else log('addons: no addon audio for the next song:', r.none);      });
     }
+  }
+  // a FLAC file's STREAMINFO: 'fLaC', a 4-byte block header, then (after 10 bytes) 20 bits of
+  // sample rate, 3 of channels - 1 and 5 of bits per sample - 1
+  function flacFormat(bytes) {
+    const u = bytes instanceof ArrayBuffer ? new Uint8Array(bytes, 0, Math.min(26, bytes.byteLength)) : new Uint8Array(bytes.buffer, bytes.byteOffset, Math.min(26, bytes.byteLength));
+    if (u.length < 22 || u[0] !== 0x66 || u[1] !== 0x4c || u[2] !== 0x61 || u[3] !== 0x43 || (u[4] & 0x7f) !== 0) return null;
+    const sampleRate = (u[18] << 12) | (u[19] << 4) | (u[20] >> 4);
+    const channels = ((u[20] >> 1) & 7) + 1, bitDepth = (((u[20] & 1) << 4) | (u[21] >> 4)) + 1;
+    return sampleRate > 0 ? { sampleRate, bitDepth, channels } : null;
   }
   async function decodeAt(bytes, rate, channels) {
     const c = new OfflineAudioContext(channels, 1, rate);
@@ -1898,9 +1925,12 @@
     getChannelData: (c) => ({ slice: (a = 0, b = like.length) => addonSamples(rec, c, a / like.sampleRate, Math.min(b, like.length) - a) }),
   });
   // FIND, OPEN, the file, YouTube's audio, the fit, the level and the decode, once per song
+  const retryable = (p) => p.state === 'failed' && p.tries < 2 && performance.now() - p.failedAt > 60000;
   function prepareAddon(g, id, AP, durSec, say = () => {}) {
     const have = prepared.get(id);
-    if (have) return have.promise;
+    // a failed one is kept (each try downloads the file) and tried once more, a minute later at the earliest
+    if (have && !retryable(have)) return have.promise;
+    const tries = (have?.tries || 0) + 1;
     // kept: the playing song's, the next one's and the last one's (the mix's tail)
     for (const k of [...prepared.keys()]) if (prepared.size >= 3 && k !== st?.id && k !== st?.next && k !== adeck?.id && k !== live?.oldId) prepared.delete(k);
     const me = {};
@@ -1910,11 +1940,9 @@
       if (s?.state !== 'ready') return { none: s?.why || 'no addon has it', state: 'none' };
       say('fetching');
       const t0 = performance.now();
-      const file = await AP.fetchFor(id);
-      if (!file.bytes) throw new Error(file.none);
-      say('fitting');
-      // YouTube's own audio of the song: Automix's download, which may not have started yet
-      // (the page answers "not downloaded" at once then), so it is asked again for up to a minute
+      // YouTube's own audio of the song first, so a missing one costs no file download: Automix's
+      // download, which may not have started yet (the page answers "not downloaded" at once then),
+      // so it is asked again for up to a minute
       let ytBytes = null, why = '';
       for (let i = 0; i < 30 && !ytBytes && prepared.get(id) === me; i++) {
         if (i) await new Promise((r) => setTimeout(r, 2000));
@@ -1922,6 +1950,12 @@
         if (!ytBytes && !/not downloaded|loading/.test(why)) break;
       }
       if (!ytBytes) throw new Error('YouTube\'s audio of the song: ' + (why || 'not downloaded'));
+      const file = await AP.fetchFor(id);
+      if (!file.bytes) throw new Error(file.none);
+      // the file's own format beats what the addon said (some send no bit depth or rate): the badge's Hi-Res
+      const fmt = flacFormat(file.bytes);
+      if (fmt) AP.note(id, { stream: { ...s.stream, ...fmt, codec: 'flac' } });
+      say('fitting');
       const t1 = performance.now();
       const [ytBuf, adBuf] = await Promise.all([decodeAt(ytBytes, F.FIT_RATE, 2), decodeAt(file.bytes, F.FIT_RATE, 2)]);
       const yt = monoOf(ytBuf), ad = monoOf(adBuf);
@@ -1947,7 +1981,7 @@
         `${full.sampleRate} Hz x ${full.numberOfChannels}, ready after ${((t3 - t0) / 1000).toFixed(1)} s (fetch and YouTube's audio ${((t1 - t0) / 1000).toFixed(1)} s, fit, level and decode ${((t3 - t1) / 1000).toFixed(1)} s)`);
       return { rec };
     })().then((r) => { if (prepared.get(id) === me) Object.assign(me, r); return r; },
-      (e) => { if (prepared.get(id) === me) prepared.delete(id); return { none: String(e?.message || e), state: 'failed' }; });
+      (e) => { const r = { none: String(e?.message || e), state: 'failed' }; if (prepared.get(id) === me) Object.assign(me, r, { tries, failedAt: performance.now() }); return r; });
     prepared.set(id, me);
     return me.promise;
   }
@@ -2492,7 +2526,7 @@
         }
         amx.plan = p;
         // a blend: the next song's part of it is put on the incoming deck meanwhile
-        if (p.style !== 'loop' && !p.fallback && !loopPending && to) prepareInDeck(g, p);
+        if (p.style !== 'loop' && !p.fallback && !loopPending && to) prepareInDeck(g, p, pos);
         // the old song moves to its decoded copy this long before the blend: before its speed-up, if it has one
         const lead = HAND_LEAD + (p.style === 'blend' ? p.rampSongSec || 0 : 0);
         if (needsOutDeck(p)) ensureBlendDeck(g);
@@ -2504,6 +2538,7 @@
             // the outgoing song's copy is cut from the loop deck's own samples
             setPlan(g, { id: st.id, channels: lp.tail.channels, sampleRate: lp.tail.sampleRate, start: st.off + lp.tail.start });
             plan.loop = true;
+            lp.tailCut = true;
             log(`automix: loop mix planned from ${p.mixOutTrackTime.toFixed(2)} s for ${p.durationSec.toFixed(1)} s (${p.bars} bars), next song takes over at ${p.mixInTrackTime.toFixed(2)} s`);
           }
           if (plan && plan.id === st.id && plan.start <= needFrom && plan.start + plan.buf.duration >= st.off + st.dur - 1) {

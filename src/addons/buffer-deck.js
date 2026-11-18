@@ -80,7 +80,7 @@
         chunks.length = 0;
         return { start, chans, chunks: count, gaps };   // gaps: frames the worklet never handed over (0 expected)
       },
-      close() { try { source.disconnect(node); } catch { /* gone */ } node.port.onmessage = null; },
+      close() { try { source.disconnect(node); } catch { /* gone */ } node.port.postMessage({ cmd: 'close' }); node.port.onmessage = null; },
     };
   }
 
@@ -134,6 +134,7 @@
     follow({ clock, level, gate, tap: tp = null, onHandback, takeAt = 0, takeSec = FADE_SEC, startPos = null }) {
       Object.assign(this, { clock, level, gate, tp, onHandback, takeAt, takeSec });
       this.state = 'following';
+      this.tapMisses = 0; this.retryAt = 0;   // (unset, ++ gave NaN and the first anchor got no retries)
       this.audibleAt = Infinity;
       const c = clock();
       if (!c) { this.handBack('the song is gone'); return; }

@@ -137,16 +137,41 @@
     }
 
     // One GET of JSON, §1 and §5. Resolves the body; throws AddonError.
+    // a response body read up to `max` bytes (more: cancelled, null); into one array sized by
+    // Content-Length when there is one, else gathered. Without a stream body (tests' mocks): read whole.
+    async function readCapped(r, max) {
+      if (!r.body?.getReader) { const b = r.arrayBuffer ? await r.arrayBuffer() : new TextEncoder().encode(await r.text()).buffer; return b.byteLength > max ? null : b; }
+      const rd = r.body.getReader(), len = Number(r.headers?.get?.('content-length')) || 0;
+      let one = len > 0 && len <= max ? new Uint8Array(len) : null, parts = [], n = 0;
+      for (;;) {
+        const { done, value } = await rd.read();
+        if (done) break;
+        if (n + value.byteLength > max) { try { await rd.cancel(); } catch { /* gone */ } return null; }
+        if (one && n + value.byteLength <= one.length) one.set(value, n); else { if (one) { parts.push(one.subarray(0, n)); one = null; } parts.push(value); }
+        n += value.byteLength;
+      }
+      if (one) return n === one.length ? one.buffer : one.slice(0, n).buffer;
+      const out = new Uint8Array(n); let o = 0;
+      for (const p of parts) { out.set(p, o); o += p.byteLength; }
+      return out.buffer;
+    }
+    const JSON_MAX_BYTES = 4e6;
     async function getJson(base, url, { manifest = false, retry429 = true } = {}) {
       for (let attempt = 0; ; attempt++) {
         const wait = (quietUntil.get(base) ?? 0) - now();
         if (wait > 0) await sleep(wait);
-        let r;
+        let r, body = null;
         const ctl = new AbortController();
-        const timer = setTimeout(() => ctl.abort(), TIMEOUT_MS);
+        const timer = setTimeout(() => ctl.abort(), TIMEOUT_MS);   // (until the body is read too)
         try {
           r = await doFetch(url, { headers: { Accept: 'application/json' }, signal: ctl.signal, credentials: 'omit', cache: 'no-store' });
+          if (r.status < 400 && r.status !== 429) {
+            const b = await readCapped(r, JSON_MAX_BYTES);
+            if (!b) throw new AddonError('error', 'answer too big');
+            body = new TextDecoder().decode(b);
+          }
         } catch (e) {
+          if (e instanceof AddonError) throw e;
           throw new AddonError('down', ctl.signal.aborted ? 'timed out' : `network: ${e?.message || e}`);
         } finally { clearTimeout(timer); }
         if (r.status === 429) {
@@ -163,7 +188,6 @@
           try { detail = text(JSON.parse(await r.text())?.detail).slice(0, 120); } catch { /* not JSON */ }
           throw new AddonError('error', `refused (${r.status})${detail ? ': ' + detail : ''}`, r.status);
         }
-        const body = await r.text();
         if (!body.trim()) throw new AddonError('error', 'empty answer', r.status);
         try { return JSON.parse(body); } catch { throw new AddonError('error', 'not JSON', r.status); }
       }
@@ -223,7 +247,7 @@
     // §4: the stream answer, read leniently
     function readStream(j, marker = LIMITS.cachedMarker) {
       const url = text(j?.url).trim();
-      if (!url || j?.error) return { miss: text(j?.error) || 'no url' };
+      if (!url || j?.error) return { miss: scrub(j?.error).slice(0, 120) || 'no url' };   // (an addon's own text may hold its link)
       // https only, never probed otherwise (plain http to this machine: the PC's tests' mock server)
       if (!/^https:\/\//i.test(url) && !/^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?\//i.test(url)) return { miss: 'not https' };
       const enc = j.encrypted;
@@ -269,6 +293,10 @@
       else if (b.uncached.length >= (man.limits?.uncachedPerHour ?? LIMITS.uncachedPerHour)) wait = b.uncached[0] + 3600e3 - t;
       return { b, wait };
     }
+    // a plain-http file on this machine only from an addon that is on it too (the tests' mock server):
+    // a remote addon may not point the background at localhost
+    const isLocal = (u) => /^https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?(\/|$)/i.test(u);
+    function local(base, s) { return s.url && /^http:/i.test(s.url) && !isLocal(base) ? { miss: 'not https' } : s; }
     function streamWait(addon, man) { return budgetOf(baseOf(addon.base), man).wait; }
     function stream(addon, row, man) {
       const url = `${addon.base}/stream/${encodeURIComponent(row.id)}?${qs(paramsFor(man, addon.tier, addon.quality))}`;
@@ -277,7 +305,7 @@
         if (wait > 0) throw new AddonError('limit', `stream limit, free in ${Math.ceil(wait / 1000)} s`);
         b.calls.push(now());
         try {
-          const s = readStream(await getJson(addon.base, url, { retry429: false }), man.limits?.cachedMarker);
+          const s = local(addon.base, readStream(await getJson(addon.base, url, { retry429: false }), man.limits?.cachedMarker));
           if (!s.cached) b.uncached.push(now());
           return s;
         } catch (e) {
@@ -286,7 +314,7 @@
             b.until = now() + Math.max(1, Math.min(3600, e.retryAfterSec ?? 60)) * 1000;
             throw new AddonError('limit', `stream limit (429), ${b.perMinute}/min from now on`);
           }
-          if (e.kind === 'miss' && row.streamURL) return readStream({ url: row.streamURL });
+          if (e.kind === 'miss' && row.streamURL) return local(addon.base, readStream({ url: row.streamURL }));
           throw e;
         }
       });

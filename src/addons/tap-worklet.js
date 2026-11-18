@@ -12,8 +12,10 @@ registerProcessor('vivi-tap', class extends AudioWorkletProcessor {
     this.w = 0; this.end = 0; this.count = 0; this.rec = null;
     this.port.onmessage = (e) => {
       const m = e.data;
+      if (this.closed) return;
       // (the ring's size comes as a message: a content script's processorOptions can't be cloned in Firefox)
-      if (m.cmd === 'size') { this.n = m.frames; this.ring = [new Float32Array(this.n), new Float32Array(this.n)]; this.w = 0; }
+      if (m.cmd === 'close') { this.closed = true; this.rec = null; this.ring = null; }
+      else if (m.cmd === 'size') { this.n = m.frames; this.ring = [new Float32Array(this.n), new Float32Array(this.n)]; this.w = 0; }
       else if (m.cmd === 'grab') {
         const k = Math.min(m.frames, this.n);
         const out = this.ring.map((r) => { const a = new Float32Array(k); for (let i = 0; i < k; i++) a[i] = r[(this.w - k + i + 2 * this.n) % this.n]; return a; });
@@ -32,6 +34,7 @@ registerProcessor('vivi-tap', class extends AudioWorkletProcessor {
     r.cur = null; r.at = 0;
   }
   process(inputs) {
+    if (this.closed) return false;   // closed: the processor ends and its rings go
     const inp = inputs[0] || [], n = (inp[0] && inp[0].length) || 128;
     for (let c = 0; c < 2; c++) {
       const x = inp[c] || inp[0], r = this.ring[c];
