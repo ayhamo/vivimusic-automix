@@ -54,7 +54,10 @@
       "match_js": "src/crossfade-page.js",
       "js": {
         "replace": { "src/crossfade-page.js": "src/automix/crossfade-page.js" },
-        "insert": [{ "item": "src/plus/video-canvas-page.js", "after": "src/seek-page.js" }]
+        "insert": [
+          { "item": "src/plus/video-canvas-page.js", "after": "src/seek-page.js" },
+          { "item": "src/plus/music-only-page.js", "after": "src/plus/video-canvas-page.js" }
+        ]
       }
     },
     {

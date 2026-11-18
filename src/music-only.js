@@ -9,6 +9,10 @@
  *
  * A video the listener switches back to Video by hand stays a video, as in
  * BitChord, until another song plays.
+ *
+ * The switch only works for a queue item YouTube Music paired with its song.
+ * For a music video with no pair, src/plus/music-only-page.js finds the song
+ * and adds the pair; Song is clicked once the pair is there.
  */
 (() => {
   'use strict';
@@ -27,7 +31,10 @@
     });
   } catch { /* extension context gone */ }
 
-  const currentId = () => new URLSearchParams(location.search).get('v') || '';
+  // the page URL has no id while the player page is closed: then the player's (music-only-page.js)
+  const currentId = () => new URLSearchParams(location.search).get('v') || document.documentElement.dataset.viviPlayingId || '';
+  // tells music-only-page.js whether to pair videos with their songs now
+  const tell = (v) => { if (document.documentElement.dataset.viviMusicOnly !== v) document.documentElement.dataset.viviMusicOnly = v; };
 
   document.addEventListener('click', (e) => {
     if (!e.isTrusted) return;
@@ -36,6 +43,8 @@
   }, true);
 
   setInterval(() => {
+    const mixing = !!window.__viviCrossfade?.active?.();
+    tell(on && !mixing ? '1' : '0');
     if (!on) return;
     const toggle = document.querySelector('ytmusic-av-toggle');
     if (!toggle || toggle.getAttribute('playback-mode') !== 'OMV_PREFERRED') return;
@@ -45,7 +54,9 @@
     keepAt = 0;
     if (kept && kept === id) return;
     kept = '';
-    if (window.__viviCrossfade?.active?.()) return;   // never mid-blend
+    if (mixing) return;   // never mid-blend
+    // no pair yet (music-only-page.js may still be finding the song): Song would only hide the picture
+    if (!toggle.hasAttribute('selected-queue-item-has-counterpart')) return;
     const song = toggle.querySelector('.song-button');
     if (!song) return;
     song.click();

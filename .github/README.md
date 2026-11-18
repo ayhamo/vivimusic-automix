@@ -35,7 +35,7 @@ Vivimusic Web is made by **[Archimetrix](https://github.com/Archimetrix/VIVIMUSI
 - Lyrics: provider priority honoured, extra providers, a refresh button next to the Lyrics tab, right-to-left layout for Arabic and Hebrew, correct timing after ads.
 - Canvas and artwork: pause with the song, sturdier Apple animated-art lookups, failed lookups no longer cached, a choice of where the Spotify Canvas plays.
 - Spotify Connect and Disconnect fixed (Disconnect no longer logs you out of Spotify).
-- **Prefer music-only version** (off by default): switches music videos to their song version when YouTube Music has one.
+- **Prefer music-only version** (off by default): switches music videos to their song version, in place in the queue. When YouTube Music has no pair for a video, the extension finds the song itself.
 - Title cleaner, mouse-wheel volume, Apple Music artist colours, a Stats for Nerds HUD (Shift+D), and no donation links in the popup.
 - Firefox robustness: storage reads that retry, a CSP-safe analysis worker.
 - Update check points at this fork's releases.
