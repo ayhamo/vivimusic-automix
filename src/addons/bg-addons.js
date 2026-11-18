@@ -51,7 +51,12 @@
       return { enabled: s.addonsEnabled === true, tier: s.addonsTier, slackSec: s.addonsSlackSec, addons: s.addonsList.map((a) => shown(a, health)) };
     }
 
-    async function add(url) {
+    // list edits one at a time: each reads the list and writes it back, and two at once lost one
+    // (two toggles sent together left the first addon as it was)
+    let edits = Promise.resolve();
+    const inTurn = (f) => (...a) => { const p = edits.then(() => f(...a)); edits = p.catch(() => {}); return p; };
+
+    const add = inTurn(async (url) => {
       const s = await get();
       let base;
       try { base = C.baseOf(url); new URL(base); } catch { return { ok: false, error: 'That is not an addon link.' }; }
@@ -65,16 +70,16 @@
       const addon = { id: newId(), base: found.base, name: String(found.manifest?.name || C.redact(found.base)).slice(0, 60), host: C.redact(found.base), enabled: true };
       await setList([...s.addonsList, addon]);
       return { ok: true, addon: shown(addon, client.health()) };
-    }
+    });
 
-    async function edit(id, fn) {
+    const edit = inTurn(async (id, fn) => {
       const s = await get();
       const i = s.addonsList.findIndex((a) => a.id === id);
       if (i < 0) return { ok: false, error: 'No such addon.' };
       const next = fn([...s.addonsList], i);
       await setList(next);
       return { ok: true };
-    }
+    });
     const remove = (id) => edit(id, (l, i) => (l.splice(i, 1), l));
     const move = (id, by) => edit(id, (l, i) => {
       const j = Math.max(0, Math.min(l.length - 1, i + Math.sign(by)));

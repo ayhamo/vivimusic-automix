@@ -1859,10 +1859,30 @@
     }
     return addonTapP;
   }
+  // the decoded copies kept: the playing song's, the next one's, the deck's and the one a mix is
+  // still leaving (each is a whole song as float32 at the context's rate, ~100 MB); a finished
+  // mix's is let go at once. `idle`: playback paused a while, so the next song's goes too.
+  let testRecording = false;
+  function pruneAddons(idle = false) {
+    if (testRecording) return;
+    for (const [k, p] of prepared) {
+      if (!p.rec && p.state !== 'failed') continue;   // still being prepared
+      if (k === st?.id || k === adeck?.id || k === live?.oldId || (!idle && k === st?.next)) continue;
+      prepared.delete(k);
+    }
+  }
+  let pausedSince = 0;
+  if (typeof setInterval === 'function') setInterval(() => {
+    const v = graph()?.video;
+    if (!v || !v.paused) { pausedSince = 0; return; }
+    pausedSince ||= performance.now();
+    if (performance.now() - pausedSince > 5 * 60e3) pruneAddons(true);
+  }, 60e3);
   function addonTick(g, v) {
     const AP = window.__viviAddonsPage;
     if (!AP?.isOn() || !st || st.ad || !st.id) return;
     AP.deckAlive?.();   // the badge's "Upgrading Quality" only while this runs (no audio graph: no deck)
+    pruneAddons();
     if (adeck?.id !== st.id && !live) {
       const run = adeck = { id: st.id, state: 'starting' };
       startAddonDeck(g, v, run, AP).catch((e) => {
@@ -2032,7 +2052,8 @@
     d.addon = true;
     d.addonId = id;
     const tL = performance.now();
-    d.load(rec.buf, rec.off);
+    rec.mono ??= BD.monoOf(rec.buf);   // once per file: a later deck of the same song shares it
+    d.load(rec.buf, rec.off, rec.mono);
     log(`addons: deck loaded in ${(performance.now() - tL).toFixed(0)} ms (main thread)`);
     sdeck = d;
     say('playing', { offsetSec: rec.off, gainDb: rec.lvl.gainDb, wantDb: rec.lvl.wantDb, capped: rec.lvl.capped, score: rec.fit.score, checkScore: rec.fit.checkScore });
@@ -2055,6 +2076,7 @@
       const g = graph(), BD = window.__viviBufferDeck;
       if (!g || !BD) throw new Error('no audio graph');
       if (d.op === 'start') {
+        testRecording = true;   // (the songs' files stay until the stop hands them over)
         const nodes = { out: g.out, mix: g.mix, deck: sdeck?.out, yt: g.source };
         for (const name of d.sources || ['out']) {
           if (!nodes[name]) throw new Error('nothing to record: ' + name);
@@ -2064,6 +2086,7 @@
         }
         reply({ ok: true, at: g.ctx.currentTime });
       } else if (d.op === 'stop') {
+        testRecording = false;
         const recs = {}, transfer = [];
         for (const [name, t] of Object.entries(recTaps)) {
           await t.record(false);

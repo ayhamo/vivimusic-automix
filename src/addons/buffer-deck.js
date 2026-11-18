@@ -38,6 +38,10 @@
   const VOICE_SEC = 0.012;          // a voice's own fade (a re-anchor, a stop)
   const LOST_SEC = 0.25;            // YouTube this far from the deck (a median of 5): it moved (a seek)
   const SETTLE_SEC = 1.5;           // after a start, YouTube's time may still settle (the mix's quiet seeks)
+  // steadily this far off YouTube's place (the median of DRIFT_N errors, each ±10 ms of noise in
+  // the element's time): in step again on its output. After a mix's take-over the schedule and the
+  // player differed by 26 ms, and nothing below LOST_SEC ever put that right
+  const DRIFT_SEC = 0.008, DRIFT_N = 40, REALIGN_GAP_SEC = 10;
   const START_LEAD = 0.12;          // a start is scheduled this far ahead (the anchor's work, the worklet's hop)
   const ANCHOR_SEC = 0.25, SEARCH_SEC = 0.35, DECIM = 8;
   // after YouTube (re)starts, this much of its new sound in the tap before a match is tried, and
@@ -86,6 +90,12 @@
 
   // the file's best match for `tmpl` (YouTube's last ANCHOR_SEC) near `guess` (a file sample index):
   // coarse on an 8x average, then sample by sample; { index, score }
+  // a buffer's mono mix (what the tap's audio is found in), through one scratch channel
+  function monoOf(buffer) {
+    const n = buffer.numberOfChannels, len = buffer.length, mono = new Float32Array(len), x = new Float32Array(len);
+    for (let c = 0; c < n; c++) { buffer.copyFromChannel(x, c); for (let i = 0; i < len; i++) mono[i] += x[i] / n; }
+    return mono;
+  }
   function locate(file, tmpl, guess, range) {
     const L = tmpl.length;
     const dec = (x, from, n) => { const out = new Float32Array(Math.floor(n / DECIM)); for (let i = 0; i < out.length; i++) { let s = 0; for (let j = 0; j < DECIM; j++) s += x[from + i * DECIM + j] || 0; out[i] = s; } return out; };
@@ -119,11 +129,9 @@
       this.maxAbsError = 0;
     }
 
-    load(buffer, off) {
+    // `mono`: the file's mono mix when the caller keeps one (made once per file, shared by its decks)
+    load(buffer, off, mono = monoOf(buffer)) {
       this.buf = buffer; this.off = off;
-      const n = buffer.numberOfChannels, len = buffer.length;
-      const mono = new Float32Array(len);
-      for (let c = 0; c < n; c++) { const x = new Float32Array(len); buffer.copyFromChannel(x, c); for (let i = 0; i < len; i++) mono[i] += x[i] / n; }
       this.mono = mono;
       this.state = 'ready';
     }
@@ -170,6 +178,7 @@
       this.anchor = { t, at };
       this.anchors.push({ t, at });
       this.recent = [];
+      this.driftMark = this.nErr || 0;   // (the drift check only reads errors of this start)
     }
 
     stopVoices(at = this.ctx.currentTime) {
@@ -253,9 +262,19 @@
       if (this.recent.length < 5) return;
       const m = [...this.recent].sort((x, y) => x - y)[2];
       this.errors.push(m);
+      this.nErr = (this.nErr || 0) + 1;
       if (this.errors.length > 200) this.errors.shift();
       this.maxAbsError = Math.max(this.maxAbsError, Math.abs(m));
       if (Math.abs(m) > LOST_SEC) { log(`YouTube moved ${Math.round(m * 1000)} ms: anchoring again`); this.lose(now); this.playingSince = now; return; }
+      if (this.nErr - (this.driftMark || 0) >= DRIFT_N && now - (this.realignedAt ?? -Infinity) > REALIGN_GAP_SEC) {
+        const w = this.errors.slice(-DRIFT_N).sort((x, y) => x - y)[DRIFT_N >> 1];
+        if (Math.abs(w) > DRIFT_SEC) {
+          log(`${Math.round(w * 1000)} ms off YouTube's place: in step again on its output`);
+          this.realignedAt = now; this.realigns = (this.realigns || 0) + 1;
+          this.anchorAndStart(c, false);
+          return;
+        }
+      }
       if (this.started && now > this.audibleAt) this.out.gain.setTargetAtTime(this.level(), now, 0.03);
     }
 
@@ -303,7 +322,7 @@
         state: this.state, started: !!this.started, anchors: this.anchors.length, lastAnchor: this.lastAnchor || null, anchor: this.anchor,
         errorMs: e.length ? Math.round(e[e.length - 1] * 1000) : null,
         medianAbsMs: abs.length ? Math.round(abs[abs.length >> 1] * 1000) : null,
-        maxAbsMs: Math.round(this.maxAbsError * 1000), gain: this.out.gain.value,
+        maxAbsMs: Math.round(this.maxAbsError * 1000), gain: this.out.gain.value, realigns: this.realigns || 0,
       };
     }
 
@@ -315,5 +334,5 @@
     }
   }
 
-  window.__viviBufferDeck = { create: (ctx, destination) => new BufferDeck(ctx, destination), tap, locate };
+  window.__viviBufferDeck = { create: (ctx, destination) => new BufferDeck(ctx, destination), tap, locate, monoOf };
 })();
