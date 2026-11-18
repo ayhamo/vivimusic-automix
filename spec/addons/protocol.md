@@ -170,4 +170,8 @@ These rules, and the tier, kbps, probe, parameter, stream-answer and base-URL re
   - Hand-over: a 200 ms crossfade in from YouTube to the addon file; a 30 ms crossfade out back to YouTube (on a failure or a hand-back).
   - Level: YouTube's normalisation gain times the source gain (`offset-map.md`, Level), applied as the player's volume. ExoPlayer's volume is at most 1, so on the phone the level is capped at 0 dB: it only cuts, never boosts (PC can boost up to +6 dB, true peak kept at or under −1 dBTP).
 - PC stays deck-only (above).
+- Quality badge (both apps), always by what is actually decoded and played:
+  - an addon copy playing: "Hi-Res Lossless" (over 16-bit or over 48 kHz), "Lossless", or "High Quality" for a lossy copy at 256 kbps or more;
+  - while a copy is being found or fitted for the playing song: "Upgrading Quality";
+  - otherwise YouTube's own audio, by the format its player decodes now (PC: the itag from stats for nerds, its bitrate from the player response): "High Quality" at 256 kbps or more (Premium's Opus itag 774, AAC 141); no badge for the usual ~130–160 kbps (Opus 251, AAC 140).
 - Downloads (phone only): only addons with `allowDownloads` not false; a lossy row must be over 256 kbps.
