@@ -223,8 +223,14 @@ from `bars`.
 **Limits (a drag past one is held there, and the readout says why).** These are the planner's
 `windowLimits(plan, A, B, earliest)`, in song seconds:
 - **Inputs:**
-  - `earliest` = A's playhead + the hand-over lead + 0.5 s (`HAND_LEAD`; the planner's own
-    `earliest`).
+  - `earliest` = A's playhead + a lead: the same `earliest` the platform's planner uses. The lead is a
+    playback-timing constant, so each platform sets its own (the user's ruling: playback timing is
+    per platform):
+    - the extension: 4.5 s (`HAND_LEAD` 4 + 0.5, `src/automix/crossfade.js`);
+    - the phone: 6.5 s (`EARLIEST_LEAD` = `HAND_LEAD` + 2.5);
+    - BitChord: its own value, stated in its port.
+    editor-cases.json pins none of them: its `plans` give `earliest` as a fixture input (pos + 4.5 s),
+    and they pass with a 6.5 s lead too.
   - A's music end = `contentEndSec`, when that is more than 1 s before A's length; at most 20 s are
     cut (`musicEnd`).
   - For a blend (`style: blend`, with `bars` and `beatSec`): A's span = bars × 4 × beatSec, and B's
