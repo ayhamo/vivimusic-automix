@@ -38,6 +38,7 @@ jobs:
       gh_tag: ${{ steps.ver.outputs.gh_tag }}
       amo_version: ${{ steps.ver.outputs.amo_version }}
       tag: ${{ steps.ver.outputs.tag }}
+      old_tag: ${{ steps.ver.outputs.old_tag }}
       build: ${{ steps.ver.outputs.build }}
     steps:
       - name: compare upstream versions with fork releases
@@ -50,13 +51,18 @@ jobs:
           gh_tag=$(gh release view -R "$UPSTREAM_REPO" --json tagName --jq .tagName)
           amo_version=$(curl -fsSL "https://addons.mozilla.org/api/v5/addons/addon/$AMO_SLUG/" | jq -r .current_version.version)
           ours=$(gh api "repos/$GITHUB_REPOSITORY/commits/${GITHUB_REF_NAME}" --jq .sha)
-          tag="fork-${gh_tag}-amo${amo_version}-${ours:0:7}"
+          # the build number before the commit: GitHub sorts same-day releases by tag name, and a bare
+          # hash put 11.5.0.42 (e07f670) above 11.5.0.43 (1db61b0). b<run number, 5 digits> = the version's last part.
+          tag="fork-${gh_tag}-amo${amo_version}-b$(printf %05d "$GITHUB_RUN_NUMBER")-${ours:0:7}"
+          # this commit already released (any build number) on the same upstream versions
+          old_tag=$(gh release list -R "$GITHUB_REPOSITORY" -L 200 --json tagName --jq ".[].tagName" | grep -E "^fork-${gh_tag}-amo${amo_version}-(b[0-9]{5}-)?${ours:0:7}$" | head -1 || true)
           echo "upstream GitHub: $gh_tag | upstream AMO: $amo_version | fork: ${ours:0:7}"
           echo "gh_tag=$gh_tag" >> "$GITHUB_OUTPUT"
           echo "amo_version=$amo_version" >> "$GITHUB_OUTPUT"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
-          if gh release view "$tag" -R "$GITHUB_REPOSITORY" > /dev/null 2>&1 && [ "$FORCE" != "true" ]; then
-            echo "$tag already released, nothing to do"
+          echo "old_tag=$old_tag" >> "$GITHUB_OUTPUT"
+          if [ -n "$old_tag" ] && [ "$FORCE" != "true" ]; then
+            echo "$old_tag already released, nothing to do"
             echo "build=false" >> "$GITHUB_OUTPUT"
           else
             echo "build=true" >> "$GITHUB_OUTPUT"
@@ -173,11 +179,15 @@ jobs:
           VERSION: ${{ steps.build.outputs.version }}
           GH_TAG: ${{ needs.check.outputs.gh_tag }}
           AMO_VERSION: ${{ needs.check.outputs.amo_version }}
+          OLD_TAG: ${{ needs.check.outputs.old_tag }}
         run: |
           set -euo pipefail
-          if gh release view "$TAG" -R "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
-            gh release delete "$TAG" -R "$GITHUB_REPOSITORY" --yes --cleanup-tag
-          fi
+          # force: this commit's earlier release goes (its tag had another build number)
+          for t in "$OLD_TAG" "$TAG"; do
+            if [ -n "$t" ] && gh release view "$t" -R "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+              gh release delete "$t" -R "$GITHUB_REPOSITORY" --yes --cleanup-tag
+            fi
+          done
           {
             echo "Vivimusic Web+ ${VERSION}: this fork's patches on top of upstream, for Firefox and for Edge / Chrome."
             echo
