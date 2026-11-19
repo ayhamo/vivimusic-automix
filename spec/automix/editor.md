@@ -27,9 +27,16 @@ SHORTLIST "Overview → editor".
 
   The full shape is in `override.schema.json`.
 - **A missing field means Auto.** An override with nothing but Auto in it is deleted: Auto is the reset.
+  - Auto values are never stored: no `preset: "auto"`, no `beatMatch: "auto"`, no `bars: 0`. A
+    migrated `{style: blend}` is saved as `{family: blend}`.
+  - `preset: loop` stores no `bars`, `window` or `beatMatch` (§2).
+  - A nudge that rounds to 0 ms is not stored.
+- **Lock** marks an edit, so it is never saved alone. On a pair with no edit the Lock button is off.
+  When the last edit of a locked pair goes (its fields back to Auto), the override goes with its lock.
 - **The cap:** 300 unlocked overrides, oldest saved first out. Locked overrides don't count against
   it and are never evicted. A lock is the user saying "keep this one". Locked overrides have a cap of
-  their own, 300, and a lock beyond it is refused with a message.
+  their own, 300, and a lock beyond it is refused, with exactly this message:
+  "300 pairs are locked already: unlock one first".
 - **Today's picks migrate** as they're read, with no rewrite pass:
 
   | Today's `{style, bars}` | Becomes |
@@ -72,7 +79,9 @@ lanes it had. Picking a preset keeps the window and the length (Spotify does the
 
 **The UI:**
 - Presets are a chip row. Lanes sit under a folded "Customize", each a dropdown of the named shapes.
-- An edited pair shows a "Custom" badge (also for a non-Auto preset). The Auto chip takes the preset
+- An edited pair shows a "Custom" badge (also for a non-Auto preset). The badge shows exactly when the
+  pair has a saved override. That includes a migrated `family` pick, since a lone lock is never saved
+  (§1). The Auto chip takes the preset
   back to Auto and keeps the rest of the edit (length, window, beat match, lock); "Reset to Auto"
   clears the whole edit and the badge.
 
@@ -189,7 +198,16 @@ from `bars`.
 - A's mix-out snaps to A's end grid (`tailGrid`); B's mix-in snaps to B's opening grid.
 - Downbeats by default, beats on a long-press (phone) or with Shift (extension).
 - With beat match Off, nothing snaps.
-- Nudges are 10 ms steps (`nudgeMs`, ±2000 ms at most).
+- Nudges are 10 ms steps (`nudgeMs`, ±2000 ms at most). A nudge past that is refused with
+  "Nudges reach 2 s at most: drag the song instead".
+- **The grids** (`editorGrid(analysis, side)` → `{beatSec, downbeatSec, bpm}`):
+  - `out` (A): A's end grid, the `tailGrid` fields (`beatIntervalSec`, `firstDownbeatSec`, `bpm`)
+    when the analysis has one, else its main grid.
+  - `in` (B): B's main grid.
+  - None when that grid lacks `bpm`, `beatIntervalSec` or `firstDownbeatSec`. Then nothing snaps,
+    and the position is saved as `{bar: 0, sec}`.
+  - A bar is 4 beats. Positions are `downbeatSec + j × beatSec`, with bar = floor(j / 4) and beat
+    = j − 4 × bar.
 
 **Readout while dragging:**
 "A mixes out at 3:12.4 (bar 81) · B enters at 0:32.4 (bar 17)".
@@ -202,8 +220,30 @@ from `bars`.
   than one beat from `sec`, the grid changed under it. Then the position is `sec`, snapped to the new
   grid's nearest downbeat, and the result says `moved: true` so the editor can mark it.
 
-**Limits (a drag past one is held there, and the readout says why: "held: A has already played up
-to there"; the planner's `windowLimits`):**
+**Limits (a drag past one is held there, and the readout says why).** These are the planner's
+`windowLimits(plan, A, B, earliest)`, in song seconds:
+- **Inputs:**
+  - `earliest` = A's playhead + the hand-over lead + 0.5 s (`HAND_LEAD`; the planner's own
+    `earliest`).
+  - A's music end = `contentEndSec`, when that is more than 1 s before A's length; at most 20 s are
+    cut (`musicEnd`).
+  - For a blend (`style: blend`, with `bars` and `beatSec`): A's span = bars × 4 × beatSec, and B's
+    span = A's span × (`rate` / `outRate`), or ÷ `glide.q` for a glide.
+  - For anything else, both spans are the plan's `durationSec`.
+- **A's mix-out:**
+  - from `earliest`, plus `rampSongSec` for a blend;
+  - up to min(music end, length − 0.3) − A's span for a blend, or music end − 0.3 − span otherwise
+    (never below the lower limit).
+- **B's mix-in:** from 0 up to B's length − 10 − B's span (never below 0).
+- **The readout's reasons:** "· held: " plus one of these:
+  - "A has already played up to there" (A, low);
+  - "the window has to end before A's music does" (A, high);
+  - "that is B's start" (B, low);
+  - "the window has to end 10 s before B's end" (B, high).
+- A snap that lands past a limit moves one step (a bar, or a beat with Shift or long-press) back
+  inside.
+
+What the limits are, in words:
 - A's mix-out: no earlier than the planner's `earliest`, and late enough that the window ends before
   A's music does (`contentEndSec`, else the duration).
 - B's mix-in: 0 or later, the window ending at least 10 s before B's end.
@@ -233,7 +273,17 @@ to there"; the planner's `windowLimits`):**
   tempos plays the user's preset, length and window without beat match instead.
 - Nothing is refused silently.
 
-## 7. Auto's name on screen (question 10)
+## 7. Auto's name and the header (question 10)
+
+**The header** under the title names the plan (numbers rounded; D = the mix's seconds, one decimal):
+
+| Plan | Header |
+|---|---|
+| `style: loop` | Loop mix · {totalBars} bars · {A BPM}→{B BPM} BPM · {D} s |
+| `style: crossfade` | {Beatless bridge | Hand-over | Fade} · {D} s[ · {reason}] |
+| anything else | {Filter mix | Drop-in | Muffle | Glide blend | Blend} · {bars} bars · {BPM} · {D} s |
+
+{BPM} is "{outBpm}→{inBpm} BPM" when the two round to different numbers, else "{bpm} BPM".
 
 With no override the preset row shows "Auto · <what the planner chose>":
 

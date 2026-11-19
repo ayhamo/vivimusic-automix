@@ -515,7 +515,7 @@
     lock.classList.toggle('vivi-on', !!ov.lock);
     setIf(lock, 'textContent', ov.lock ? 'Locked' : 'Lock');
     reset.disabled = !has;
-    badge.hidden = !has || (!ov.preset && !ov.lanes && !ov.window && !ov.beatMatch && !ov.bars);
+    badge.hidden = !has;   // any saved override is an edit (a lone lock is never saved: editor.md §1, §2)
     const left = s && s.editable && s.at != null ? -s.at : null;
     preview.disabled = !s?.editable || !(s.previewAt > 0) || left == null || left < 25;
     setIf(preview, 'title', preview.disabled ? '' : 'Jump to just before the mix');
