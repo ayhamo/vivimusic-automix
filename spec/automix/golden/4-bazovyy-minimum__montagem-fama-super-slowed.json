@@ -16,6 +16,7 @@
       "rerouted": "both sang 48% of it, moved to 24% (exit 0 bars earlier, cue +4 bars)",
       "vocalsBy": "mask/mask",
       "keyClash": null,
+      "glide": null,
       "mixOutTrackTime": 118.7601,
       "durationSec": 10.1057,
       "mixInTrackTime": 21.4655,
@@ -1719,14 +1720,14 @@
       "rerouted": "both sang 48% of it, moved to 24% (exit 0 bars earlier, cue +4 bars)",
       "vocalsBy": "mask/mask",
       "keyClash": null,
-      "subBassContrast": 0.4407,
-      "swapAt": 0.5,
-      "swapMoved": null,
       "glide": {
         "q": 0.9421,
         "beats": 16,
         "beatOutSec": 0.6316
       },
+      "subBassContrast": 0.4407,
+      "swapAt": 0.5,
+      "swapMoved": null,
       "harmonic": {
         "score": 0.585,
         "confidence": 0.932,

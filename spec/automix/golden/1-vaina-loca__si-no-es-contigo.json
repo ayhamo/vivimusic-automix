@@ -337,6 +337,7 @@
       "rerouted": null,
       "vocalsBy": "mask/mask",
       "keyClash": null,
+      "glide": null,
       "mixOutTrackTime": 160.98,
       "durationSec": 9.5999,
       "mixInTrackTime": 15.5987,
@@ -2346,14 +2347,14 @@
       "rerouted": null,
       "vocalsBy": "mask/mask",
       "keyClash": "F# major → C minor, 0.307",
-      "subBassContrast": 0.5767,
-      "swapAt": 0.5,
-      "swapMoved": null,
       "glide": {
         "q": 1.0639,
         "beats": 8,
         "beatOutSec": 0.6384
       },
+      "subBassContrast": 0.5767,
+      "swapAt": 0.5,
+      "swapMoved": null,
       "harmonic": {
         "score": 0.307,
         "confidence": 0.866,

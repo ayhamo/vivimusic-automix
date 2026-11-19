@@ -433,6 +433,19 @@ ytmusic-player-bar:has(ytmusic-player-expanding-menu:not([aria-hidden="true"]):n
 .vivi-amx-ov-chip:focus-visible, .vivi-amx-ov-btn:focus-visible, .vivi-amx-ov-close:focus-visible { outline: 2px solid #3A9BDC; outline-offset: 2px; }
 .vivi-amx-ov-actions { display: flex; align-items: center; gap: 12px; margin-top: 2px; }
 .vivi-amx-ov-note { font-size: 12px; color: rgba(255, 255, 255, 0.6); }
+.vivi-amx-ov-label { width: 72px; }
+.vivi-amx-ov-actions { flex-wrap: wrap; }
+.vivi-amx-ov-btn.vivi-on { background: rgba(255, 255, 255, 0.14); }
+.vivi-amx-ov-badge { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px; background: #A779FF; color: #fff; }
+.vivi-amx-ov-badge[hidden] { display: none; }
+.vivi-amx-ov-custom { margin-left: 82px; font-size: 12px; color: rgba(255, 255, 255, 0.75); }
+.vivi-amx-ov-custom.vivi-off { opacity: 0.35; pointer-events: none; }
+.vivi-amx-ov-custom summary { cursor: pointer; width: max-content; }
+.vivi-amx-ov-lane { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+.vivi-amx-ov-lane i { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+.vivi-amx-ov-lane select { margin-left: auto; min-width: 210px; background: #1f1c2a; color: #fff; border: 1px solid rgba(255, 255, 255, 0.16); border-radius: 8px; padding: 3px 6px; font: inherit; }
+.vivi-amx-ov-canvas { cursor: grab; touch-action: none; }
+.vivi-amx-ov-canvas:active { cursor: grabbing; }
 @media (max-width: 560px) {
   .vivi-amx-ov-songs { flex-direction: column; align-items: stretch; }
   .vivi-amx-ov-arrow { display: none; }

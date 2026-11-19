@@ -6,9 +6,11 @@
  * 2.5 kHz, high above), dimmed outside the mix; the mix is framed, with its
  * beat grid (bars brighter) and each song's fader curve.
  *
- * Beyond BitChord: a style (Auto, Loop, Blend, Filter, Fade) and a length
- * (Auto, 4 to 32 bars) can be picked for each pair of songs, kept for the
- * next time the pair plays, and Preview jumps to just before the mix.
+ * Beyond BitChord, the transition editor (spec/automix/editor.md): a preset
+ * or custom lanes, beat match, a length (Auto, 2 to 32 bars) and the window
+ * (each song dragged under the mix, snapped to its grid, nudged in 10 ms) can
+ * be set for each pair of songs, kept (or locked) for the next time the pair
+ * plays, and Preview jumps to just before the mix.
  *
  * Opened by its button in the player bar (while Automix is on) or by
  * clicking the Automix toast. Everything here only reads what crossfade.js plans
@@ -23,9 +25,17 @@
   const BANDS = ['low', 'mid', 'high'];
   const FR = 40;                   // waveform columns per second of song
   const DECODE_SR = 22050;
-  const STYLES = [['', 'Auto'], ['loop', 'Loop'], ['blend', 'Blend'], ['filter', 'Filter'], ['crossfade', 'Fade']];
-  const BARS = [[0, 'Auto'], [4, '4'], [8, '8'], [16, '16'], [32, '32']];
-  const FILTER_MAX_BARS = 8;       // automix.js FILTER_MAX_BARS
+  // editor.md §2-§4, §7
+  const PRESETS = [['auto', 'Auto'], ['smooth', 'Smooth'], ['rise', 'Rise'], ['blend', 'Blend'], ['wave', 'Wave'], ['melt', 'Melt'], ['slam', 'Slam'], ['loop', 'Loop'], ['custom', 'Custom']];
+  const BEAT_MATCH = [['auto', 'Auto'], ['sync', 'Sync'], ['glide', 'Glide'], ['off', 'Off']];
+  const BARS = [[0, 'Auto'], [2, '2'], [4, '4'], [8, '8'], [16, '16'], [32, '32']];
+  const LANE_OPTIONS = {
+    volume: [['smooth', 'Smooth'], ['crossfade', 'Crossfade'], ['overlap', 'Overlap'], ['cutInFadeOut', 'Cut in, fade out'], ['fadeInCutOut', 'Fade in, cut out'], ['centerCut', 'Cut at the centre']],
+    eq: [['centerBassSwap', 'Bass swap at the centre'], ['endBassSwap', 'Bass swap at the end'], ['threeBandFade', 'Three-band fade'], ['quickBassCut', 'Quick bass cut'], ['none', 'None']],
+    effect: [['none', 'None'], ['lpOut', 'Low-pass out'], ['hpIn', 'High-pass in'], ['lpBoth', 'Low-pass both'], ['hpBoth', 'High-pass both'], ['lpInHpOut', 'Low-pass in, high-pass out']],
+  };
+  const LANE_COLORS = { volume: '#4C8DFF', eq: '#F5C542', effect: '#A779FF', rate: '#9AA0A6' };
+  const NUDGE_MS = 10, NUDGE_MAX_MS = 2000;
 
   const xf = () => window.__viviCrossfade;
   const A = () => window.__viviAutomix;
@@ -175,30 +185,77 @@
     const msg = el('div', 'vivi-amx-ov-msg', '');
     well.append(canvas, msg);
     const legend = el('div', 'vivi-amx-ov-legend');
-    for (const [k, t] of [['low', 'Low'], ['mid', 'Mid'], ['high', 'High'], ['fader', 'Volume']]) {
+    for (const [k, t] of [['low', 'Low'], ['mid', 'Mid'], ['high', 'High'], ['volume', 'Volume'], ['eq', 'EQ'], ['effect', 'Effect']]) {
       const i = el('span', 'vivi-amx-ov-key');
       const sw = el('i');
-      sw.style.background = COLORS[k];
+      sw.style.background = COLORS[k] || LANE_COLORS[k];
       i.append(sw, document.createTextNode(t));
       legend.append(i);
     }
     const clock = el('span', 'vivi-amx-ov-clock', '');
     legend.append(clock);
     const controls = el('div', 'vivi-amx-ov-controls');
-    const styleRow = chipRow('Style', STYLES, (v) => pick({ style: v || null }));
+    const presetRow = chipRow('Preset', PRESETS, (v) => pick(v === 'custom' ? { preset: 'custom', lanes: lanesNow() } : { preset: v }));
+    const custom = el('details', 'vivi-amx-ov-custom');
+    custom.append(el('summary', '', 'Customize'));
+    const laneSel = {};
+    for (const [k, label] of [['volume', 'Volume'], ['eq', 'EQ'], ['effect', 'Effect']]) {
+      const lab = el('label', 'vivi-amx-ov-lane');
+      const sw = el('i');
+      sw.style.background = LANE_COLORS[k];
+      const sel = el('select');
+      for (const [v, t] of LANE_OPTIONS[k]) { const o = el('option', '', t); o.value = v; sel.append(o); }
+      sel.addEventListener('change', () => pick({ preset: 'custom', lanes: { ...lanesNow(), [k]: sel.value } }));
+      lab.append(sw, document.createTextNode(label), sel);
+      custom.append(lab);
+      laneSel[k] = sel;
+    }
+    const matchRow = chipRow('Beat match', BEAT_MATCH, (v) => pick({ beatMatch: v }));
     const barsRow = chipRow('Length', BARS, (v) => pick({ bars: Number(v) || null }));
+    const winRow = el('div', 'vivi-amx-ov-row');
+    winRow.append(el('span', 'vivi-amx-ov-label', 'Window'));
+    const nudges = el('div', 'vivi-amx-ov-chips');
+    const nudgeBtn = (side, d, text) => {
+      const b = el('button', 'vivi-amx-ov-chip', text);
+      b.type = 'button';
+      b.title = `${side === 'out' ? 'The playing song' : 'The next song'} ${d < 0 ? 'earlier' : 'later'} by ${NUDGE_MS} ms`;
+      b.addEventListener('click', () => { if (!b.disabled) nudge(side, d); });
+      nudges.append(b);
+      return b;
+    };
+    const nudgeBtns = [nudgeBtn('out', -1, 'A −10 ms'), nudgeBtn('out', 1, 'A +10 ms'), nudgeBtn('in', -1, 'B −10 ms'), nudgeBtn('in', 1, 'B +10 ms')];
+    const winReset = el('button', 'vivi-amx-ov-chip', 'Auto');
+    winReset.type = 'button';
+    winReset.title = 'The planner places the window';
+    winReset.addEventListener('click', () => { if (!winReset.disabled) pick({ window: null }); });
+    nudges.append(winReset);
+    winRow.append(nudges);
     const actions = el('div', 'vivi-amx-ov-actions');
+    const lock = el('button', 'vivi-amx-ov-btn', 'Lock');
+    lock.type = 'button';
+    lock.setAttribute('aria-pressed', 'false');
+    lock.title = 'Keep this edit past the 300 kept pairs';
+    lock.addEventListener('click', () => { if (!lock.disabled) pick({ lock: lock.getAttribute('aria-pressed') !== 'true' }); });
+    const reset = el('button', 'vivi-amx-ov-btn', 'Reset to Auto');
+    reset.type = 'button';
+    reset.addEventListener('click', () => { const s = xf()?.overview?.(); if (s?.pairKey && !reset.disabled) { xf().setPairPick(s.pairKey, null); refused = null; sig = ''; } });
     const preview = el('button', 'vivi-amx-ov-btn', '▶ Preview');
     preview.type = 'button';
     preview.addEventListener('click', () => { const s = xf()?.overview?.(); if (s?.editable) xf().seekTo(s.previewAt); });
     const note = el('span', 'vivi-amx-ov-note', '');
-    actions.append(preview, note);
-    controls.append(styleRow.row, barsRow.row, actions);
+    const badge = el('span', 'vivi-amx-ov-badge', 'Custom');
+    badge.hidden = true;
+    actions.append(preview, lock, reset, badge, note);
+    controls.append(presetRow.row, custom, matchRow.row, barsRow.row, winRow, actions);
     card.append(head, songsRow, well, legend, controls);
     root.append(card);
     root.addEventListener('pointerdown', (e) => { if (e.target === root) hide(); });
     document.body.append(root);
-    ui = { root, card, sub, songsRow, canvas, msg, clock, styleRow, barsRow, preview, note };
+    ui = { root, card, sub, songsRow, canvas, msg, clock, presetRow, custom, laneSel, matchRow, barsRow, nudgeBtns, winReset, preview, lock, reset, badge, note };
+    canvas.addEventListener('pointerdown', dragStart);
+    canvas.addEventListener('pointermove', dragMove);
+    canvas.addEventListener('pointerup', dragEnd);
+    canvas.addEventListener('pointercancel', () => { drag = null; sig = ''; });
     document.addEventListener('keydown', onKey, true);
     sig = ''; songsSig = ''; staticLayer = null;
     requestAnimationFrame(() => root.classList.add('vivi-open'));
@@ -235,16 +292,118 @@
     row.append(group);
     return { row, chips };
   }
+  // An edit of this pair's override (editor.md §1): merged into what is saved; a field set to its
+  // Auto value goes; picking a preset drops a migrated pick's family. The planner gets it next tick.
+  let refused = null;   // { pair, text }: a refused save, shown while that pair is on screen
   function pick(change) {
     const s = xf()?.overview?.();
     if (!s?.pairKey || !s.toId) return;
-    const cur = s.pick || { style: null, bars: null };
-    const next = { ...cur, ...change };
-    // a loop's length is its loops'; a fade's is fixed
-    if (next.style === 'loop' || next.style === 'crossfade') next.bars = null;
-    if (next.style === 'filter' && next.bars > FILTER_MAX_BARS) next.bars = FILTER_MAX_BARS;
-    xf().setPairPick(s.pairKey, next);
+    const next = { ...(A().migratePick(s.pick) || {}), ...change };
+    if ('preset' in change) delete next.family;
+    if (next.preset !== 'custom') delete next.lanes;
+    if (next.preset === 'loop') { delete next.bars; delete next.window; }
+    if (!next.bars) delete next.bars;
+    if (!next.window) delete next.window;
+    const r = xf().setPairPick(s.pairKey, next);
+    refused = r?.refused ? { pair: s.pairKey, text: r.refused } : null;
     sig = '';
+  }
+  // the lanes on screen: the custom ones, else the preset's, else Smooth's
+  function lanesNow() {
+    const s = xf()?.overview?.();
+    const ov = A().migratePick(s?.pick);
+    return { ...(ov?.preset === 'custom' && ov.lanes ? ov.lanes : A().PRESET_LANES[ov?.preset] || A().PRESET_LANES.smooth) };
+  }
+  // "Auto · <what the planner chose>" (editor.md §7)
+  function autoName(m) {
+    if (!m) return 'Auto';
+    if (m.style === 'loop') return 'Auto · Loop';
+    if (m.style === 'filter') return 'Auto · Filter';
+    if (m.style === 'crossfade') return m.handoff ? 'Auto · Hand-over' : m.bridge ? 'Auto · Bridge' : 'Auto · Fade';
+    return m.shape === 'dropin' ? 'Auto · Drop-in' : m.shape === 'muffle' ? 'Auto · Muffle' : m.glide ? 'Auto · Glide' : 'Auto · Blend';
+  }
+
+  // ───────── the window (editor.md §6) ─────────
+  // Each song is dragged under the mix's frame: its lane (top: the playing song, A; bottom: the
+  // next, B) moves, and the song second at the frame's start is that song's mix-out or mix-in.
+  // Snapped to that song's downbeats (beats with Shift), not at all with beat match Off.
+  let drag = null;   // { side, x0, base, sec, s, w, span, beats }
+  const fmtSec = (t) => { t = Math.max(0, t); const m = Math.floor(t / 60); return `${m}:${(t - m * 60).toFixed(1).padStart(4, '0')}`; };
+  function gridFor(s, side) { return A().editorGrid?.(A().get(side === 'out' ? s.fromId : s.toId), side) || null; }
+  // a song second as a saved position: { bar, beat?, nudgeMs?, sec } on that song's grid
+  function positionOf(sec, grid, snap, beats) {
+    if (!grid) return { bar: 0, sec };
+    const b = grid.beatSec;
+    if (snap) {
+      const j = beats ? Math.round((sec - grid.downbeatSec) / b) : 4 * Math.round((sec - grid.downbeatSec) / (4 * b));
+      const bar = Math.floor(j / 4), beat = j - 4 * bar;
+      return { bar, ...(beat ? { beat } : {}), sec: grid.downbeatSec + j * b };
+    }
+    const j = Math.floor((sec - grid.downbeatSec) / b + 1e-9), bar = Math.floor(j / 4), beat = j - 4 * bar;
+    const nudgeMs = Math.round((sec - grid.downbeatSec - j * b) * 100) * 10;
+    return { bar, ...(beat ? { beat } : {}), ...(nudgeMs ? { nudgeMs } : {}), sec };
+  }
+  const barNo = (p) => p.bar + 1;   // on screen bars count from 1
+  function readout(s, out, inn) {
+    return `A mixes out at ${fmtSec(out.sec)} (bar ${barNo(out)}) · B enters at ${fmtSec(inn.sec)} (bar ${barNo(inn)})`;
+  }
+  function windowEditable(s) {
+    const ov = A().migratePick(s?.pick);
+    return !!s && !s.why && s.editable && !!s.toId && s.mix.style !== 'loop' && ov?.preset !== 'loop';
+  }
+  function dragStart(e) {
+    const s = xf()?.overview?.();
+    if (!windowEditable(s) || e.button !== 0) return;
+    const r = ui.canvas.getBoundingClientRect();
+    const side = e.clientY - r.top < r.height / 2 ? 'out' : 'in';
+    const pad = Math.max(4, s.D * 0.24);
+    drag = { side, x0: e.clientX, base: side === 'out' ? s.mix.mixOutTrackTime : s.mix.mixInTrackTime, sec: null, s, w: r.width, span: s.D + 2 * pad };
+    ui.canvas.setPointerCapture(e.pointerId);
+    e.preventDefault();
+  }
+  function dragMove(e) {
+    if (!drag) return;
+    const s = drag.s, ov = A().migratePick(s.pick);
+    // the song moves with the pointer: what was left of the frame comes under it
+    let sec = drag.base - ((e.clientX - drag.x0) / drag.w) * drag.span;
+    const dur = drag.side === 'out' ? s.fromDur || A().get(s.fromId)?.durationSec || 0 : A().get(s.toId)?.durationSec || 0;
+    sec = Math.max(0, Math.min(sec, Math.max(0, dur - s.D - (drag.side === 'in' ? 10 : 0.3))));
+    const grid = gridFor(s, drag.side);
+    drag.pos = positionOf(sec, grid, ov?.beatMatch !== 'off', e.shiftKey);
+    drag.sec = drag.pos.sec;
+    sig = '';
+  }
+  // A window edit of one side (editor.md §6): the other side is saved too, where the plan has it
+  // now, so the planner's own moves of an unsaved side (capIncomingSkip, the vocal re-route) don't
+  // move it once the window is the user's.
+  function windowWith(s, ov, side, pos) {
+    const w = { ...(ov?.window || {}), [side]: pos }, other = side === 'out' ? 'in' : 'out';
+    if (!w[other]) w[other] = positionOf(other === 'out' ? s.mix.mixOutTrackTime : s.mix.mixInTrackTime, gridFor(s, other), false, false);
+    return w;
+  }
+  function dragEnd(e) {
+    if (!drag) return;
+    const d = drag;
+    drag = null;
+    try { ui.canvas.releasePointerCapture(e.pointerId); } catch { /* gone */ }
+    sig = '';
+    if (d.pos == null || Math.abs(d.pos.sec - d.base) < 0.005) return;
+    if (xf()?.overview?.()?.pairKey !== d.s.pairKey) return;   // the song changed under the drag
+    const ov = A().migratePick(d.s.pick);
+    pick({ window: windowWith(d.s, ov, d.side, d.pos) });
+  }
+  // A 10 ms step of one song's position (from where the plan has it, when nothing is saved yet)
+  function nudge(side, dir) {
+    const s = xf()?.overview?.();
+    if (!windowEditable(s)) return;
+    const ov = A().migratePick(s.pick);
+    const grid = gridFor(s, side);
+    const now = ov?.window?.[side] || positionOf(side === 'out' ? s.mix.mixOutTrackTime : s.mix.mixInTrackTime, grid, false, false);
+    const n = (now.nudgeMs || 0) + dir * NUDGE_MS;
+    if (Math.abs(n) > NUDGE_MAX_MS) { refused = { pair: s.pairKey, text: `Nudges reach ${NUDGE_MAX_MS / 1000} s at most: drag the song instead` }; return; }
+    const pos = { ...now, nudgeMs: n, sec: Math.round((now.sec + dir * NUDGE_MS / 1000) * 1000) / 1000 };
+    if (!pos.nudgeMs) delete pos.nudgeMs;
+    pick({ window: windowWith(s, ov, side, pos) });
   }
 
   function loop() {
@@ -267,7 +426,7 @@
   }
 
   function render() {
-    const s = xf()?.overview?.();
+    let s = xf()?.overview?.();
     if (!s || s.why) {
       ui.sub.textContent = s?.why || 'Automix is not running';
       ui.msg.textContent = s?.why || '';
@@ -277,20 +436,19 @@
       songsSig = '';
       setControls(null);
       ui.clock.textContent = '';
-      // a pick for these two songs, with no mix to show: Auto can still clear it
+      // an edit for these two songs, with no mix to show: Reset can still clear it
       if (s?.pick) {
-        for (const r of [ui.styleRow, ui.barsRow]) r.chips[0].disabled = false;   // Auto comes first in both
-        // what is picked shows as picked
-        const mark = (b, on) => { b.classList.toggle('vivi-on', on); b.setAttribute('aria-checked', String(on)); };
-        for (const b of ui.styleRow.chips) mark(b, b.dataset.v === (s.pick.style || ''));
-        for (const b of ui.barsRow.chips) mark(b, Number(b.dataset.v) === (s.pick.bars || 0));
-        ui.note.textContent = 'These two songs have a pick of their own: Auto clears it.';
+        ui.reset.disabled = false;
+        ui.badge.hidden = false;
+        ui.note.textContent = 'These two songs have an edit of their own: Reset to Auto clears it.';
       }
       return;
     }
     ui.msg.hidden = true;
     ui.canvas.hidden = false;
     ui.sub.textContent = describe(s.mix, s);
+    // while a song is dragged, it is drawn where it would mix
+    if (drag?.sec != null) s = { ...s, mix: { ...s.mix, [drag.side === 'out' ? 'mixOutTrackTime' : 'mixInTrackTime']: drag.sec } };
     // the cards again once an analysis lands (their BPM and key)
     const ss = s.pairKey + '|' + [s.fromId, s.toId].map((id) => (id && A()?.get(id)?.bpm ? 1 : 0)).join('');
     if (songsSig !== ss) { songsSig = ss; drawSongs(s); }
@@ -299,41 +457,62 @@
   }
 
   function setControls(s) {
-    const { styleRow, barsRow, preview, note } = ui;
-    const pk = s?.pick || {};
-    const style = pk.style || '';
+    const { presetRow, custom, laneSel, matchRow, barsRow, nudgeBtns, winReset, preview, lock, reset, badge, note } = ui;
+    const ov = A()?.migratePick?.(s?.pick) || {};
+    const has = !!s?.pick;
+    const preset = ov.preset || 'auto', bm = ov.beatMatch || 'auto';
     const loopNone = s?.loop?.state === 'none';
-    for (const b of styleRow.chips) {
-      const on = b.dataset.v === style;
-      b.classList.toggle('vivi-on', on);
-      b.setAttribute('aria-checked', String(on));
+    const mark = (b, on) => { b.classList.toggle('vivi-on', on); b.setAttribute('aria-checked', String(on)); };
+    for (const b of presetRow.chips) {
+      mark(b, b.dataset.v === preset);
       b.disabled = !s?.toId || (b.dataset.v === 'loop' && loopNone);
       b.title = b.dataset.v === 'loop' && loopNone ? `No loop mix for these two: ${s.loop.why}` : '';
+      if (b.dataset.v === 'auto') b.textContent = preset === 'auto' ? autoName(s?.mix) : 'Auto';
     }
-    const actual = s?.mix?.style;
-    const fixedLen = style === 'loop' || style === 'crossfade' || (!style && !pk.bars && (actual === 'loop' || actual === 'crossfade'));
-    const lenWhy = !s?.toId ? '' : fixedLen
-      ? ((style || actual) === 'loop' ? 'A loop mix sets its own length: pick Blend or Filter to choose one' : 'A fade has a fixed length')
-      : style === 'filter' ? `A filter mix is at most ${FILTER_MAX_BARS} bars` : '';
+    // (Auto: Smooth's, the lanes a first change starts from: lanesNow)
+    const lanes = preset === 'loop' ? null : preset === 'custom' && ov.lanes ? ov.lanes : A()?.PRESET_LANES?.[preset] || A()?.PRESET_LANES?.smooth || null;
+    for (const [k, sel] of Object.entries(laneSel)) {
+      sel.disabled = !s?.toId || preset === 'loop';
+      const v = lanes?.[k] || '';
+      if (v && sel.value !== v) sel.value = v;
+    }
+    custom.classList.toggle('vivi-off', preset === 'loop');
+    for (const b of matchRow.chips) { mark(b, b.dataset.v === bm); b.disabled = !s?.toId || preset === 'loop'; }
+    const isLoop = preset === 'loop' || (preset === 'auto' && s?.mix?.style === 'loop');
     for (const b of barsRow.chips) {
       const v = Number(b.dataset.v);
-      const on = v === (pk.bars || 0);
-      b.classList.toggle('vivi-on', on);
-      b.setAttribute('aria-checked', String(on));
-      b.disabled = !s?.toId || (fixedLen && v !== 0) || ((style === 'filter') && v > FILTER_MAX_BARS);
-      b.title = b.disabled && v !== 0 ? lenWhy : '';
+      mark(b, v === (ov.bars || 0));
+      b.disabled = !s?.toId || (isLoop && v !== 0);
+      b.title = b.disabled && v !== 0 && s?.toId ? 'A loop mix sets its own length' : '';
     }
+    const winOn = windowEditable(s);
+    for (const b of nudgeBtns) b.disabled = !winOn;
+    winReset.disabled = !winOn || !ov.window;
+    mark(winReset, !ov.window);
+    lock.disabled = !has;
+    lock.setAttribute('aria-pressed', String(!!ov.lock));
+    lock.classList.toggle('vivi-on', !!ov.lock);
+    lock.textContent = ov.lock ? 'Locked' : 'Lock';
+    reset.disabled = !has;
+    badge.hidden = !has || (!ov.preset && !ov.lanes && !ov.window && !ov.beatMatch && !ov.bars);
     const left = s && s.editable && s.at != null ? -s.at : null;
     preview.disabled = !s?.editable || !(s.previewAt > 0) || left == null || left < 25;
     preview.title = preview.disabled ? '' : 'Jump to just before the mix';
+    const m = s?.mix;
     let n = '';
     if (!s) n = '';
-    else if (!s.editable) n = 'Mixing now: a new pick is for the next time these two play.';
-    else if (style && style !== actual && !(style === 'crossfade' && actual === 'crossfade')) n = style === 'loop' ? 'Preparing the loop mix…' : 'Planning…';
-    else if (pk.bars && s.mix.bars && pk.bars !== s.mix.bars && actual !== 'loop') n = `${pk.bars} bars asked; ${s.mix.bars} fit here.`;
-    else if (style || pk.bars) n = 'Kept for these two songs.';
-    else if (s.mix.reason) n = s.mix.reason;
-    else if (fixedLen) n = lenWhy + '.';
+    else if (drag?.pos) {
+      const other = drag.side === 'out' ? positionOf(m.mixInTrackTime, gridFor(s, 'in'), false, false) : positionOf(m.mixOutTrackTime, gridFor(s, 'out'), false, false);
+      n = drag.side === 'out' ? readout(s, drag.pos, other) : readout(s, other, drag.pos);
+    } else if (refused?.pair === s.pairKey) n = refused.text;
+    else if (!s.editable) n = 'Mixing now: an edit is for the next time these two play.';
+    else if (preset === 'loop' && m.style !== 'loop') n = loopNone ? `No loop mix for these two: ${s.loop.why}` : 'Preparing the loop mix…';
+    else if (m.warnings?.length) n = '⚠ ' + m.warnings.join('; ');
+    else if (ov.bars && m.bars && ov.bars !== m.bars && m.style !== 'loop' && m.style !== 'crossfade') n = `${ov.bars} bars asked; ${m.bars} fit here.`;
+    else if (ov.window && m.style !== 'loop') n = readout(s, ov.window.out || positionOf(m.mixOutTrackTime, gridFor(s, 'out'), false, false), ov.window.in || positionOf(m.mixInTrackTime, gridFor(s, 'in'), false, false));
+    else if (has) n = ov.lock ? 'Locked for these two songs.' : 'Kept for these two songs.';
+    else if (m.reason) n = m.reason;
+    else if (windowEditable(s)) n = 'Drag a song under the mix to move the window (Shift: beats).';
     if (note.textContent !== n) note.textContent = n;
   }
 
@@ -461,7 +640,7 @@
     }
     // faders
     const faders = [L.gOut, L.gIn];
-    g.strokeStyle = COLORS.fader;
+    g.strokeStyle = LANE_COLORS.volume;
     g.lineWidth = 1.5;
     for (let lane = 0; lane < 2; lane++) {
       const y0 = top[lane] + laneH - 1, span = laneH - 4;
@@ -473,6 +652,44 @@
       g.stroke();
     }
     g.lineWidth = 1;
+    // the plan's EQ (bass, then highs; 0 dB at the top of the lane, BASS_CUT_DB at its bottom) and its
+    // filters (log Hz: 20 Hz at the bottom, 20 kHz at the top, as the opening of each song's filter)
+    const c = s.mix.curves;
+    if (c && s.mix.style !== 'loop') {
+      const at = (pts, t, geo) => {
+        if (t <= pts[0][0]) return pts[0][1];
+        for (let i = 1; i < pts.length; i++) {
+          const [a0, va] = pts[i - 1], [b0, vb] = pts[i];
+          if (t > b0) continue;
+          if (b0 - a0 < 1e-9) return vb;
+          const x = (t - a0) / (b0 - a0);
+          return geo ? va * Math.pow(vb / va, x) : va + (vb - va) * x;
+        }
+        return pts[pts.length - 1][1];
+      };
+      const lane = (pts, k, color, geo, toY) => {
+        if (!pts?.length) return;
+        const y0 = top[k] + 2, span = laneH - 6;
+        g.strokeStyle = color;
+        g.setLineDash(geo ? [4, 3] : []);
+        g.beginPath();
+        for (let x = Math.max(0, Math.floor(fx0)); x <= Math.min(w, Math.ceil(fx1)); x += 2) {
+          const y = y0 + (1 - toY(at(pts, T(x), geo))) * span;
+          if (x <= fx0 + 1) g.moveTo(x, y); else g.lineTo(x, y);
+        }
+        g.stroke();
+      };
+      const db = (v) => 1 - Math.min(1, Math.max(0, v / -18));
+      const hzLp = (v) => Math.log(Math.max(20, v) / 20) / Math.log(1000);
+      const hzHp = (v) => 1 - Math.log(Math.max(20, v) / 20) / Math.log(1000);
+      for (const [k, side] of [[0, c.out], [1, c.in]]) {
+        lane(side.bassDb, k, LANE_COLORS.eq, false, db);
+        lane(side.highDb, k, LANE_COLORS.eq + 'aa', false, db);
+        lane(side.lowpassHz, k, LANE_COLORS.effect, true, hzLp);
+        lane(side.highpassHz, k, LANE_COLORS.effect, true, hzHp);
+      }
+      g.setLineDash([]);
+    }
     // frame
     g.strokeStyle = COLORS.frame;
     g.lineWidth = 2;

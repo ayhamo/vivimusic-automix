@@ -324,15 +324,23 @@
   function replanPair(key) {
     if (!live && st && key === st.id + '>' + (st.next || '') && ['waiting', 'ready', 'fallback'].includes(amx.state)) { amx.state = 'idle'; reqId = ''; }
   }
+  // An override (spec/automix/editor.md §1): Auto-only clears it; at most MAX_PICKS unlocked (the
+  // oldest saved go first; picks from before the editor have no savedAt and go before them), and
+  // locked ones are never evicted, with a cap of their own. Returns { refused } for a lock past it.
   function setPairPick(key, pick) {
+    const A = window.__viviAutomix;
+    const ov = A.normalizeOverride(pick);
     const next = { ...pairPicks };
     delete next[key];
-    if (pick && (pick.style || pick.bars)) next[key] = { style: pick.style || null, bars: pick.bars || null };
-    const keys = Object.keys(next);
-    for (const k of keys.slice(0, Math.max(0, keys.length - MAX_PICKS))) delete next[k];
+    if (ov) next[key] = { ...ov, engine: A.getVersion?.() || undefined, savedAt: Date.now() };
+    const locked = Object.keys(next).filter((k) => next[k]?.lock);
+    if (ov?.lock && locked.length > MAX_PICKS) return { refused: `${MAX_PICKS} pairs are locked already: unlock one first` };
+    const loose = Object.keys(next).filter((k) => !next[k]?.lock).sort((a, b) => (next[a].savedAt || 0) - (next[b].savedAt || 0));
+    for (const k of loose.slice(0, Math.max(0, loose.length - MAX_PICKS))) delete next[k];
     pairPicks = next;
     try { chrome.storage.local.set({ [PICKS_KEY]: next }); } catch { /* extension context gone */ }
     replanPair(key);
+    return { saved: next[key] || null };
   }
   // Whole-song downloads (crossfade-page.js) of the playing and next song:
   // id → { state: loading|ready|failed, at, retried, why, client }
@@ -780,8 +788,8 @@
     const high = new BiquadFilterNode(ctx, { type: 'highshelf', frequency: 4000, gain: 0 });
     // (open: a high-pass at 0 Hz and a low-pass at Nyquist pass the samples through unchanged)
     const hp = new BiquadFilterNode(ctx, { type: 'highpass', frequency: 0, Q: 0.7 });
-    // AutoDJ (version 2): the outgoing song's highs close through a low-pass
-    const lp = mix?.v2 && (mix.style === 'blend' || mix.style === 'filter') ? new BiquadFilterNode(ctx, { type: 'lowpass', frequency: ctx.sampleRate / 2, Q: 0.7 }) : null;
+    // AutoDJ (version 2), or an editor preset's low-pass lane: the outgoing song's highs close through a low-pass
+    const lp = (mix?.v2 && (mix.style === 'blend' || mix.style === 'filter')) || (mix?.preset && mix.curves?.out?.lowpassHz) ? new BiquadFilterNode(ctx, { type: 'lowpass', frequency: ctx.sampleRate / 2, Q: 0.7 }) : null;
     const vol = ctx.createGain();
     const srcGain = ctx.createGain();
     src.buffer = p.buf;
@@ -1594,11 +1602,80 @@
     djShapes.set(m, shape);
     return shape;
   }
-  const djNote = (m, style) => (m.v2 && style !== 'crossfade'
+  const djNote = (m, style) => (presetOn(m, style) ? ` [editor: ${m.preset}${m.warnings?.length ? "; " + m.warnings.join("; ") : ""}]` : "") + (m.v2 && style !== 'crossfade'
     ? ` [AutoDJ: both sing ${Math.round((m.clash || 0) * 100)}%${m.vocalsBy ? ' (' + m.vocalsBy + ')' : ''}${m.rerouted ? '; ' + m.rerouted : ''}${m.keyClash ? '; keys clash (' + m.keyClash + '), short blend' : ''}]`
     : '');
   // The fader for this mix: AutoDJ's for a version 2 blend or filter mix, else equal power.
   // Automix v2: with the plan's loudness trim (automix.js trimmed).
+  // A transition editor preset (automix.js plan → presetCurves): the plan's own curves play, as
+  // points (linear; Hz exponential; two points at one t a step), the loudness trim on the faders.
+  const presetOn = (m, style) => !!m?.preset && !!m.curves && style === m.style;
+  function curveAt(pts, t, geo) {
+    if (t <= pts[0][0]) return pts[0][1];
+    for (let i = 1; i < pts.length; i++) {
+      const [a, va] = pts[i - 1], [b, vb] = pts[i];
+      if (t > b) continue;
+      if (b - a < 1e-9) return vb;
+      const x = (t - a) / (b - a);
+      return geo ? va * Math.pow(vb / va, x) : va + (vb - va) * x;
+    }
+    return pts[pts.length - 1][1];
+  }
+  // events [t, v, step] over the curves' 0..D; mul(t / D) scales them (the trim, sampled in 32 steps
+  // too). Dplay: the seconds the mix really has (a late start, the song's tail): the times fit to it.
+  function curveEvents(pts, D, geo, mul, Dplay = D) {
+    if (!pts?.length) return null;
+    const ev = [];
+    const ts = pts.map((p) => p[0]);
+    if (mul) for (let k = 0; k <= 32; k++) ts.push((D * k) / 32);
+    const uniq = [...new Set(ts.map((t) => Math.round(t * 1e6) / 1e6))].sort((a, b) => a - b);
+    for (const t of uniq) {
+      const k = mul ? mul(clamp(t / D, 0, 1)) : 1;
+      const at = pts.filter((p) => Math.abs(p[0] - t) < 1e-6);
+      if (at.length > 1) { ev.push([t, at[0][1] * k, false], [t, at[at.length - 1][1] * k, true]); continue; }
+      ev.push([t, curveAt(pts, t, geo) * k, false]);
+    }
+    const fit = Dplay > 0 && D > 0 ? Dplay / D : 1;
+    if (Math.abs(fit - 1) > 1e-9) for (const e of ev) e[0] *= fit;
+    return ev;
+  }
+  const curvesSec = (m, D) => (m.curves.durationSec > 0 ? m.curves.durationSec : D);
+  function playEvents(param, ev, t0, from, geo) {
+    if (!param || !ev?.length) return;
+    param.setValueAtTime(ev[0][1], Math.max(0, Math.min(from, t0 + ev[0][0])));
+    if (t0 + ev[0][0] > from) param.setValueAtTime(ev[0][1], t0 + ev[0][0]);
+    for (let i = 1; i < ev.length; i++) {
+      const [t, v, step] = ev[i];
+      if (step) param.setValueAtTime(v, t0 + t);
+      else if (geo && v > 0 && ev[i - 1][1] > 0) param.exponentialRampToValueAtTime(v, t0 + t);
+      else param.linearRampToValueAtTime(v, t0 + t);
+    }
+  }
+  // the faders of a preset (the plan's loudness trim on top, as automix.js trimmed)
+  function presetGains(m, D) {
+    const t = m.trim, ss = (x) => x * x * (3 - 2 * x);
+    const gi = 10 ** ((t?.inDb || 0) / 20), go = 10 ** ((t?.outDb || 0) / 20);
+    const trim = !!(t && (t.inDb || t.outDb));
+    const P = curvesSec(m, D);
+    return [curveEvents(m.curves.in.gain, P, false, trim ? (x) => gi + (1 - gi) * ss(x) : null, D),
+      curveEvents(m.curves.out.gain, P, false, trim ? (x) => 1 + (go - 1) * ss(x) : null, D)];
+  }
+  // A preset's shelves and filters on both songs: the old song's own nodes from t0, the next song's
+  // (the player's filters, which the incoming deck feeds too) from `pre`; open again after the mix.
+  function presetShape(g, m, t0, D, pre) {
+    const c = m.curves, nyq = g.ctx.sampleRate / 2, end = t0 + D + 0.002;
+    const lanes = [
+      [live.bass?.gain, c.out.bassDb, false, null], [live.high?.gain, c.out.highDb, false, null],
+      [live.lp?.frequency, c.out.lowpassHz, true, null], [live.hp?.frequency, c.out.highpassHz, true, null],
+      [g.bassFilter?.gain, c.in.bassDb, false, 0], [g.highFilter?.gain, c.in.highDb, false, 0],
+      [g.lowpass?.frequency, c.in.lowpassHz, true, nyq], [g.highpass?.frequency, c.in.highpassHz, true, 0],
+    ];
+    lanes.forEach(([param, pts, geo, rest], i) => {
+      if (!param || !pts?.length) return;
+      playEvents(param, curveEvents(pts, curvesSec(m, D), geo, null, D), t0, i < 4 ? t0 : pre, geo);
+      if (rest != null) param.setValueAtTime(rest, end);   // (Hz curves end open: then exactly transparent)
+    });
+  }
   const gainCurves = (m, style, D) => window.__viviAutomix.trimmed(m, ...(m.v2 && style !== 'crossfade' ? (({ gIn, gOut }) => [gIn, gOut])(djShape(m, style, D)) : [EP_IN, EP_OUT]));
   // AutoDJ's filters: the next song's (the player's high-pass, which the
   // incoming deck feeds too) from `pre`, where it is still silent; the
@@ -1644,10 +1721,11 @@
     // gains: equal-power cross (AutoDJ: its own fader)
     const style = matched && !plain ? m.style : 'crossfade';
     if (matched && plain) log('automix: the glide had no incoming deck: a plain crossfade instead');
-    const [cIn, cOut] = gainCurves(m, style, D);
     const inn = g.gate.gain, out = live.fade.gain;
-    inn.cancelScheduledValues(now); inn.setValueAtTime(0, now); fadeCurve(inn, cIn, t0, D);
-    out.cancelScheduledValues(now); out.setValueAtTime(1, now); fadeCurve(out, cOut, t0, D);
+    inn.cancelScheduledValues(now); inn.setValueAtTime(0, now);
+    out.cancelScheduledValues(now); out.setValueAtTime(1, now);
+    if (presetOn(m, style)) { const [eIn, eOut] = presetGains(m, D); playEvents(inn, eIn, t0, t0, false); playEvents(out, eOut, t0, t0, false); }
+    else { const [cIn, cOut] = gainCurves(m, style, D); fadeCurve(inn, cIn, t0, D); fadeCurve(out, cOut, t0, D); }
 
     blendShape(g, style, t0, D, rate);
     log(`automix: ${style}${style !== 'crossfade' ? ' of ' + m.bars + ' bars' : ''}, ${D.toFixed(1)} s, starting in ${(t0 - now).toFixed(2)} s; next song from ${m.mixInTrackTime.toFixed(2)} s at x${rate.toFixed(3)}${m.reason ? ' (' + m.reason + ')' : ''}${djNote(m, style)}`);
@@ -1672,7 +1750,9 @@
       to.setValueAtTime(m.swapDb, pre); to.setValueAtTime(m.swapDb, mid - bar / 2); to.linearRampToValueAtTime(0, mid + bar / 2);
       from.setValueAtTime(0, mid - bar / 2); from.linearRampToValueAtTime(m.swapDb, mid + bar / 2);
     };
-    if (m.v2 && style !== 'crossfade') {
+    if (presetOn(m, style)) {
+      presetShape(g, m, t0, D, pre);
+    } else if (m.v2 && style !== 'crossfade') {
       djFilters(g, style, t0, D, pre);
     } else if (style === 'blend') {
       if (g.bassFilter) swap(g.bassFilter.gain, live.bass.gain);
@@ -1815,9 +1895,10 @@
     live.deckGlide = G ? deckGlideIn(m, t0, G) : deckGlideBack(m, t0, D, rate);
     inDeck.schedule([{ output: t0 - pre, input: m.mixInTrackTime - pre * rate, rate, active: true, loop: null }, ...(live.deckGlide?.points || [])]);
     const ig = inDeck.gain.gain, out = live.fade.gain;
-    const [cIn, cOut] = gainCurves(m, m.style, D);
-    ig.cancelScheduledValues(0); ig.setValueAtTime(0, now); fadeCurve(ig, cIn, t0, D);
-    out.cancelScheduledValues(now); out.setValueAtTime(1, now); fadeCurve(out, cOut, t0, D);
+    ig.cancelScheduledValues(0); ig.setValueAtTime(0, now);
+    out.cancelScheduledValues(now); out.setValueAtTime(1, now);
+    if (presetOn(m, m.style)) { const [eIn, eOut] = presetGains(m, D); playEvents(ig, eIn, t0, t0, false); playEvents(out, eOut, t0, t0, false); }
+    else { const [cIn, cOut] = gainCurves(m, m.style, D); fadeCurve(ig, cIn, t0, D); fadeCurve(out, cOut, t0, D); }
     blendShape(g, m.style, t0, D, rate);
     live.handoffAt = t0 + D / 2;
     addonEvent('blend', { id: m.nextId, t0, D, rate, mixIn: m.mixInTrackTime, mixOut: m.mixOutTrackTime, glide: !!G, inAddon: !!inPrep.addon });
@@ -2692,8 +2773,10 @@
         // seeks, a queue change and analyses as they land.
         const from = A.get(st.id), to = st.next ? A.get(st.next) : null;
         const pairKey = st.id + '>' + (st.next || '');
-        const pick = pairPicks[pairKey] || null;
-        const noLoop = !!pick && (['blend', 'filter', 'crossfade'].includes(pick.style) || (!pick.style && !!pick.bars));
+        // (an editor override, or a pick from before the editor: automix.js migratePick)
+        const pick = A.migratePick(pairPicks[pairKey] || null);
+        const loopPicked = pick?.preset === 'loop';
+        const noLoop = !!pick && !loopPicked;
         let p = A.plan({ fromId: st.id, toId: st.next, from, to, durationSec: st.dur, pos, earliest: pos + HAND_LEAD + 0.5, pick: noLoop ? pick : null });
         p.nextId = st.next || '';
         // The loop mix (BitChord AutoDJ): prepared in the background as soon as
@@ -2705,7 +2788,7 @@
         const loopPending = !noLoop && loopPrep.key === pairKey && loopPrep.state === 'loading';
         const lp = !noLoop && loopPrep.key === pairKey && loopPrep.state === 'ready' ? loopPrep : null;
         // (Automix v2 scores the loop against the blend: automix.js loopOrBlend)
-        const lpPick = lp ? A.loopOrBlend(p, lp.plan) : null;
+        const lpPick = lp ? (loopPicked ? { loop: !lp.plan.none, why: 'Loop picked for these two' } : A.loopOrBlend(p, lp.plan)) : null;
         if (lp && lpPick.why && loopChoiceLogged !== pairKey) { loopChoiceLogged = pairKey; log(`automix: ${lpPick.loop ? 'loop mix' : 'blend'} chosen (${lpPick.why})`); }
         if (lp && lpPick.loop && lp.plan.out.loop[0] > pos + HAND_LEAD + 1) {
           const x = A.loopSchedule(lp.plan, 0);
@@ -2817,7 +2900,9 @@
           mid: s.mid - z, bar: s.bar, elementTrackTime: s.elementTrackTime };
       }
       const D = x ? x.elementAt : m.durationSec;
-      const [gIn, gOut] = x ? [null, null] : gainCurves(m, m.style, D);
+      const [gIn, gOut] = x ? [null, null] : m.preset && m.curves
+        ? [m.curves.in.gain, m.curves.out.gain].map((pts) => Float32Array.from({ length: 256 }, (_, i) => curveAt(pts, (D * i) / 255, false)))
+        : gainCurves(m, m.style, D);
       ovShape = { m, src, x, D, gIn, gOut };
     }
     const { x, D, gIn, gOut } = ovShape;

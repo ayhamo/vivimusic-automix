@@ -381,47 +381,162 @@
    */
   // [pick]: what the Automix overview asked for this pair, { style, bars }
   // (style 'blend', 'filter' or 'crossfade'; either may be null: Auto).
+  // (an editor override, editor.md §9, or a pick from before the editor: migratePick)
   function plan({ fromId, toId, from, to, durationSec, pos, earliest, pick = null }) {
-    pinnedBars = pick?.bars || null;
+    const ov = migratePick(pick);
+    pinnedBars = (ov?.preset !== 'loop' && (ov?.bars || PRESET_BARS[ov?.preset])) || null;
     try {
-      const p = planFor({ fromId, toId, from, to, durationSec, pos, earliest, pick });
+      const warnings = [];
+      const p = planFor({ fromId, toId, from, to, durationSec, pos, earliest, pick: ov, warnings });
       p.curves = blendCurves(p);
+      if (ov && ov.preset !== 'loop') {
+        if (warnings.length) p.warnings = warnings;
+        if (ov.window?.in) p.windowIn = true;   // placed by the user: the kick lock leaves it (editor.md §6)
+        const pc = !(p.fallback && !(from && to)) && presetCurves(ov, p.durationSec, p.style === 'crossfade' ? null : p.beatSec);
+        if (pc) {
+          // the preset's gain, shelves and filters; the planner's tempo stays (editor.md §9)
+          for (const side of ['out', 'in']) { if (p.curves[side].rate) pc[side].rate = p.curves[side].rate; }
+          p.curves = pc;
+          p.preset = ov.preset;
+        }
+      }
       return p;
     } finally { pinnedBars = null; }
   }
-  function planFor({ fromId, toId, from, to, durationSec, pos, earliest, pick }) {
+  // An override as saved (editor.md §1, override.schema.json): Auto fields dropped, null when nothing
+  // but Auto is left (Auto is the reset). Picking a preset drops a migrated pick's family.
+  function normalizeOverride(o) {
+    o = migratePick(o);
+    if (!o) return null;
+    const n = {};
+    if (PRESET_NAMES.includes(o.preset)) n.preset = o.preset;
+    if (n.preset === 'custom' && o.lanes && Object.keys(LANE_VALUES).every((k) => LANE_VALUES[k].includes(o.lanes[k]))) n.lanes = { volume: o.lanes.volume, eq: o.lanes.eq, effect: o.lanes.effect };
+    if (n.preset === 'custom' && !n.lanes) delete n.preset;
+    if (!n.preset && (o.family === 'blend' || o.family === 'filter')) n.family = o.family;
+    if (n.preset !== 'loop') {
+      if ([2, 4, 8, 16, 32].includes(o.bars)) n.bars = o.bars;
+      const pos = (p) => p && Number.isFinite(p.sec) && Number.isInteger(p.bar)
+        ? { bar: p.bar, ...([1, 2, 3].includes(p.beat) ? { beat: p.beat } : {}), ...(p.nudgeMs ? { nudgeMs: clamp(Math.round(p.nudgeMs / 10) * 10, -2000, 2000) } : {}), sec: Math.round(p.sec * 1e3) / 1e3 } : null;
+      const w = { out: pos(o.window?.out), in: pos(o.window?.in) };
+      if (w.out || w.in) n.window = Object.fromEntries(Object.entries(w).filter(([, v]) => v));
+    }
+    if (['sync', 'glide', 'off'].includes(o.beatMatch)) n.beatMatch = o.beatMatch;
+    if (!Object.keys(n).length) return null;
+    if (o.lock) n.lock = true;
+    return { v: 1, ...n, ...(o.engine ? { engine: o.engine } : {}), ...(o.savedAt ? { savedAt: o.savedAt } : {}) };
+  }
+  // A song's grid as the editor snaps to it: the playing song's end grid ('out'), the next song's opening ('in')
+  function editorGrid(a, side) {
+    const g = a ? gridOf(side === 'out' ? asOutgoing(a) : a) : null;
+    return g ? { beatSec: g.beatSec, downbeatSec: g.downbeatSec, bpm: g.bpm } : null;
+  }
+  // A pick from before the editor ({ style, bars }) as an override (editor.md §1); an override as it is.
+  function migratePick(p) {
+    if (!p || typeof p !== 'object') return null;
+    if (!('style' in p)) return p;
+    const o = {};
+    if (p.style === 'loop') o.preset = 'loop';
+    else if (p.style === 'blend' || p.style === 'filter') { o.preset = 'auto'; o.family = p.style; }
+    else if (p.style === 'crossfade') { o.preset = 'auto'; o.beatMatch = 'off'; }
+    if (p.bars) o.bars = p.bars;
+    return Object.keys(o).length ? o : null;
+  }
+  // The user's own choice beyond Auto: the planner's style gates warn instead of refusing (editor.md §6)
+  const forcedBy = (ov) => !!ov && ((ov.preset && !['auto', 'loop'].includes(ov.preset)) || ['sync', 'glide'].includes(ov.beatMatch) || !!(ov.window?.out || ov.window?.in));
+  // Beat match Off (or Sync/Glide out of range): both songs at their own speed, overlapping over the
+  // window and length asked for; with neither asked for, the plain crossfade at the song's end.
+  function overlap(cur, next, fromGrid, ov, earliest, reason, warnings) {
+    const base = fallback(cur, next, earliest, reason);
+    const outW = resolveWindow(ov?.window?.out, null), inW = resolveWindow(ov?.window?.in, null);
+    const bars = ov?.bars || PRESET_BARS[ov?.preset] || null;
+    if (!bars && !outW && !inW) return base;
+    const end = musicEnd(cur).durationSec, room = end - 0.3 - earliest;
+    if (room < 1) { warnings?.push('no room left in this song for the window asked for'); return base; }
+    const want = bars && fromGrid ? bars * fromGrid.barSec : base.durationSec || FALLBACK_SEC;
+    if (bars && fromGrid && want > room + 0.01) warnings?.push(`${bars} bars don't fit before the end: ${room.toFixed(1)} s`);
+    const D = Math.min(want, room), hi = Math.max(earliest, end - 0.3 - D);
+    let mixOut = hi;
+    if (outW && outW.sec < earliest - 0.01) warnings?.push(playedNote(outW.sec));
+    else if (outW) mixOut = clampWindow(outW.sec, earliest, hi, 'the mix-out', warnings, fromGrid);
+    const mixIn = inW ? clampWindow(inW.sec, 0, Math.max(0, next.durationSec - 10 - D), 'the mix-in', warnings, gridOf(next)) : base.mixInTrackTime;
+    return { ...base, fallback: false, mixOutTrackTime: mixOut, durationSec: D, mixInTrackTime: mixIn, trim: loudnessTrim(cur, mixOut, D, next, mixIn, D) };
+  }
+  function clampWindow(t, lo, hi, what, warnings, grid) {
+    let c = clamp(t, lo, hi);
+    if (Math.abs(c - t) <= 0.01) return c;
+    if (grid?.barSec > 0) {
+      const d = t < lo ? downbeatAtOrAfter(grid, lo) : downbeatAtOrBefore(grid, hi);
+      if (d >= lo - 1e-6 && d <= hi + 1e-6) c = d;
+    }
+    warnings?.push(`${what} moved to ${c.toFixed(1)} s (${t < lo ? 'before the song' : 'too close to the end'})`);
+    return c;
+  }
+  // A saved mix-out the playhead has passed: the planner's own (editor.md §6)
+  const playedNote = (sec) => `the mix-out at ${sec.toFixed(1)} s has already played: Auto's mix-out instead`;
+  function planFor({ fromId, toId, from, to, durationSec, pos, earliest, pick, warnings = [] }) {
     const both = !!(from && to);
     const cur = asOutgoing(both ? { ...from, durationSec } : stub(fromId, durationSec));
     const next = both ? to : stub(toId, 0);
     const fromGrid = gridOf(cur);
     const toGrid = gridOf(next);
+    const forced = forcedBy(pick);
+    const bm = pick?.beatMatch || 'auto';
 
-    if (pick?.style === 'crossfade' && both) return fallback(cur, next, earliest, 'picked in the overview');
+    if (bm === 'off' && both) return overlap(cur, next, fromGrid, pick, earliest, pick.family || pick.preset === 'auto' ? 'picked in the overview' : 'beat match off', warnings);
     const v3 = version === 3;
     if (!fromGrid || cur.gridConfidence < MIN_GRID_CONFIDENCE) {
+      if (forced && both) { warnings.push('no beat grid at this song\'s end: plays without beat match'); return overlap(cur, next, null, pick, earliest, 'this song has no beat grid at its end', warnings); }
       if (v3 && both) return handoff(cur, next, earliest, 'this song has no beat grid at its end');
       return fallback(cur, next, earliest, both ? 'this song has no beat grid at its end' : 'songs not analysed in time');
     }
-    if (pick?.style === 'filter') return filterMix(cur, next, fromGrid, toGrid && next.gridConfidence >= MIN_GRID_CONFIDENCE ? toGrid : null, requestedBars(cur, next, fromGrid, toGrid?.downbeatSec ?? 0, true), pos, earliest, 'picked in the overview');
+    if (forced && both && (!toGrid || next.gridConfidence < MIN_GRID_CONFIDENCE)) {
+      warnings.push('the next song has no beat grid: plays without beat match');
+      return overlap(cur, next, fromGrid, pick, earliest, 'next song has no beat grid', warnings);
+    }
+    if (bm === 'sync' || bm === 'glide') {
+      const st = stretchOf(foldRate(fromGrid.bpm / toGrid.bpm));
+      if (st > V2_MAX_STRETCH) {
+        const why = `tempos ${Math.round(st * 100)}% apart: ${bm === 'sync' ? 'Sync' : 'Glide'} stretches at most ${Math.round(V2_MAX_STRETCH * 100)}%, so this plays without beat match`;
+        warnings.push(why);
+        return overlap(cur, next, fromGrid, pick, earliest, why, warnings);
+      }
+    }
+    if (pick?.family === 'filter') return filterMix(cur, next, fromGrid, toGrid && next.gridConfidence >= MIN_GRID_CONFIDENCE ? toGrid : null, requestedBars(cur, next, fromGrid, toGrid?.downbeatSec ?? 0, true), pos, earliest, 'picked in the overview');
     if (v3 && (!toGrid || next.gridConfidence < MIN_GRID_CONFIDENCE)) return handoff(cur, next, earliest, 'next song has no beat grid');
     if (!toGrid || next.gridConfidence < MIN_GRID_CONFIDENCE) return filterMix(cur, next, fromGrid, null, requestedBars(cur, next, fromGrid, 0, true), pos, earliest, 'next song has no beat grid');
 
     const ratio = foldRate(fromGrid.bpm / toGrid.bpm);
     // v2: never more than V2_MAX_STRETCH of speed-up (Orchard: 6% fine, 11.8% forced),
     // and never two 808 styles at once; either way it can't beatmatch, so it does nothing
-    if (v3 && stretchOf(ratio) > V2_MAX_STRETCH) return handoff(cur, next, earliest, `tempos ${Math.round(stretchOf(ratio) * 100)}% apart (v2 stretches at most ${Math.round(V2_MAX_STRETCH * 100)}%)`);
+    if (v3 && stretchOf(ratio) > V2_MAX_STRETCH) {
+      const why = `tempos ${Math.round(stretchOf(ratio) * 100)}% apart (v2 stretches at most ${Math.round(V2_MAX_STRETCH * 100)}%)`;
+      if (!forced && !pick?.bars) return handoff(cur, next, earliest, why);
+      warnings.push(`${why}: plays without beat match`);
+      return overlap(cur, next, fromGrid, pick, earliest, why, warnings);
+    }
     const contrast = subBassContrast(cur, next);
-    if (v3 && contrast >= V2_SUB_BASS_VETO) return handoff(cur, next, earliest, `different sub-bass styles (${contrast.toFixed(2)} apart)`);
+    if (v3 && contrast >= V2_SUB_BASS_VETO) {
+      if (!forced) return handoff(cur, next, earliest, `different sub-bass styles (${contrast.toFixed(2)} apart)`);
+      warnings.push(`the productions clash (sub-bass ${contrast.toFixed(2)} apart)`);
+    }
     const harmonic = v3 ? harmonicEvidence(cur, next) : null;
-    if (harmonic?.severeClash) return handoff(cur, next, earliest, `the keys clash (${cur.keyName} → ${next.keyName}, ${harmonic.score})`);
-    if (!stretchAllowed(ratio)) return filterMix(cur, next, fromGrid, toGrid, requestedBars(cur, next, fromGrid, toGrid.downbeatSec, true), pos, earliest, `tempos ${Math.round(Math.abs(ratio - 1) * 100)}% apart`);
+    if (harmonic?.severeClash) {
+      if (!forced) return handoff(cur, next, earliest, `the keys clash (${cur.keyName} → ${next.keyName}, ${harmonic.score})`);
+      warnings.push(`the keys clash (${cur.keyName} → ${next.keyName})`);
+    }
+    if (!stretchAllowed(ratio)) {
+      const why = `tempos ${Math.round(Math.abs(ratio - 1) * 100)}% apart`;
+      if (!forced) return filterMix(cur, next, fromGrid, toGrid, requestedBars(cur, next, fromGrid, toGrid.downbeatSec, true), pos, earliest, why);
+      warnings.push(`${why}: too far to stretch, plays without beat match`);
+      return overlap(cur, next, fromGrid, pick, earliest, why, warnings);
+    }
     // Tempo only ever moves up (BitChord's Advanced Automix): slowing a song
     // with its pitch kept repeats slivers of it, which smears piano and voices,
     // while speeding one up stays clean. The next song faster: the playing one
     // is brought up to its tempo over its last beats before the blend and the
     // next song plays at its own speed. The next song slower: it is sped up.
     // Automix v2: over 4% apart, a glide on both songs instead (glideSteps)
-    const glideQ = v3 && stretchOf(ratio) > V2_MAX_CONSTANT ? 1 / ratio : null;
+    const glideQ = bm === 'sync' ? null : bm === 'glide' ? (Math.abs(ratio - 1) > 1e-4 ? 1 / ratio : null) : v3 && stretchOf(ratio) > V2_MAX_CONSTANT ? 1 / ratio : null;
     const rate = glideQ ? 1 : ratio < 1 ? 1 : ratio;               // the next song's
     const outRate = glideQ ? 1 : ratio < 1 ? 1 / ratio : 1;        // the playing song's, from the blend on
     const rampBeats = outRate > 1.0001 ? Math.ceil((outRate - 1) / TEMPO_STEP_PER_BEAT) : 0;
@@ -442,7 +557,13 @@
     let mixOut = naturalMixOut(fromGrid, v2 ? musicEnd(cur) : cur, outSpan);
     if (mixOut < pos + rampSongSec) mixOut = phraseAtOrAfter(fromGrid, first);   // too late for the natural point: the next phrase
     if (mixOut < first) mixOut = downbeatAtOrAfter(fromGrid, first);
+    // the editor's window (editor.md §6): A's mix-out on A's end grid, clamped to what can still play
+    const wOut = resolveWindow(pick?.window?.out, fromGrid);
+    if (wOut && wOut.sec < first - 0.01) warnings.push(playedNote(wOut.sec));
+    else if (wOut) mixOut = clampWindow(wOut.sec, first, Math.max(first, Math.min(musicEnd(cur).durationSec, cur.durationSec - 0.3) - outSpan), 'the mix-out', warnings, fromGrid);
+    if (wOut?.moved) warnings.push('the mix-out moved with a new beat grid');
     if (mixOut + outSpan > cur.durationSec - 0.3) {
+      if (forced) { warnings.push('too close to the end for the window asked for'); return overlap(cur, next, fromGrid, pick, earliest, 'too close to the end for a blend', warnings); }
       if (v3) return handoff(cur, next, earliest, 'too close to the end for a blend');
       return filterMix(cur, next, fromGrid, toGrid, bars, pos, earliest, 'too close to the end for a blend');
     }
@@ -457,7 +578,12 @@
     // AutoDJ (version 2): no further than a quarter into the next song, and
     // a blend point where the two songs don't sing over each other.
     let dj = null;
-    if (v2) {
+    const wIn = resolveWindow(pick?.window?.in, toGrid);
+    if (wIn) {
+      mixIn = clampWindow(wIn.sec, 0, Math.max(0, next.durationSec - 10 - outSpan * inPerOut), 'the mix-in', warnings, toGrid);
+      if (wIn.moved) warnings.push('the mix-in moved with a new beat grid');
+    }
+    if (v2 && !wIn && !wOut) {
       mixIn = capIncomingSkip(next, toGrid, mixIn);
       dj = rerouteForVocals(cur, next, fromGrid, toGrid, mixOut, mixIn, outSpan, inPerOut, Math.max(first, pos + rampSongSec));
       mixOut = dj.mixOut;
@@ -470,7 +596,13 @@
     // drop-in, then a muffle; else it does nothing): both would sing over the blend,
     // or the next song has no intro to blend over.
     let shape = null, shapeWhy = null, muffleLead = null;
-    if (v3 && (introShort || (dj?.clash ?? 0) > V2_CLASH_MAX)) {
+    if (forced && v3) {
+      const both = dj ? dj.clash : vocalOverlap(cur, next, mixOut, outSpan, mixIn, inPerOut, { out: lyricSpans(cur), in: lyricSpans(next) });
+      if (!dj) dj = { clash: both ?? 0, rerouted: null, by: null };
+      if ((both ?? 0) > V2_CLASH_MAX) warnings.push(`both sing over ${Math.round(both * 100)}% of the window`);
+      if (introShort && !wIn) warnings.push('no intro in the next song to blend over');
+    }
+    if (v3 && !forced && (introShort || (dj?.clash ?? 0) > V2_CLASH_MAX)) {
       const why = introShort ? 'no intro in the next song to blend over' : `both would sing ${Math.round((dj?.clash ?? 0) * 100)}% of a blend`;
       const sung = { out: lyricSpans(cur), in: lyricSpans(next) };
       // drop-in: the next song on its first downbeat at full level, two bars over the
@@ -522,7 +654,8 @@
       style: 'blend', fallback: false, reason: shapeWhy,
       ...(shape ? { shape, muffleLead } : {}),
       v2, clash: dj?.clash ?? 0, rerouted: dj?.rerouted ?? null, vocalsBy: dj?.by ?? null, keyClash,
-      ...(v3 ? { subBassContrast: contrast, swapAt: swap?.at ?? null, swapMoved: swap?.moved ?? null, glide: glide ? { q: glideQ, beats: effBars * 4, beatOutSec: fromGrid.beatSec } : null,
+      glide: glide ? { q: glideQ, beats: effBars * 4, beatOutSec: fromGrid.beatSec } : null,
+      ...(v3 ? { subBassContrast: contrast, swapAt: swap?.at ?? null, swapMoved: swap?.moved ?? null,
         harmonic, trim: loudnessTrim(cur, mixOut, outSpan, next, mixIn, outSpan * inPerOut) } : {}),
       mixOutTrackTime: mixOut, durationSec: dur, mixInTrackTime: mixIn, rate: glide ? glide.inRate[0] : rate,
       outRate, rampBeats, rampSongSec, beatSec: fromGrid.beatSec,
@@ -766,9 +899,12 @@
     const outRate = m.outRate || 1, rate = m.rate || 1;
     return { D: m.durationSec, inPerOut: rate / outRate, out: (t) => m.mixOutTrackTime + t * outRate, in: (t) => m.mixInTrackTime + t * rate };
   }
+  // a blend's mix-in moves to the kicks unless the user placed it (editor.md §6)
+  const kickLockAllowed = (m) => m?.style === 'blend' && !m.windowIn;
   function kickLock(m, outSide, inSide) {
     const interval = m.beatSec;
-    if (m.style !== 'blend' || !(interval > 0)) return null;
+    if (m.windowIn) return { none: 'the mix-in was placed in the editor' };
+    if (!kickLockAllowed(m) || !(interval > 0)) return null;
     const ck = blendClocks(m), context = KICK_CONTEXT_BEATS * interval;
     const outAt = kickOnsets(outSide, ck.out(-context) - 0.05, ck.out(ck.D + context) + 0.05);
     const inAt = kickOnsets(inSide, ck.in(-context) - 0.05, ck.in(ck.D + context) + 0.05);
@@ -1213,6 +1349,77 @@
     return { durationSec: D, out, in: inn };
   }
 
+  // ───────── the transition editor (spec/automix/editor.md) ─────────
+  // A preset's (or custom lanes') curves over a window of D seconds, editor.md §3: points at a
+  // fraction x of the window, given here in seconds. beatSec: the beat (null with beat match Off).
+  const EDITOR_CUT_DB = -18 /* BASS_CUT_DB, declared further down */, LP_CLOSED = 400, HP_CLOSED = 1000, CUT_RAMP_SEC = 0.008;
+  const PRESET_LANES = {
+    smooth: { volume: 'smooth', eq: 'centerBassSwap', effect: 'none' },
+    rise: { volume: 'overlap', eq: 'endBassSwap', effect: 'lpInHpOut' },
+    blend: { volume: 'overlap', eq: 'threeBandFade', effect: 'none' },
+    wave: { volume: 'overlap', eq: 'centerBassSwap', effect: 'lpBoth' },
+    melt: { volume: 'crossfade', eq: 'centerBassSwap', effect: 'hpBoth' },
+    slam: { volume: 'centerCut', eq: 'none', effect: 'none' },
+  };
+  const PRESET_BARS = { slam: 2 };
+  const PRESET_NAMES = ['smooth', 'rise', 'blend', 'wave', 'melt', 'slam', 'loop', 'custom'];
+  const LANE_VALUES = {
+    volume: ['smooth', 'crossfade', 'overlap', 'cutInFadeOut', 'fadeInCutOut', 'centerCut'],
+    eq: ['centerBassSwap', 'endBassSwap', 'threeBandFade', 'quickBassCut', 'none'],
+    effect: ['none', 'lpOut', 'hpIn', 'lpBoth', 'hpBoth', 'lpInHpOut'],
+  };
+  function presetCurves(override, D, beatSec) {
+    const lanes = override?.preset === 'custom' ? override.lanes : PRESET_LANES[override?.preset];
+    if (!lanes || !(D > 0)) return null;
+    const e = CUT_RAMP_SEC / D, hb = beatSec > 0 ? (0.5 * beatSec) / D : 0.02, C = EDITOR_CUT_DB;
+    const r4 = (v) => Math.round(v * 1e6) / 1e6;
+    const at = (pts) => pts.map(([x, v]) => [r4(x * D), r4(v)]);
+    const out = {}, inn = {};
+    const ramp17 = (f) => Array.from({ length: 17 }, (_, i) => [i / 16, f((i / 16) * Math.PI / 2)]);
+    switch (lanes.volume) {
+      case 'smooth': out.gain = at(ramp17(Math.cos)); inn.gain = at(ramp17(Math.sin)); break;
+      case 'crossfade': out.gain = at([[0, 1], [1, 0]]); inn.gain = at([[0, 0], [1, 1]]); break;
+      case 'overlap': out.gain = at([[0, 1], [0.75, 1], [1, 0]]); inn.gain = at([[0, 0], [0.25, 1]]); break;
+      case 'cutInFadeOut': out.gain = at([[0, 1], [1, 0]]); inn.gain = at([[0, 0], [e, 1]]); break;
+      case 'fadeInCutOut': out.gain = at([[0, 1], [1 - e, 1], [1, 0]]); inn.gain = at([[0, 0], [1, 1]]); break;
+      case 'centerCut': out.gain = at([[0, 1], [0.5, 1], [0.5 + e, 0]]); inn.gain = at([[0, 0], [0.5, 0], [0.5 + e, 1]]); break;
+      default: return null;
+    }
+    const swap = (c) => { out.bassDb = at([[c - hb, 0], [c + hb, C]]); inn.bassDb = at([[0, C], [c - hb, C], [c + hb, 0]]); };
+    switch (lanes.eq) {
+      case 'centerBassSwap': swap(0.5); break;
+      case 'endBassSwap': swap(0.875); break;
+      case 'threeBandFade': swap(0.5); out.highDb = at([[0.5, 0], [1, C]]); inn.highDb = at([[0, C], [0.5, 0]]); break;
+      case 'quickBassCut': out.bassDb = at([[0, 0], [2 * hb, C]]); break;
+      case 'none': break;
+      default: return null;
+    }
+    switch (lanes.effect) {
+      case 'none': break;
+      case 'lpOut': out.lowpassHz = at([[0, 20000], [1, LP_CLOSED]]); break;
+      case 'hpIn': inn.highpassHz = at([[0, HP_CLOSED], [0.5, 20]]); break;
+      case 'lpBoth': out.lowpassHz = at([[0.5, 20000], [1, LP_CLOSED]]); inn.lowpassHz = at([[0, LP_CLOSED], [0.5, 20000]]); break;
+      case 'hpBoth': out.highpassHz = at([[0.5, 20], [1, HP_CLOSED]]); inn.highpassHz = at([[0, HP_CLOSED], [0.5, 20]]); break;
+      case 'lpInHpOut': out.highpassHz = at([[0, 20], [1, HP_CLOSED]]); inn.lowpassHz = at([[0, LP_CLOSED], [1, 20000]]); break;
+      default: return null;
+    }
+    return { durationSec: r4(D), out, in: inn };
+  }
+
+  // A saved window position back to song seconds, editor.md §6. grid: { downbeatSec, beatSec } of that
+  // song (A's end grid for the mix-out, B's opening grid for the mix-in). moved: the grid changed by
+  // more than a beat since the save, so the saved seconds were snapped to the new grid instead.
+  function resolveWindow(pos, grid) {
+    if (!pos) return null;
+    const nudge = (pos.nudgeMs || 0) / 1000;
+    if (!grid || !(grid.beatSec > 0) || !Number.isFinite(grid.downbeatSec)) return { sec: pos.sec, moved: false, snapped: false };
+    const bar = 4 * grid.beatSec;
+    const t = grid.downbeatSec + pos.bar * bar + (pos.beat || 0) * grid.beatSec + nudge;
+    if (!Number.isFinite(pos.sec) || Math.abs(t - pos.sec) <= grid.beatSec) return { sec: Math.round(t * 1e6) / 1e6, moved: false, snapped: true };
+    const k = Math.round((pos.sec - grid.downbeatSec) / bar);
+    return { sec: Math.round((grid.downbeatSec + k * bar) * 1e6) / 1e6, moved: true, snapped: true, bar: k };
+  }
+
   // A loop mix's curves (crossfade.js scheduleLoopMix), from its loopSchedule.
   function loopCurves(plan) {
     const x = loopSchedule(plan, 0), half = x.bar / 2;
@@ -1532,6 +1739,7 @@
     isEnabled: () => enabled,
     getBars: () => barsSetting,
     getVersion: () => version,
+    kickLockAllowed,
     request,
     get: (id) => results.get(id) ?? null,
     statusOf: (id) => status.get(id) ?? null,
@@ -1550,6 +1758,10 @@
     kickLock,
     kickSource,
     loopOrBlend,
+    presetCurves, migratePick, normalizeOverride, editorGrid,
+    resolveWindow,
+    PRESET_LANES,
+    PRESET_BARS,
     LOOP: { OUT_REGION_SEC, IN_REGION_SEC, LOOP_SETUP_SEC },
     warmup,
     setStatus,

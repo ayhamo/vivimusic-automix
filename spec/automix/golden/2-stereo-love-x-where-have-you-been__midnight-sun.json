@@ -593,6 +593,7 @@
       "rerouted": null,
       "vocalsBy": "mask/mask",
       "keyClash": null,
+      "glide": null,
       "mixOutTrackTime": 209.5813,
       "durationSec": 12.7156,
       "mixInTrackTime": 0.2024,

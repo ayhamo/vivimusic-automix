@@ -23,13 +23,14 @@ function loadAutomix(bars, settings = {}) {
 }
 
 // An analysed song: a steady grid, an energy curve in 4-bar windows.
-function song(bpm, durationSec, { conf = 1, down = 0.4, energy = () => 1 } = {}) {
+function song(bpm, durationSec, { conf = 1, down = 0.4, energy = () => 1, sub = null } = {}) {
   const beat = 60 / bpm, win = beat * 16;
   const curve = Array.from({ length: Math.ceil(durationSec / win) }, (_, i) => energy(i * win));
   return {
     bpm, beatIntervalSec: beat, firstDownbeatSec: down, gridConfidence: conf, durationSec,
     energyCurve: curve, energy: curve.reduce((a, b) => a + b, 0) / curve.length,
     introEndSec: 0, outroStartSec: durationSec - 20,
+    ...(sub != null ? { subBassRatio: sub } : {}),
   };
 }
 
@@ -147,4 +148,142 @@ test('Overview pick: a picked length beats the key-aware short blend', () => {
   assert.equal(planOf(A, cur, next).bars, 2, 'clashing keys get the short blend');
   assert.equal(pickOf(A, cur, next, { style: 'blend', bars: 16 }).bars, 16, 'unless a length was picked');
   assert.equal(planOf(A, cur, next).bars, 2, 'and only for the plan it was picked for');
+});
+
+// ───────── the transition editor's overrides (spec/automix/editor.md §9) ─────────
+const planPick = (A, cur, next, pick, pos = 20) =>
+  A.plan({ fromId: 'a', toId: 'b', from: cur, to: next, durationSec: cur.durationSec, pos, earliest: pos + 4.5, pick });
+
+test('Editor: old picks migrate ({style, bars} → override)', () => {
+  const A = loadAutomix('auto');
+  assert.deepEqual({ ...A.migratePick({ style: 'loop', bars: null }) }, { preset: 'loop' });
+  assert.deepEqual({ ...A.migratePick({ style: 'filter', bars: 8 }) }, { preset: 'auto', family: 'filter', bars: 8 });
+  assert.deepEqual({ ...A.migratePick({ style: 'crossfade', bars: null }) }, { preset: 'auto', beatMatch: 'off' });
+  assert.equal(A.migratePick({ style: null, bars: null }), null);
+  const ov = { v: 1, preset: 'rise' };
+  assert.equal(A.migratePick(ov), ov);
+});
+
+test('Editor: a preset keeps the planner\'s blend and replaces its curves', () => {
+  for (const v of [2, 3]) {
+    const A = loadAutomix('auto', { automixVersion: v });
+    const cur = song(120, 200), next = song(120, 200);
+    const auto = planPick(A, cur, next, null);
+    const p = planPick(A, cur, next, { preset: 'melt', bars: 8 });
+    assert.equal(p.style, 'blend');
+    assert.equal(p.bars, 8);
+    assert.equal(p.preset, 'melt');
+    assert.deepEqual(p.curves.out.highpassHz, A.presetCurves({ preset: 'melt' }, p.durationSec, p.beatSec).out.highpassHz);
+    assert.equal(auto.preset, undefined);
+  }
+});
+
+test('Editor: Slam is 2 bars unless a length is asked for', () => {
+  const A = loadAutomix('auto');
+  assert.equal(planPick(A, song(120, 200), song(120, 200), { preset: 'slam' }).bars, 2);
+  assert.equal(planPick(A, song(120, 200), song(120, 200), { preset: 'slam', bars: 4 }).bars, 4);
+});
+
+test('Editor: beat match Off overlaps at the length asked for, songs at their own speed', () => {
+  const A = loadAutomix('auto');
+  const p = planPick(A, song(120, 200), song(126, 200), { beatMatch: 'off', bars: 8 });
+  assert.equal(p.style, 'crossfade');
+  assert.equal(p.rate, 1);
+  assert.ok(Math.abs(p.durationSec - 8 * barSec(120)) < 1e-9);
+  // with neither length nor window: the plain crossfade, as a "Fade" pick was
+  const q = planPick(A, song(120, 200), song(126, 200), { style: 'crossfade', bars: null });
+  assert.equal(q.style, 'crossfade');
+  assert.equal(q.fallback, true);
+});
+
+test('Editor: Sync out of range (tempos 11% apart) plays Off and says why', () => {
+  const A = loadAutomix('auto', { automixVersion: 3 });
+  const p = planPick(A, song(100, 200), song(111, 200), { preset: 'smooth', beatMatch: 'sync', bars: 8 });
+  assert.equal(p.style, 'crossfade');
+  assert.match(p.warnings.join(' '), /11% apart: Sync stretches at most 8%/);
+  assert.equal(p.preset, 'smooth');
+});
+
+test('Editor: Glide in range glides; Sync holds one rate', () => {
+  const A = loadAutomix('auto', { automixVersion: 3 });
+  const g = planPick(A, song(120, 200), song(124, 200), { preset: 'smooth', beatMatch: 'glide', bars: 8 });
+  assert.ok(g.glide, 'a glide');
+  assert.ok(g.curves.in.rate, 'the planner\'s rate curve stays');
+  const s = planPick(A, song(120, 200), song(124, 200), { preset: 'smooth', beatMatch: 'sync', bars: 8 });
+  assert.equal(s.glide, null);
+});
+
+test('Editor: the window lands where saved, clamped when out of reach', () => {
+  const A = loadAutomix('auto', { automixVersion: 3 });
+  const cur = song(120, 200), next = song(120, 200), bar = barSec(120);
+  const out = { bar: 80, sec: 0.4 + 80 * bar }, inn = { bar: 8, sec: 0.4 + 8 * bar };
+  const p = planPick(A, cur, next, { preset: 'blend', bars: 8, window: { out, in: inn } });
+  assert.ok(Math.abs(p.mixOutTrackTime - out.sec) < 1e-6);
+  assert.ok(Math.abs(p.mixInTrackTime - inn.sec) < 1e-6);
+  assert.equal(p.warnings, undefined);
+  // a mix-out already played: the planner's own mix-out, with the reason
+  const q = planPick(A, cur, next, { preset: 'blend', bars: 8, window: { out: { bar: 2, sec: 0.4 + 2 * bar } } }, 60);
+  assert.equal(q.mixOutTrackTime, planPick(A, cur, next, { preset: 'blend', bars: 8 }, 60).mixOutTrackTime);
+  assert.match(q.warnings.join(' '), /mix-out at 4\.4 s has already played: Auto's mix-out instead/);
+  // too close to the end: moved back onto a downbeat that fits
+  const r = planPick(A, cur, next, { preset: 'blend', bars: 8, window: { out: { bar: 95, sec: 0.4 + 95 * bar } } });
+  assert.ok(r.mixOutTrackTime < 0.4 + 95 * bar && isDownbeat(r.mixOutTrackTime, cur), `${r.mixOutTrackTime} on a downbeat`);
+  assert.ok(r.mixOutTrackTime + r.durationSec <= cur.durationSec - 0.3);
+  assert.match(r.warnings.join(' '), /mix-out moved to .*too close to the end/);
+});
+
+test('Editor: beat match Off with a window: clamped onto a downbeat, songs at their own speed', () => {
+  const A = loadAutomix('auto', { automixVersion: 3 });
+  const cur = song(120, 200), bar = barSec(120);
+  const p = planPick(A, cur, song(126, 200), { beatMatch: 'off', bars: 8, window: { out: { bar: 95, sec: 0.4 + 95 * bar } } });
+  assert.equal(p.style, 'crossfade');
+  assert.equal(p.rate, 1);
+  assert.ok(isDownbeat(p.mixOutTrackTime, cur) && p.mixOutTrackTime + p.durationSec <= cur.durationSec - 0.3);
+  assert.match(p.warnings.join(' '), /too close to the end/);
+  // more bars than the song has left: the room there is, said
+  const q = planPick(A, cur, song(126, 200), { beatMatch: 'off', bars: 32 }, 160);
+  assert.ok(q.durationSec < 32 * bar);
+  assert.match(q.warnings.join(' '), /32 bars don't fit before the end/);
+});
+
+test('Editor: Slam with beat match Off is still 2 bars', () => {
+  const A = loadAutomix('auto');
+  const p = planPick(A, song(120, 200), song(126, 200), { preset: 'slam', beatMatch: 'off' });
+  assert.equal(p.style, 'crossfade');
+  assert.ok(Math.abs(p.durationSec - 2 * barSec(120)) < 1e-9);
+});
+
+test('Editor: Glide on Classic glides too (the plan carries it)', () => {
+  const A = loadAutomix('auto', { automixVersion: 2 });
+  const g = planPick(A, song(120, 200), song(124, 200), { preset: 'smooth', beatMatch: 'glide', bars: 8 });
+  assert.ok(g.glide, 'a glide');
+  assert.ok(Math.abs(g.durationSec - A.glideSteps(g.glide.q, g.glide.beats, g.glide.beatOutSec).total) < 1e-9);
+});
+
+test('Editor: a preset on a pair too far apart in tempo keeps its length and says why', () => {
+  const A = loadAutomix('auto', { automixVersion: 3 });
+  const auto = planPick(A, song(100, 200), song(111, 200), null);
+  assert.match(auto.reason, /hand-over/, 'Auto hands over');
+  const p = planPick(A, song(100, 200), song(111, 200), { preset: 'wave', bars: 8 });
+  assert.equal(p.style, 'crossfade');
+  assert.ok(Math.abs(p.durationSec - 8 * barSec(100)) < 1e-9);
+  assert.match(p.warnings.join(' '), /11% apart.*plays without beat match/);
+});
+
+test('Editor: an override keeps only the schema\'s values', () => {
+  const A = loadAutomix('auto');
+  assert.equal(A.normalizeOverride({ preset: 'bogus' }), null);
+  assert.equal(A.normalizeOverride({ preset: 'custom', lanes: { volume: 'loud', eq: 'none', effect: 'none' } }), null);
+  const o = A.normalizeOverride({ preset: 'rise', window: { out: { bar: 3, beat: 7, sec: 10 } } });
+  assert.deepEqual({ ...o.window.out }, { bar: 3, sec: 10 });
+});
+
+test('Editor: a style gate warns instead of refusing (sub-bass veto)', () => {
+  const A = loadAutomix('auto', { automixVersion: 3 });
+  const cur = song(120, 200, { sub: 0 }), next = song(120, 200, { sub: 1 });
+  const auto = planPick(A, cur, next, null);
+  assert.match(auto.reason, /sub-bass/, 'Auto refuses');
+  const p = planPick(A, cur, next, { preset: 'wave', bars: 8 });
+  assert.equal(p.style, 'blend');
+  assert.match(p.warnings.join(' '), /sub-bass 1\.00 apart/);
 });
