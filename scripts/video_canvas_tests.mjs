@@ -32,8 +32,9 @@ function curve(dur, peakAt) {
   const s = V.partStart(curve(200, 120), 200);
   check('the part starts where the most-replayed rise starts', s > 95 && s < 122, s);
   const s2 = V.partStart(curve(200, 5), 200);
-  check('a peak in the first 12 seconds is ignored', s2 >= 12, s2);
-  check('without a curve the part is 40% in', near(V.partStart(null, 200), 80, 1e-9) && near(V.partStart(null, 5), 0, 1e-9));
+  check('a peak in the first 5 seconds is ignored (BestPart head)', s2 == null || s2 >= 5, s2);
+  check('without a curve there is no part', V.partStart(null, 200) === null);
+  check('without frames the loop is the middle 8 s', JSON.stringify(V.noFrames(200000)) === '[96000,104000]' && JSON.stringify(V.noFrames(5000)) === '[0,5000]');
 }
 {
   const zara = V.artists('Zara Larsson');
@@ -99,9 +100,9 @@ const flat = (v) => new Array(W * H).fill(v);
   const col = (runs) => ({ musicResponsiveListItemFlexColumnRenderer: { text: { runs } } });
   const j = { contents: { a: [{ musicResponsiveListItemRenderer: {
     playlistItemData: { videoId: 'abcdefghijk' },
-    flexColumns: [col([{ text: 'Midnight Sun' }]), col([{ text: 'Zara Larsson' }, { text: ' • ' }, { text: '3M views' }])],
+    flexColumns: [col([{ text: 'Midnight Sun' }]), col([{ text: 'Zara Larsson' }, { text: ' • ' }, { text: '3M views' }, { text: ' • ' }, { text: '3:45' }])],
   } }] } };
-  check('search results give id, title, channel', JSON.stringify(V.searchResults(j)) === JSON.stringify([['abcdefghijk', 'Midnight Sun', 'Zara Larsson']]));
+  check('search results give id, title, channel, length', JSON.stringify(V.searchResults(j)) === JSON.stringify([['abcdefghijk', 'Midnight Sun', 'Zara Larsson', 225]]), JSON.stringify(V.searchResults(j)));
   const markers = Array.from({ length: 12 }, (_, i) => ({ startMillis: i * 1000, durationMillis: 1000, intensityScoreNormalized: i / 11 }));
   const h = V.heatmapOf({ frameworkUpdates: { entityBatchUpdate: { mutations: [{ payload: { macroMarkersListEntity: { markersList: { markerType: 'MARKER_TYPE_HEATMAP', markers } } } }] } } });
   check('heatmap markers flatten to start/duration/intensity', h && h.length === 36 && h[3] === 1 && h[4] === 1 && near(h[35], 1, 1e-9));

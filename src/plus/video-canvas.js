@@ -67,7 +67,9 @@
   window.__viviVideoCanvas = async (track) => {
     if (!enabled || !track?.videoId || !track.song) return null;
     if (none.has(track.videoId)) return null;
-    const r = await ask({ op: 'find', id: track.videoId, title: track.song, artist: track.artist || '' });
+    const r = await ask({ op: 'find', id: track.videoId, title: track.song, artist: track.artist || '', album: track.album || '' });
+    // the song's length by its id (the player's, not a <video> that may still hold the last song): for the Spotify match
+    if (r?.songSec > 0) track.lengthSec = r.songSec;
     const url = r?.ok && isOwnBlob(r.blobUrl) ? r.blobUrl : null;
     if (url) zoomBars(url, r.bars);
     console.info('[ViVi video canvas]', `'${track.song}':`, url ? `the music video ${r.videoId} from ${Math.round(r.startSec)} s (${r.from})` : `none (${r?.why || 'no answer'})`);

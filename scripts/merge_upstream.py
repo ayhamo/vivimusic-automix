@@ -23,7 +23,7 @@ FORKED = {'src/crossfade.js': 'src/automix/crossfade.js', 'src/crossfade-page.js
 # upstream files whose functions src/plus/bg-plus.js replaces by reassigning them (copies of ours):
 # upstream's edits to those functions merge without a conflict and then do nothing, so look at them
 SHADOWED = {'src/spotify.js': 'getSpDc, setSpDc, getSecretDict, clearSpotify, spotifyConnectFromBrowser',
-            'src/apple-canvas.js': 'getOrFetchAmpToken, ampGet, extractEditorialVideoUrl, resolveAppleCanvasDirect',
+            'src/apple-canvas.js': 'getOrFetchAmpToken, ampGet, extractEditorialVideoUrl, resolveAppleCanvasDirect, searchAndFetchMotion',
             'src/background.js': 'checkForUpdate'}
 VERSION_LINE = re.compile(r'^\s*"version"\s*:')
 

@@ -2236,7 +2236,7 @@
     try {
       const response = await chrome.runtime.sendMessage({
         type: 'VIVI_SPOTIFY_CANVAS',
-        track: { song: track.song, artist: track.artist, videoId: track.videoId }
+        track: { song: track.song, artist: track.artist, videoId: track.videoId, album: track.album || null, duration: track.lengthSec || null } // vivi+: album and length for the match (bg-canvas.js, video-canvas.js)
       });
       if (spotifyCanvasRequestKey !== key) return null;
       if (!response?.ok) {

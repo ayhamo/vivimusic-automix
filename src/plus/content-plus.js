@@ -145,7 +145,7 @@
       if (mv) { if (key === C.trackKey() && canvasPlacement !== 'cover') setLyricsCanvas(mv); return; }
       const r = await chrome.runtime.sendMessage({
         type: 'VIVI_SPOTIFY_CANVAS',
-        track: { song: track.song, artist: track.artist, videoId: track.videoId },
+        track: { song: track.song, artist: track.artist, videoId: track.videoId, album: track.album || null, duration: track.lengthSec || null },
       });
       if (key !== C.trackKey() || canvasPlacement === 'cover') return;
       if (!r?.ok) { log('No Spotify Canvas for the lyrics background:', r?.error || 'none'); return; }

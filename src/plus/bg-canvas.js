@@ -29,8 +29,9 @@ const viviSpotifyCanvas = (() => {
   const misses = new Map();   // song key -> time of the miss (24 h, in memory)
 
   async function totp(nowMs) {
+    // the xor'd values joined as decimal digits (spotlib Totp.kt: joinToString), not as characters
     let raw = '';
-    for (let i = 0; i < TOTP_SECRET.length; i++) raw += String.fromCharCode(TOTP_SECRET.charCodeAt(i) ^ (i % 33 + 9));
+    for (let i = 0; i < TOTP_SECRET.length; i++) raw += String(TOTP_SECRET.charCodeAt(i) ^ (i % 33 + 9));
     const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(raw), { name: 'HMAC', hash: 'SHA-1' }, false, ['sign']);
     const counter = Math.floor(nowMs / 1000 / 30);
     const data = new Uint8Array(8);
@@ -129,11 +130,14 @@ const viviSpotifyCanvas = (() => {
   }
   const same = (a, b) => a.size === b.size && [...a].every((w) => b.has(w));
 
-  // Metrolist's DirectCanvasProvider.matches: the artist (or the primary one) exactly, title words 75%
-  function matches(title, artist, foundTitle, foundArtist, primary, foundPrimary) {
+  // Metrolist's DirectCanvasProvider.matches: the artist (or the primary one) exactly, title words 75%,
+  // lengths (ms) within 10 s and album words 50%, each only when both sides know it
+  function matches(title, artist, album, duration, foundTitle, foundArtist, foundAlbum, foundDuration, primary, foundPrimary) {
     const want = words(artist), got = words(foundArtist), wantP = words(primary), gotP = words(foundPrimary);
     if (!want.size || !(same(want, got) || (wantP.size && same(wantP, gotP)))) return false;
-    return similarity(title, foundTitle) >= 0.75;
+    return similarity(title, foundTitle) >= 0.75
+      && (!(duration > 0) || foundDuration == null || Math.abs(duration - foundDuration) <= 10000)
+      && (!String(album || '').trim() || !String(foundAlbum || '').trim() || similarity(album, foundAlbum) >= 0.5);
   }
 
   // Metrolist's publicSpotifyCanvas: the public mirror's canvas for the track
@@ -147,7 +151,7 @@ const viviSpotifyCanvas = (() => {
   }
 
   // Metrolist's spotifyCanvas: the first matching track among the top 10 results that has a canvas
-  async function canvasUrl(title, artist) {
+  async function canvasUrl(title, artist, album, durationMs) {
     const primary = artist.split(/\s*(?:,|&| x | X |\bfeat\.?|\bft\.?)\s*/)[0].trim();
     const search = await query('searchTopResultsList', SEARCH_HASH, {
       query: `${title} ${artist}`, limit: 10, offset: 0, numberOfTopResults: 10,
@@ -161,7 +165,9 @@ const viviSpotifyCanvas = (() => {
       const track = it?.item?.data;
       if (!track || track.__typename !== 'Track' || !track.id) continue;
       const names = (track.artists?.items || []).map((a) => a?.profile?.name).filter(Boolean);
-      if (!matches(title, artist, track.name || '', names.join(', '), primary, names[0])) continue;
+      const foundMs = Number(track.duration?.totalMilliseconds);
+      if (!matches(title, artist, album, durationMs, track.name || '', names.join(', '),
+        track.albumOfTrack?.name, Number.isFinite(foundMs) ? foundMs : null, primary, names[0])) continue;
       const canvas = await publicCanvas(track.id);
       if (trusted(canvas)) {
         console.info(`[vivi canvas] spotify: '${track.name}' by ${names.join(', ')} (${track.id}) has a canvas`);
@@ -177,10 +183,14 @@ const viviSpotifyCanvas = (() => {
   async function find(track) {
     const title = String(track?.song || '').trim(), artist = String(track?.artist || '').trim();
     if (!title || !artist) return null;
-    const key = `${artist}—${title}`;
+    // album and length (s, as content.js's getCurrentTrack gives it) are checked when the request has them
+    const album = String(track.album || '').trim() || null;
+    const durationMs = track.duration > 0 ? Math.round(track.duration * 1000) : null;
+    // a miss is per version: another length (to 10 s) of the same title is asked again
+    const key = `${artist}—${title}${durationMs ? '—' + Math.round(durationMs / 10000) : ''}`;
     const missed = misses.get(key);
     if (missed && Date.now() - missed < MISS_MS) return null;
-    const url = await canvasUrl(title, artist);
+    const url = await canvasUrl(title, artist, album, durationMs);
     if (!url) {
       misses.delete(key); misses.set(key, Date.now());
       if (misses.size > 500) misses.delete(misses.keys().next().value);

@@ -39,11 +39,29 @@
 
   const VIDEOS = 'EgWKAQIQAWoMEA4QChADEAQQCRAF';
   /** Never the song's video, whoever posted it (Prism's MusicVideoMatch). */
-  const NEVER = ['lyric', 'lyrics', 'letra', 'letras', 'paroles', 'karaoke', 'instrumental', 'reaction',
-    'tutorial', 'lesson', 'slowed', 'sped up', 'nightcore', '8d', 'fan made', 'remix', 'official audio', 'audio oficial',
-    'audio only', 'bass boosted', 'reverb', '1 hour', '10 hours', 'loop', 'mashup', 'parody', 'ai cover'];
+  const NEVER = ['lyric', 'lyrics', 'letra', 'letras', 'paroles', 'testo', 'traducida', 'traducción', 'sub español',
+    'subtitulad', 'перевод', 'текст', 'karaoke', 'instrumental', 'reaction', 'tutorial', 'lesson', 'guitar', 'piano',
+    'drum', 'bass', 'slowed', 'sped up', 'nightcore', '8d', 'fan made', 'fanmade', 'remix', 'highlights', 'edit audio',
+    'official audio', 'audio oficial', 'audio only', 'rebassed', 'bass boosted', 'bassboosted', 'boosted', 'reverb',
+    'daycore', 'speed up', '1 hour', '10 hours', 'loop', 'mashup', 'parody', 'ai cover'];
+  /** A frequency in the title ("(25-70Hz)", "432hz") marks a re-tuned or bass-boosted copy. */
+  const HZ = /(?<![\p{L}])\d+\s?hz(?![\p{L}])/u;
   /** Another take on the song: fine when the song is that take itself. */
-  const OTHER_TAKE = ['cover', 'acoustic', 'unplugged', 'live', 'en vivo', 'ao vivo', 'concert', 'session'];
+  const OTHER_TAKE = ['cover', 'acoustic', 'acústic', 'unplugged', 'live', 'en vivo', 'ao vivo', 'concert', 'session'];
+  /** Bracket words that don't name a source. */
+  const GENERIC = new Set(['feat', 'with', 'from', 'the', 'and', 'version', 'session', 'sessions', 'live', 'remaster',
+    'remastered', 'edit', 'radio', 'mix', 'original', 'deluxe', 'explicit', 'clean', 'cover', 'acoustic', 'mono', 'stereo', 'single']);
+  /** Record labels that post their artists' official videos (normalized channel names). */
+  const LABELS = new Set(['fueledbyramen', 'atlanticrecords', 'warnerrecords', 'warnermusic', 'elektrarecords',
+    'roadrunnerrecords', 'interscope', 'interscoperecords', 'republicrecords', 'islandrecords', 'defjam', 'defjamrecordings',
+    'capitolrecords', 'columbiarecords', 'epicrecords', 'rcarecords', 'sonymusic', 'sonymusicentertainment',
+    'universalmusicgroup', 'emimusic', 'parlophone', 'parlophonerecords', 'epitaphrecords', 'hopelessrecords', 'riserecords',
+    'sumerianrecords', 'nuclearblastrecords', 'spinninrecords', 'monstercat', 'ultramusic', 'armadamusic', 'xlrecordings',
+    'subpop', 'dominorecordco', '4ad', 'matadorrecords', 'bigmachinerecords', 'rhinorecords', 'motownrecords', 'topdawgent',
+    'xorecords', 'glassnoterecords']);
+  const LABEL_WORDS = /(?<![\p{L}])(records|recordings|music group|entertainment|label)(?![\p{L}])/u;
+  /** The artist's upload: the song's length give or take LOOSE_S; someone else's: the very recording, within TIGHT_S. */
+  const LOOSE_S = 150, TIGHT_S = 4;
 
   const reEsc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const wordRes = new Map();
@@ -71,7 +89,7 @@
   /** "NirvanaVEVO", "Official Billie Eilish" -> the artist's own name, normalized. */
   function officialChannel(n) {
     const name = n;
-    for (const s of ['vevo', 'official', 'oficial', 'officiel', 'offiziell', 'music', 'tv', 'channel']) {
+    for (const s of ['vevo', 'official', 'oficial', 'officiel', 'offiziell', 'ufficiale', 'music', 'tv', 'channel']) {
       if (n.endsWith(s)) n = n.substring(0, n.length - s.length);
     }
     if (n.startsWith('official')) n = n.substring(8);
@@ -85,12 +103,15 @@
     }
     return false;
   }
+  const never = (text, song) => has(NEVER, text, song) || (HZ.test(text) && !HZ.test(song));
 
   /** The title without brackets, "| ..." tails, feat. credits, video words and the artists' names. */
   function titleCore(title, names) {
     let t = String(title).toLowerCase().replace(/\(.*?\)|\[.*?]|【.*?】/g, ' ');
     const bar = t.indexOf(' | ');
     if (bar >= 0) t = t.substring(0, bar);
+    const slashes = t.indexOf(' // ');
+    if (slashes >= 0) t = t.substring(0, slashes);
     t = t.replace(/\s(ft\.?|feat\.?|featuring)\s.*$/, ' ')
       .replace(/(?<![\p{L}])(official|music|video|videoclip|clip|hd|4k|hq|remastered|remaster|visualizer|mv|m\/v)(?![\p{L}])/gu, ' ');
     t = norm(t);
@@ -98,17 +119,55 @@
     return t;
   }
 
-  /** The video is the song's music video (Prism's rules, the artist's own upload only). */
-  function matches(songTitle, artistList, videoTitle, channel) {
-    const song = String(songTitle).toLowerCase(), vt = String(videoTitle).toLowerCase();
-    if (has(NEVER, vt, song) || has(OTHER_TAKE, vt, song)) return false;
-    const names = artistList.map(norm);
-    const ch = officialChannel(norm(channel));
-    if (!ch || !names.includes(ch)) return false;
-    names.push(norm(channel));
-    names.sort((x, y) => y.length - x.length);
+  /** Whether a video's title is the song's: the song's artists' and the channel's names (and "official" forms) out. */
+  function sameTitle(songTitle, artistList, videoTitle, channel) {
     const want = titleCore(songTitle, []);
-    return !!want && want === titleCore(videoTitle, names);
+    if (!want) return false;
+    const names = [...new Set([...artistList, channel].map(norm).filter((n) => n.length >= 2)
+      .flatMap((n) => [n, officialChannel(n)]))].sort((x, y) => y.length - x.length);
+    return want === titleCore(videoTitle, names);
+  }
+
+  /** Posted by the artist's record label, naming the artist: a label we know, or a "… Records" channel saying official. */
+  function byLabel(videoTitle, channel, names) {
+    if (!names.some((n) => norm(videoTitle).includes(n))) return false;
+    return LABELS.has(norm(channel))
+      || (LABEL_WORDS.test(String(channel).toLowerCase()) && /(?<![\p{L}])official(?![\p{L}])/u.test(String(videoTitle).toLowerCase()));
+  }
+
+  /**
+   * The song's music video among search results [id, title, channel, durationSec] (Prism's MusicVideoMatch.pick):
+   * the artist's (or their label's) upload within LOOSE_S of the song, not another take; else, for a song naming a
+   * source in brackets ("SiriusXM Session"), that recording by whoever posted it, within TIGHT_S, naming the artist.
+   * A studio song takes nobody else's upload. A length of 0 is unknown.
+   */
+  function pick(songTitle, artistList, durationSec, results) {
+    const names = artistList.map(norm).filter(Boolean);
+    if (!norm(songTitle) || !names.length) return null;
+    const song = String(songTitle).toLowerCase();
+    // the source the song names in its brackets ("SiriusXM Session" -> "siriusxm"), without the generic words
+    const source = [...new Set((song.match(/\(.*?\)|\[.*?]/g) || []).flatMap((m) => m.split(/[^\p{L}\p{N}]+/u))
+      .filter((w) => w.length > 2 && !GENERIC.has(w)))];
+    const dur = Number(durationSec) || 0;
+    const within = (v, s) => dur === 0 || !v[3] || Math.abs(v[3] - dur) <= s;
+    // the channel counts too ("Rebassed by Justin"), unless it is the artist's own (The Piano Guys)
+    const own = (v) => { const ch = officialChannel(norm(v[2])); return !!ch && names.includes(ch); };
+    const candidates = results.filter((v) => sameTitle(songTitle, artistList, v[1], v[2])
+      && !never(String(v[1]).toLowerCase(), song) && (own(v) || !never(String(v[2]).toLowerCase(), song)));
+    const first = candidates.find((v) => (own(v) || byLabel(v[1], v[2], names)) && within(v, LOOSE_S)
+      && !has(OTHER_TAKE, String(v[1]).toLowerCase(), song));
+    if (first) return first;
+    if (!source.length) return null;
+    return candidates.find((v) => {
+      const words = String(v[1]).toLowerCase(), where = words + ' ' + String(v[2]).toLowerCase();
+      return within(v, TIGHT_S) && dur > 0 && v[3] > 0 && names.some((n) => norm(words).includes(n))
+        && source.some((w) => where.includes(w));
+    }) || null;
+  }
+
+  /** One video against the song, lengths unknown. */
+  function matches(songTitle, artistList, videoTitle, channel) {
+    return !!pick(songTitle, artistList, 0, [['', videoTitle, channel, 0]]);
   }
 
   function runsText(text) {
@@ -122,7 +181,14 @@
     return (r && r.text) || null;
   }
 
-  /** [videoId, title, channel] of each search result. */
+  /** "3:45" or "1:02:03" in seconds; 0 when it is not a length. */
+  function lengthOf(text) {
+    const t = String(text || '').trim();
+    if (!/^\d{1,2}(:\d{2}){1,2}$/.test(t)) return 0;
+    return t.split(':').reduce((a, x) => a * 60 + Number(x), 0);
+  }
+
+  /** [videoId, title, channel, durationSec] of each search result (the length from the fixed column, else the subtitle's last time). */
   function searchResults(node, out = []) {
     if (Array.isArray(node)) {
       for (const x of node) searchResults(x, out);
@@ -134,7 +200,13 @@
         if (id && Array.isArray(fc) && fc.length > 1) {
           const second = flexText(fc, 1);
           const rr = second && second.runs;
-          out.push([id, runsText(flexText(fc, 0)), Array.isArray(rr) && rr.length ? (rr[0] && rr[0].text) || '' : '']);
+          const fixed = Array.isArray(r.fixedColumns) && r.fixedColumns[0] && r.fixedColumns[0].musicResponsiveListItemFixedColumnRenderer;
+          let len = lengthOf(fixed && runsText(fixed.text));
+          for (let i = 1; !len && i < fc.length; i++) {
+            const runs = (flexText(fc, i) || {}).runs;
+            if (Array.isArray(runs)) for (const x of runs) len = lengthOf(x && x.text) || len;
+          }
+          out.push([id, runsText(flexText(fc, 0)), Array.isArray(rr) && rr.length ? (rr[0] && rr[0].text) || '' : '', len]);
         }
         return out;
       }
@@ -189,45 +261,71 @@
   }
 
   /**
-   * Where the loop starts: the "Most replayed" peak (the largest rise of a ~9 s smoothed curve over a
-   * ±45 s running median, pulled back to where the rise starts; not in the first 12 s), as Prism's
-   * BestPart; without a curve, 40% into the video.
+   * Where the most replayed stretch begins, in seconds, or null when nothing stands out or the song is too short
+   * (Prism's BestPart.peakMs). [dur] is the song's length in seconds (0: the curve's own). Each moment of a ~9 s
+   * smoothed curve is measured against the median of the curve about 45 s either side (the opening left out); the
+   * biggest rise, as a share over that trend, wins, pulled back to where the heat starts to rise.
    */
   function partStart(heat, dur) {
-    const fallback = Math.max(0, dur * 0.4);
-    if (heat == null || heat.length < 30 || dur < CLIP_SEC + 2) return Math.min(fallback, Math.max(0, dur - CLIP_SEC));
+    if (heat == null) return null;
     const n = Math.floor(heat.length / 3);
-    const step = Math.max(0.5, heat[1]);
-    const v = new Array(n), s = new Array(n);
-    for (let i = 0; i < n; i++) v[i] = heat[i * 3 + 2];
-    const half = Math.max(1, Math.round(4.5 / step));
+    if (n < MIN_SEGMENTS) return null;
+    // YouTube's segments are equal (the length / 100); the median in case one is cut short at the end
+    const seg = Math.round([...Array(n).keys()].map((i) => heat[i * 3 + 1]).sort((a, b) => a - b)[idiv(n, 2)] * 1000);
+    if (!(seg > 0)) return null;
+    const duration = dur > 0 ? dur * 1000 : seg * n;
+    if (duration < MIN_SONG_MS) return null;
+    const v = new Array(n), smooth = new Array(n), trend = new Array(n);
+    for (let i = 0; i < n; i++) v[i] = Math.max(0, Math.min(1, heat[i * 3 + 2]));
+    const half = Math.max(1, Math.round(4500 / seg));
     for (let i = 0; i < n; i++) {
       let sum = 0, c = 0;
       for (let j = Math.max(0, i - half); j <= Math.min(n - 1, i + half); j++, c++) sum += v[j];
-      s[i] = sum / c;
+      smooth[i] = sum / c;
     }
-    const wide = Math.max(2, Math.round(45 / step));
-    let best = -1, bestRise = 0;
+    const wide = Math.max(3, Math.round(TREND_HALF_MS / seg));
     for (let i = 0; i < n; i++) {
-      if (heat[i * 3] < 12 || heat[i * 3] > dur - CLIP_SEC) continue;
-      const w = s.slice(Math.max(0, i - wide), Math.min(n, i + wide + 1)).sort((a, b) => a - b);
-      const rise = s[i] - w[Math.floor(w.length / 2)];
-      if (rise > bestRise) { bestRise = rise; best = i; }
+      const w = smooth.slice(Math.max(1, i - wide), Math.min(n - 1, i + wide) + 1).sort((a, b) => a - b);
+      trend[i] = w[idiv(w.length, 2)];
     }
-    if (best < 0) return Math.min(fallback, Math.max(0, dur - CLIP_SEC));
-    let i = best;
-    while (i > 0 && s[i - 1] < s[i] && heat[(i - 1) * 3] >= 12) i--;
-    return Math.min(heat[i * 3], Math.max(0, dur - CLIP_SEC));
+    const over = (x, i) => x / Math.max(trend[i], TREND_FLOOR) - 1;
+    const head = Math.max(PART_HEAD_MS, 2 * seg);
+    const isCandidate = (i) => i >= 0 && i * seg >= head && i * seg <= duration - PART_TAIL_MS;
+    let peak = -1;
+    for (let i = 0; i < n; i++) if (isCandidate(i) && (peak < 0 || over(smooth[i], i) > over(smooth[peak], peak))) peak = i;
+    if (peak < 0) return null;
+    const rise = over(smooth[peak], peak);
+    if (rise < MIN_RISE || smooth[peak] - trend[peak] < MIN_LIFT) return null;
+    // back to where the heat starts to rise: half the peak's rise above the trend
+    const floor = rise * 0.5;
+    let start = peak;
+    while (isCandidate(start - 1) && over(smooth[start - 1], start - 1) >= floor) start--;
+    // the rise is gradual in the smoothed curve; the raw segments say where it actually jumps
+    let jump = start;
+    for (let i = start; i <= peak; i++) if (over(v[i], i) >= floor) { jump = i; break; }
+    return jump * seg / 1000;
+  }
+
+  /** A video with no preview frames: its middle WINDOW_MS (Prism's FrameJudge.noFrames), [startMs, endMs]. */
+  function noFrames(lengthMs) {
+    const w = Math.min(WINDOW_MS, lengthMs);
+    const start = Math.max(0, Math.trunc((lengthMs - w) / 2));
+    return [start, start + w];
   }
 
   // ═════════════════════════════ frame judging (ClipJudge) ═════════════════════════════
 
   const W = 32, H = 18;
+  // Prism's BestPart: no part in the first 5 s (or 2 segments) or the last 30 s, none in a song under 60 s
+  const PART_HEAD_MS = 5000, PART_TAIL_MS = 30000, MIN_SONG_MS = 60000, MIN_SEGMENTS = 10;
+  const MIN_RISE = 0.08, MIN_LIFT = 0.03, TREND_HALF_MS = 45000, TREND_FLOOR = 0.05;
+  /** Fewer preview frames than this can't tell a still from a moving video (Prism's ClipFinder). */
+  const MIN_FRAMES = 8;
   const WINDOW_MS = 8000, HEAD_MS = 12000, TAIL_MS = 15000, MIN_LOOP_MS = 5000, MAX_LOOP_MS = 9000;
   const BLACK = 24, LIT = 48;
   const BAR_SHARE = 0.9, STEP_MOVE = 3, STILL_SHARE = 0.6, WINDOW_STILL_SHARE = 0.75;
-  const IDEAL_MOVE = 18, FRANTIC_MOVE = 60, DARK = 16, BRIGHT = 64, CROP_LEAD = 1.15;
-  const PEAK_BEFORE_MS = 4000, PEAK_AFTER_MS = 8000, APART_MS = 15000;
+  const IDEAL_MOVE = 18, FRANTIC_MOVE = 60, DARK = 16, BRIGHT = 64, CROP_SHARE = 0.32, CROP_LEAD = 1.15;
+  const PEAK_BEFORE_MS = 4000, PEAK_AFTER_MS = 8000, CHORUS_NEAR_MS = 10000, APART_MS = 15000, RUNNERS_UP = 4;
   const GOOD_ENOUGH = 0.3;
   const CUT = 22, FLASH_AREA = 0.25;
   const FLASH_STEP = 26, FLASH_CHANGES = 7;
@@ -351,25 +449,56 @@
     return out;
   }
 
-  /** A window within APART_MS of one already tried (a runner-up must be another part). */
-  function farFrom(w, skip) {
-    if (skip) for (const s of skip) if (Math.abs(s[0] - w[0]) < APART_MS) return true;
-    return false;
+  /** Best first; equal scores: the earlier start (the answer never depends on the windows' order). */
+  const better = (w, than) => than == null || w[2] > than[2] || (w[2] === than[2] && w[0] < than[0]);
+
+  /**
+   * The loop's window (Prism's FrameJudge.choose): the best near the "Most replayed" peak (one in the first
+   * HEAD_MS is the intro: ignored), else near the chorus, else in the middle third, each only from windows
+   * scoring above 0 and at least GOOD_ENOUGH of the best; else the best anywhere, even at 0. Null without windows.
+   * [peakMs] and [chorusMs]: -1 or null when unknown.
+   */
+  function choose(wins, lengthMs, peakMs, chorusMs) {
+    let top = null;
+    for (const w of wins) if (better(w, top)) top = w;
+    const pick = (near) => {
+      let b = null;
+      for (const w of wins) if (near(w) && w[2] > 0 && w[2] >= top[2] * GOOD_ENOUGH && better(w, b)) b = w;
+      return b;
+    };
+    let w = null;
+    if (peakMs != null && peakMs >= HEAD_MS) w = pick((x) => x[0] >= peakMs - PEAK_BEFORE_MS && x[0] <= peakMs + PEAK_AFTER_MS);
+    if (!w && chorusMs != null && chorusMs >= 0) w = pick((x) => Math.abs(x[0] - chorusMs) <= CHORUS_NEAR_MS);
+    // a third as Prism's Long division gives it
+    if (!w) w = pick((x) => x[0] >= Math.trunc(lengthMs / 3) && x[0] <= Math.trunc(lengthMs * 2 / 3));
+    if (!w) for (const x of wins) if (better(x, w)) w = x;
+    return w;
   }
 
-  /** The loop's window: best near the "Most replayed" peak, else the middle third, else the best. Null when none scores. */
-  function choose(wins, lengthMs, peakMs, skip) {
-    let top = 0;
-    for (const w of wins) top = Math.max(top, w[2]);
-    let best = null, mid = null, near = null;
-    for (const w of wins) {
-      if (w[2] <= 0 || farFrom(w, skip)) continue;
-      if (best == null || w[2] > best[2]) best = w;
-      if (w[2] < top * GOOD_ENOUGH) continue;
-      if (peakMs >= HEAD_MS && w[0] >= peakMs - PEAK_BEFORE_MS && w[0] <= peakMs + PEAK_AFTER_MS && (near == null || w[2] > near[2])) near = w;
-      if (w[0] >= lengthMs / 3 && w[0] <= lengthMs * 2 / 3 && (mid == null || w[2] > mid[2])) mid = w;
+  /** Other good parts' starts (Prism's FrameJudge.runnersUp): scoring windows, best first, APART_MS from the chosen and each other. */
+  function runnersUp(wins, chosenMs) {
+    const taken = [chosenMs], out = [];
+    for (const w of wins.filter((x) => x[2] > 0).sort((x, y) => (better(x, y) ? -1 : better(y, x) ? 1 : 0))) {
+      if (out.length >= RUNNERS_UP) break;
+      if (taken.some((t) => Math.abs(t - w[0]) < APART_MS)) continue;
+      taken.push(w[0]); out.push(w[0]);
     }
-    return near || mid || best;
+    return out;
+  }
+
+  /**
+   * Prism's FrameJudge.judge on storyboard frames: null for a still upload (also when every window is left out),
+   * else the window { startMs, endMs, score }, the crop and bars, and every window (for another part later).
+   */
+  function judge(frames, intervalMs, lengthMs, peakMs, chorusMs) {
+    const length = Math.max(lengthMs, frames.length * intervalMs);
+    const b = bars(frames);
+    if (still(frames, b)) return null;
+    const wins = windows(frames, intervalMs, length, b);
+    const w = choose(wins, length, peakMs, chorusMs);
+    if (!w) return null;
+    const first = Math.trunc(w[0] / intervalMs), last = Math.min(frames.length - 1, Math.trunc((w[1] + intervalMs - 1) / intervalMs));
+    return { startMs: w[0], endMs: w[1], score: w[2], cropX: cropX(frames.slice(first, last + 1), b), bars: b, windows: wins, length };
   }
 
   function sumOf(w, from, n) {
@@ -380,8 +509,8 @@
 
   /**
    * Where the square crop sits across the picture inside the bars (0 left, 0.5 centred, 1 right):
-   * the band as wide as the picture is tall that holds the most detail and movement, when it
-   * clearly leads the centre.
+   * the band of CROP_SHARE of its width (what a full-height upright crop of 16:9 keeps, as Prism's
+   * FrameJudge) that holds the most detail and movement, when it clearly leads the centre.
    */
   function cropX(frames, b) {
     const a = area(b);
@@ -402,8 +531,7 @@
         }
       }
     }
-    // the grid is 16:9: a cell is as tall as it is wide in the picture, so a square is ah cells wide
-    const band = Math.max(1, Math.min(aw, ah));
+    const band = Math.max(1, Math.min(aw, Math.round(aw * CROP_SHARE)));
     const room = aw - band;
     if (room <= 0) return 0.5;
     const centre = sumOf(weight, idiv(room, 2), band);
@@ -747,8 +875,8 @@
   const core = {
     CLIP_SEC, W, H, NEVER, OTHER_TAKE,
     norm, artists, officialChannel, titleCore, matches, searchResults, pickFormat,
-    heatmapOf, partStart,
-    grid, bars, area, diff, still, windows, choose, cropX, change, cuts, flashing, end: loopEnd, cropRect,
+    heatmapOf, partStart, noFrames, pick,
+    grid, bars, area, diff, still, windows, choose, runnersUp, judge, cropX, change, cuts, flashing, end: loopEnd, cropRect,
     storyboardPlan, parseSidx, sidxRange, readBoxes, parseInit, parseSamples, selectSamples, buildClip,
   };
   G.__viviVideoCanvasCore = core;
@@ -882,10 +1010,10 @@
 
   /**
    * [videoId, title] of the song's music video, or null. Signed out, YouTube no longer pairs songs with their
-   * videos in `next`, so it is found as Prism does: a video search, and the first result whose title is the
-   * song's and that the artist posted (their channel, its VEVO or "Official" one), not a lyric video or another take.
+   * videos in `next`, so it is found as Prism does: a video search, and the result pick() takes (the song's title,
+   * posted by the artist or their label within 150 s of the song, or the very session the song names).
    */
-  async function findVideo(title, artist) {
+  async function findVideo(title, artist, durationSec) {
     const names = artists(artist);
     if (!title || !String(title).trim() || !names.length) return null;
     for (const q of [title + ' ' + names[0], title + ' ' + names[0] + ' official video']) {
@@ -895,13 +1023,12 @@
         context: { client: { clientName: 'WEB_REMIX', clientVersion: cfg('INNERTUBE_CLIENT_VERSION') || '1.20251101.01.00', hl: 'en', gl: 'US', ...(v ? { visitorData: v } : {}) } },
       });
       const found = searchResults(j);
-      for (const r of found) {
-        if (matches(title, names, r[1], r[2])) {
-          log('found', r[0], `'${r[1]}' by ${r[2]}`, 'for', `'${title}' / ${artist}`, '(search', JSON.stringify(q) + ': the song\'s title, the artist\'s own channel, no lyric/live/cover/remix take)');
-          return [r[0], r[1]];
-        }
+      const r = pick(title, names, durationSec, found);
+      if (r) {
+        log('found', r[0], `'${r[1]}' by ${r[2]} (${r[3]} s)`, 'for', `'${title}' / ${artist} (${durationSec || '?'} s)`, '(search', JSON.stringify(q) + ': the song\'s title, by the artist or their label or the session it names, no lyric/remix copy)');
+        return [r[0], r[1]];
       }
-      log('none for', JSON.stringify(q), 'among', found.slice(0, 5).map((r) => `'${r[1]}' by ${r[2]}`).join('; ') || 'no results');
+      log('none for', JSON.stringify(q), 'among', found.slice(0, 5).map((x) => `'${x[1]}' by ${x[2]} ${x[3]} s`).join('; ') || 'no results');
     }
     return null;
   }
@@ -1044,7 +1171,7 @@
   /** The song's loop (VideoCanvas.clip): { bytes, meta } or { none:true } (no usable video) or null (not this time). */
   async function clip(song) {
     const t0 = performance.now();
-    const video = await findVideo(song.title, song.artist);
+    const video = await findVideo(song.title, song.artist, song.durationSec);
     if (!video) return { none: true, why: 'no music video by the artist' };
     const player = await visionPlayer(video[0]);
     const status = (player && player.playabilityStatus && player.playabilityStatus.status) || '';
@@ -1060,28 +1187,25 @@
     }
     const dur = Number(player.videoDetails && player.videoDetails.lengthSeconds) || 0;
     const heat = await heatmap(video[0]);
-    const peak = heat == null ? -1 : partStart(heat, dur);
+    const peak = heat == null ? null : partStart(heat, dur);
     let b = [0, 0, 0, 0], crop = 0.5, wins = null, judged = false;
-    const length = Math.round(dur * 1000);
-    let start = peak >= 0 ? peak : Math.max(0, dur * 0.4);
-    let why = heat == null ? 'no most-replayed curve: 40% in' : 'most replayed at ' + f1(peak) + ' s';
+    let length = Math.round(dur * 1000);
+    // no preview frames: the middle of the video, the curve unused (Prism's FrameJudge.noFrames)
+    let start = noFrames(length)[0] / 1000;
+    let why = 'no preview frames: the middle';
     // Prism's first look: the storyboard (bars, a still upload, the best window near the peak, the crop)
     try {
       const sb = await board(player, length);
-      if (sb) {
-        b = bars(sb.frames);
-        if (still(sb.frames, b)) {
-          log(video[0], 'is a still picture (' + sb.frames.length + ' preview frames)');
+      if (sb && sb.frames.length >= MIN_FRAMES) {
+        const j = judge(sb.frames, sb.interval, length, peak == null ? null : Math.round(peak * 1000), null);
+        if (!j) {
+          log(video[0], 'is a still picture (' + sb.frames.length + ' preview frames, no window that moves)');
           return { none: true, why: 'still picture' };
         }
-        wins = windows(sb.frames, sb.interval, length, b);
-        const w = choose(wins, length, peak < 0 ? -1 : Math.round(peak * 1000), null);
-        if (w) {
-          start = w[0] / 1000;
-          why += ', storyboard window ' + f1(start) + ' s (score ' + f2(w[2]) + ')';
-          const i0 = Math.trunc(w[0] / sb.interval), i1 = Math.min(sb.frames.length - 1, Math.trunc((w[1] + sb.interval - 1) / sb.interval));
-          crop = cropX(sb.frames.slice(i0, i1 + 1), b);
-        }
+        ({ bars: b, cropX: crop, windows: wins, length } = j);
+        start = j.startMs / 1000;
+        why = (heat == null ? 'no most-replayed curve' : peak == null ? 'no most-replayed peak' : 'most replayed at ' + f1(peak) + ' s')
+          + ', storyboard window ' + f1(start) + ' s (score ' + f2(j.score) + ')';
         judged = true;
         log('storyboard', sb.frames.length, 'frames every', sb.interval, 'ms, bars', b.map(f2).join('/'), ',', wins.length, 'windows, crop', f2(crop));
       }
@@ -1098,7 +1222,8 @@
       for (let attempt = 0; attempt < 2; attempt++) {
         const e = await refine(low, start);
         if (e > 0) { end = e; break; }
-        const next = wins == null ? null : choose(wins, length, -1, [[start * 1000]]);
+        // another part of the same video, once (Prism's ClipRepository: the first runner-up)
+        const next = wins == null ? null : runnersUp(wins, Math.round(start * 1000))[0];
         if (e === 0 || attempt === 1 || next == null) {
           if (e < 0) {
             log(video[0], 'flashes: not shown');
@@ -1107,7 +1232,7 @@
           break;
         }
         log('the part flashes, trying another');
-        start = next[0] / 1000;
+        start = next / 1000;
         end = start + CLIP_SEC;   // the window moved: its end with it
       }
     }
@@ -1275,12 +1400,21 @@
   const say = (m) => window.postMessage({ ch: CHANNEL, dir: 'out', ...m }, window.location.origin);
   const answer = (reqId, e, from) => ({ reqId, ok: true, blobUrl: e.blobUrl, ...e.meta, from });
 
+  // the song's length when the request has none: the player's, while it plays that song (0: unknown, not checked)
+  function playingLength(id) {
+    try {
+      const p = document.getElementById('movie_player');
+      const v = p && p.getVideoData && p.getVideoData();
+      return v && v.video_id === id ? Math.round(Number(p.getDuration()) || 0) : 0;
+    } catch { return 0; }
+  }
+
   let findSeq = 0;
   async function find(d) {
     const my = ++findSeq;
     const id = String(d.id || '');
     if (!id || !d.title) return { reqId: d.reqId, ok: false, why: 'no song id or title' };
-    const song = { id, title: String(d.title), artist: String(d.artist || ''), album: d.album || '', durationSec: Number(d.durationSec) || 0 };
+    const song = { id, title: String(d.title), artist: String(d.artist || ''), album: d.album || '', durationSec: Number(d.durationSec) || playingLength(id) };
     const m = mem.get(id);
     if (m) {
       mem.delete(id); mem.set(id, m);
@@ -1349,7 +1483,8 @@
     if (d.ch !== CHANNEL) return;
     try {
       if (d.op === 'fetch') relayAnswer(d);
-      else if (d.op === 'find') say(await find(d));
+      // (songSec: the song's length, read while it plays that song; content.js passes it on to the Spotify match)
+      else if (d.op === 'find') { const songSec = Number(d.durationSec) || playingLength(String(d.id || '')); say({ ...(await find(d)), songSec }); }
       else if (d.op === 'prefetch') { prefetch(d.ids); say({ reqId: d.reqId, ok: true }); }
       else if (d.op === 'clear') { await clearAll(); say({ reqId: d.reqId, ok: true }); }
     } catch (err) {

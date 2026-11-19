@@ -630,7 +630,8 @@ clearSpotify = async function clearSpotify() {
 //  - motion art: the square clip first, an alternate to retry with, the 3:4 one
 //    for portrait, older key names too; the browser's storefront; a failed
 //    lookup is reported and not cached as "no Canvas".
-// Upstream's search/scoring (searchAndFetchMotion, fetchMotionArtwork) stays in use.
+// Upstream's scoring stays (searchAndFetchMotion is a copy, with the inline art
+// taken before the album id), and so does fetchMotionArtwork.
 {
   const APPLE_TOKEN_BACKUP_KEY = 'viviAppleTokenBackup';
   const APPLE_TOKEN_RETRY_MS = 30 * 60 * 1000;
@@ -753,7 +754,7 @@ clearSpotify = async function clearSpotify() {
     const square = motionLink(ev, 'motionDetailSquare') || motionLink(ev, 'motionSquareVideo1x1');
     const raw = motionLink(ev, 'motionDetailRaw');
     const tall = motionLink(ev, 'motionDetailTall') || motionLink(ev, 'motionTallVideo3x4');
-    const primary = square || raw || tall || motionLink(ev, 'motionDetailStatic');
+    const primary = square || raw || tall;   // a static still is not motion art (BitChord)
     if (!primary) return null;
     const alternate = [square, raw, tall].find((u) => u && u !== primary) || null;
     return { primary, alternate, tall };
@@ -769,6 +770,78 @@ clearSpotify = async function clearSpotify() {
     motionAltByPrimary.set(m.primary, m.alternate);
     if (motionAltByPrimary.size > 200) motionAltByPrimary.delete(motionAltByPrimary.keys().next().value);
     return preferTall ? m.tall : m.primary;
+  };
+
+  // Upstream's search and scoring, with BitChord's order per hit: its inline motion art is
+  // taken before its album id is looked at, so a hit that names no album still counts.
+  searchAndFetchMotion = async function searchAndFetchMotion(term, artist, album, storefront, type) {
+    let query = term.toLowerCase().includes((artist || '').toLowerCase()) ? term : `${artist} ${term}`;
+    if (album && !query.toLowerCase().includes(album.toLowerCase())) query = `${query} ${album}`;
+    const root = await ampGet(`/v1/catalog/${storefront}/search`, {
+      term: query, types: type, limit: '10', extend: 'editorialVideo', include: 'albums',
+    });
+    const results = root?.results?.[type]?.data;
+    if (!Array.isArray(results) || !results.length) return null;
+
+    const normTerm = normalizeForComparison(term);
+    const editionWords = ['deluxe', 'expanded', 'remastered', 'remix', 'version', 'edit', 'mix', 'bonus'];
+    const scored = results.map((item) => {
+      const attributes = item.attributes;
+      if (!attributes) return null;
+      const resultName = attributes.name || '';
+      const resultCollectionName = attributes.albumName || attributes.collectionName || '';
+      if (isBlacklistedAlbumName(resultName.toLowerCase()) || isBlacklistedAlbumName(resultCollectionName.toLowerCase())) return null;
+      if (!artistMatches(artist, attributes.artistName || '')) return null;
+      let score = 10;
+      const normResultName = normalizeForComparison(resultName);
+      if (normResultName === normTerm) score += 15;
+      else if (normResultName.includes(normTerm) || normTerm.includes(normResultName)) score += 7;
+      else score -= 10;
+      for (const word of editionWords) {
+        const inTerm = term.toLowerCase().includes(word);
+        const inResult = resultName.toLowerCase().includes(word);
+        if (inTerm && inResult) score += 5;
+        else if (inTerm !== inResult && inResult) score -= 3;
+      }
+      if (album && resultCollectionName) {
+        const normAlbum = normalizeForComparison(album);
+        const normCollection = normalizeForComparison(resultCollectionName);
+        if (normCollection === normAlbum) score += 20;
+        else if (normCollection.includes(normAlbum) || normAlbum.includes(normCollection)) score += 10;
+      }
+      return { score, item };
+    }).filter(Boolean).sort((a, b) => b.score - a.score);
+
+    for (const { score, item } of scored) {
+      if (score < 12) break;   // ranked: the rest score less
+      const attributes = item.attributes;
+      const resultArtistName = attributes.artistName || '';
+      const itemType = item.type;
+      let targetAlbumId = null;
+      if (itemType === 'songs') {
+        targetAlbumId = item.relationships?.albums?.data?.[0]?.id || attributes.collectionId || null;
+        if (!targetAlbumId && attributes.url) {
+          const id = (attributes.url.split('/album/')[1]?.split('?')[0] || '').split('/').filter(Boolean).pop() || '';
+          if (/^\d+$/.test(id)) targetAlbumId = id;
+        }
+      } else if (itemType === 'albums') {
+        targetAlbumId = item.id;
+      }
+      const ev = attributes.editorialVideo;
+      const hlsUrl = ev ? extractEditorialVideoUrl(ev, false) : null;
+      if (hlsUrl) {
+        return {
+          name: attributes.name || '', artist: resultArtistName, albumId: targetAlbumId,
+          albumName: itemType === 'songs' ? (attributes.collectionName || null) : (attributes.name || ''),
+          animated: hlsUrl, animatedTall: extractEditorialVideoUrl(ev, true) || null,
+        };
+      }
+      if (!targetAlbumId || String(targetAlbumId).startsWith('pl.')) continue;
+      const fetched = await fetchMotionArtwork(targetAlbumId, storefront, resultArtistName,
+        itemType === 'songs' ? attributes.name : null, itemType === 'songs' ? resultArtistName : null);
+      if (fetched) return fetched;
+    }
+    return null;
   };
 
   // Motion art is per storefront: use the browser's region (en-GB -> gb), else us.
