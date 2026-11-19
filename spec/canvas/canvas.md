@@ -162,7 +162,9 @@ Cases: `backdrop` (`meshLift`).
 
 Original: `ML/commonMain/kotlin/com/metrolist/shared/ui/player/FullscreenArtworkBleed.kt`. Phone: `FEAT/ArtBackdrop.java`, `FEAT/FullArt.java`.
 
-1. **[phone only: it is blended onto YouTube's own art, which the PC does not redraw]** The cover reaches 0.6 of the player's height, zoom 1 to 1.6, sides cropped. Bleed `:82-83, 120-122`.
+The bleed is phone-only because it is blended onto YouTube's own art. A player that draws its own backdrop instead (the PC redraws none; BitChord has its mesh, §9) marks this section not applicable.
+
+1. **[phone only: blended onto YouTube's own art; not applicable to a player with its own backdrop]** The cover reaches 0.6 of the player's height, zoom 1 to 1.6, sides cropped. Bleed `:82-83, 120-122`.
 2. **[phone only]** Below the cover: its bottom 18% (at least 2 rows), flipped and stretched (Catmull-Rom). Bleed `:78, 333-374`.
 3. **[phone only]** Blur by depth (rows over the container width): 0 down to 0.70, then 250 × ((r − 0.70) / 0.85)^1.8 px at 1080 wide, full at 1.55; blended between the two nearest of {0, 1, 2, 3.5, 5.5, 8, 11, 15, 20, 27, 36, 48, 63, 82, 105, 135, 170, 210, 250}; 3 passes. Bleed `:51-59, 408-411, 427-429, 463`.
 4. **[phone only]** Detail rows start at min(0.70 × width, art height − 48), on a multiple of 4; 0.40 of the width below that is drawn at full size, the rest at quarter size. Half size from sigma 4, quarter from sigma 8. Bleed `:66-72, 126-127, 156-163`.
@@ -177,7 +179,7 @@ Cases: `backdrop` (`blurRadius`, `bleedRows`, `coverZoom`, `stripRows`).
 Original: `BCU/PlayerControls.kt:1861-1924` (ShimmerText), `BCU/PlayerChrome.kt:24-33`. Phone: `FEAT/PlayerScreen.java:987-1108`. PC: `src/plus/plus.css:467-482`.
 
 1. **[both]** A confirmed lossless badge shimmers: the text at white 0.55; a band 0.6 × the text width each side of its centre, full white at the centre, sweeping left to right in 3000 ms, linear, restarting; the centre goes from −band to width + band. Painted SrcIn over the glyphs. PlayerControls `:1881-1922`.
-2. **[phone only: the PC has no Plus-blended chrome]** Additive chrome: every white is 0.15 lower, full white is 0.73. PlayerChrome `:24, 27, 32-33`. Phone `:987-993`.
+2. **[phone only: the PC has no Plus-blended chrome]** Additive chrome, BitChord's PlayerChrome rule (the `chromeWhite` cases): every white is 0.15 lower, full white is 0.73. PlayerChrome `:24, 27, 32-33`. Phone `:987-993`.
 3. **[phone only: phone layout]** The icon shimmers too, peaking at full white; the row sits 16 dp below the bar's middle and a third of the glyph's width left of centre. Phone `:1025, 1104, 1180`. No original.
 
 Cases: `badge`.

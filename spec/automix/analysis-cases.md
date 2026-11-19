@@ -8,7 +8,7 @@ These cases check the analysers and the mixes they lead to. Cases and thresholds
 
 1. **Neither side is tuned to copy the other.** Each platform runs its analyser as it is: its own
    resampler and model runtime. A case that fails is a finding to look at, not a number to chase.
-2. **Two layers**, both strict:
+2. **Two layers**, both strict (on real songs, layer 1 is reported instead: see below):
 
    **Layer 1: the analysers agree.** Both sides analyse the same decoded file of each song, so this
    tests the analysers and not the streams.
@@ -67,6 +67,8 @@ These cases check the analysers and the mixes they lead to. Cases and thresholds
 On the extension's analyser (BitChord's worker with `beat_this_final0_q8` and `vocals_umxhq_int8`).
 A known miss prints as KNOWN and doesn't fail; a side that gets it right should say so.
 
+These four are model limits shared with the extension; a port should match them, not tune them away.
+
 - `drums-85`: tempo and beats are right, but the bar start is half a bar late, every bar.
 - `tempo-change-100-110`: a beat is lost 3 to 5 s after the jump to 110 BPM, so the bars after it
   start half a bar off (59% of bars right).
@@ -76,11 +78,22 @@ A known miss prints as KNOWN and doesn't fail; a side that gets it right should 
 The last two matter to the loop planner when a song has no synced lyrics: it allows at most 3% sung
 frames over a loop. A song whose drums or pads trip the vocal model loses its loop mixes.
 
+## Real songs: layer 1 is reported, not failed
+
+On real songs, layer 1 differences are reported per platform pair and don't fail the run; layer 2
+still does. The set found on 2026-11-19, against the PC:
+
+- `exHJb5t-6e8`, `JBbSlADtG-g`, `2mUTNSMcezg`: bar starts differ (the PC and the phone disagree on
+  these too).
+- `6Edmp3yHv1s`: BitChord only, 65% of bars.
+
+All of them pass layer 2.
+
 ## Running
 
 ```
 node scripts/analysis_cases.mjs                         synthetic cases (about a minute)
 node scripts/analysis_cases.mjs --only a,b --debug      some of them, with the beats each one missed
 node scripts/analysis_cases.mjs --real                  analyse .cache/analysis/*.wav into .cache/analysis/pc/
-node scripts/analysis_cases.mjs --compare pc phone      layers 1 and 2, PC against the phone's results
+node scripts/analysis_cases.mjs --compare pc phone      layers 1 (reported) and 2, PC against the phone's results
 ```

@@ -14,8 +14,8 @@
   "bestPart": "canvas.md §6. Prism BestPart.kt:68-101 (peakMs). intensity = one value per segment of segmentMs; expect startMs or null (nothing stands out). noFrames: FrameJudge.kt:72-76.",
   "clipJudge": "canvas.md §7. Prism FrameJudge.kt (bars 97-112, isStill 130-140, windows 149-177, choose 203-210, cropX 232-257, judge 59-69) and ClipRefine.kt (cuts 79-91, flashing 94-117, end 123-126, the flash loop 195-198).",
   "display": "canvas.md §8. Phone AnimatedCover.java:170-174 (tallClip), 190-201 (letterboxZoom); BitChord NowPlayingScreen.kt:1548-1550 (clip fade).",
-  "backdrop": "canvas.md §9-10. Metrolist FullscreenArtworkBleed.kt:120-127, 156-163, 341, 408-411; BitChord ArtworkMeshBackdrop.kt:747-755 (lifted).",
-  "badge": "canvas.md §11. BitChord PlayerControls.kt:1911-1913 (band), PlayerChrome.kt:24-33 (chrome alphas)."
+  "backdrop": "canvas.md §9-10. Metrolist FullscreenArtworkBleed.kt:120-127, 156-163, 341, 408-411; BitChord ArtworkMeshBackdrop.kt:747-755 (lifted). The bleed cases (blurRadius, bleedRows, coverZoom, stripRows) are phone-only: the bleed is blended onto YouTube's own art, so a player that draws its own backdrop (BitChord's mesh) marks them not applicable.",
+  "badge": "canvas.md §11. BitChord PlayerControls.kt:1911-1913 (band), PlayerChrome.kt:24-33 (chrome alphas; chromeWhite is BitChord's PlayerChrome rule, §11.2)."
  },
  "sourceOrder": [
   {

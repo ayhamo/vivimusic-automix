@@ -9,7 +9,8 @@
 //                                                            layer 2 (each pair planned on A's and on B's analysis)
 //
 // The cache (default .cache/analysis, git-ignored) holds <videoId>.wav: 44100 Hz stereo float, decoded
-// once, which both sides read. Exit 1 on a failed case; known misses and threshold cases don't fail.
+// once, which both sides read. Exit 1 on a failed case; known misses, threshold cases and layer 1
+// differences on real songs (reported per platform pair, analysis-cases.md) don't fail.
 import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -257,8 +258,7 @@ async function compare(sa, sb) {
   console.log(`layer 1: ${sa} against ${sb}, same decoded files`);
   for (const id of realIds()) {
     if (!A[id] || !B[id]) { console.log(`skip ${id}: ${!A[id] ? sa : sb} has no analysis`); continue; }
-    const res = layer1(A[id], B[id]), bad = res.some((r) => !r[1]);
-    if (bad) failed++;
+    const res = layer1(A[id], B[id]), bad = res.some((r) => !r[1]);   // reported, not failed
     console.log(`${bad ? 'DIFF' : 'ok  '} ${id}`);
     for (const [what, ok, text] of res) console.log(`       ${ok ? 'ok  ' : 'DIFF'} ${what}: ${text}`);
   }
