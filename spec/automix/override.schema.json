@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "override.schema.json",
+  "title": "Transition override",
+  "description": "A user's edit of one pair's transition (editor.md). Stored per pair under the key \"<fromVideoId>><toVideoId>\". A missing field is Auto; an override with nothing but Auto in it is deleted.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "v": { "const": 1, "description": "this schema's version" },
+    "preset": {
+      "enum": ["auto", "smooth", "rise", "blend", "wave", "melt", "slam", "loop", "custom"],
+      "description": "editor.md §2. echoOut is reserved (§5) and not valid until both apps render it."
+    },
+    "lanes": {
+      "type": "object",
+      "description": "Only with preset custom: the shapes of editor.md §3",
+      "additionalProperties": false,
+      "required": ["volume", "eq", "effect"],
+      "properties": {
+        "volume": { "enum": ["smooth", "crossfade", "overlap", "cutInFadeOut", "fadeInCutOut", "centerCut"] },
+        "eq": { "enum": ["centerBassSwap", "endBassSwap", "threeBandFade", "quickBassCut", "none"] },
+        "effect": { "enum": ["none", "lpOut", "hpIn", "lpBoth", "hpBoth", "lpInHpOut"] }
+      }
+    },
+    "bars": { "enum": [2, 4, 8, 16, 32], "description": "the window's length; absent: Auto. Ignored for loop." },
+    "beatMatch": { "enum": ["auto", "sync", "glide", "off"], "description": "editor.md §4; absent: auto" },
+    "window": {
+      "type": "object",
+      "description": "editor.md §6: where the window starts in each song; absent: Auto. Ignored for loop.",
+      "additionalProperties": false,
+      "properties": {
+        "out": { "$ref": "#/$defs/position", "description": "A's mix-out, on A's end grid" },
+        "in": { "$ref": "#/$defs/position", "description": "B's mix-in, on B's opening grid" }
+      }
+    },
+    "lock": { "type": "boolean", "description": "kept past the 300-override cap; a lock beyond 300 locked is refused" },
+    "family": {
+      "enum": ["blend", "filter"],
+      "description": "only in picks migrated from {style, bars} (editor.md §1): the planner's own blend or filter mix, forced. The editor never writes it."
+    },
+    "engine": { "enum": [2, 3], "description": "the Automix version the user saw when saving (informational)" },
+    "savedAt": { "type": "integer", "description": "ms since the epoch; the cap evicts the oldest unlocked" }
+  },
+  "allOf": [
+    { "if": { "properties": { "preset": { "const": "custom" } }, "required": ["preset"] }, "then": { "required": ["lanes"] }, "else": { "not": { "required": ["lanes"] } } }
+  ],
+  "$defs": {
+    "position": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["bar", "sec"],
+      "properties": {
+        "bar": { "type": "integer", "description": "the downbeat index on that song's grid, counted from its first downbeat (0); negative before it" },
+        "beat": { "type": "integer", "minimum": 0, "maximum": 3, "description": "a beat within the bar (snapped to beats); absent: on the downbeat" },
+        "nudgeMs": { "type": "integer", "minimum": -2000, "maximum": 2000, "description": "10 ms steps on top of the snapped position" },
+        "sec": { "type": "number", "description": "the song time this meant when saved: the fallback when a re-analysis moves the grid by more than a beat" }
+      }
+    }
+  }
+}
