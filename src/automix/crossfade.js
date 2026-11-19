@@ -1007,6 +1007,13 @@
   // seeks instead, while the deck is still too quiet to hear them.
   const SEEK_ERROR_SEC = 0.25;   // off by more than this, a seek even when audible
   const QUIET_ERROR_SEC = 0.03;  // off by more than this while quiet, a silent seek
+  // the take-over by ear (alignByEar): within EAR_OK_SEC of the player is in step; the deck catches
+  // up at most NUDGE_MAX faster or slower, over up to NUDGE_SEC
+  const EAR_SEC = 0.3, EAR_RANGE_SEC = 0.1, EAR_OK_SEC = 0.0015, NUDGE_SEC = 2, NUDGE_MAX = 0.04, NUDGE_MIN_SEC = 0.3;
+  // a reading (scoring EAR_MIN or more) is acted on once the next one agrees within EAR_AGREE_SEC, with no
+  // catch-up between: single readings scoring up to 0.87 were off by 40 ms or flipped sign on some songs,
+  // their neighbouring beats; two in a row at the same wrong place didn't happen
+  const EAR_MIN = 0.6, EAR_AGREE_SEC = 0.003;
   const QUIET_GAIN = 0.3;        // the deck's gain under which a seek isn't heard
   const SERVO_MS = 40;
   let startLatency = 0.05;       // play() -> sound, learned across mixes
@@ -1060,7 +1067,9 @@
       } else {
         // the start is (nearly) the song's opening: hold it there, start it on time
         this.held = true;
-        this.startAt = ctxTime;
+        // (a plan still before the song's opening starts it where the plan reaches 0: started at
+        // ctxTime, it ran ahead of the plan and was sought again and again until then)
+        this.startAt = trackTime < 0 ? ctxTime - trackTime / rate : ctxTime;
         this.ownSeekUntil = performance.now() + 2000;
         post({ type: 'pause' });
         this.seek(trackTime);
@@ -1137,6 +1146,118 @@
     }
     // Ours, not the user's: the hold before the start and the start itself.
     get holding() { return this.held || (!!this.startAsked && this.g.ctx.currentTime - this.startAsked < 2); }
+  }
+
+  // ───────── the take-over by ear ─────────
+  // The player is held to the mix by its currentTime, but its sound runs a little off that: 30 ms
+  // ahead of the incoming deck in the test Firefox, under QUIET_ERROR_SEC, so nothing moved it.
+  // The take-over then skipped that much of the song, heard as a short dropout at a mix's end.
+  // Before the gate opens, the player's sound (behind the gate) is found in the incoming deck's on
+  // exact audio frames, and the deck catches up with it: a few % faster or slower for up to 2 s,
+  // the pitch kept. (The player can't be moved that finely: a seek lands within tens of ms, and in
+  // Firefox 0.4 s at x0.9255 moved its sound 1 ms, not 30.)
+  const ears = new WeakMap();   // audio node -> Promise of a tap (buffer-deck.js) on it
+  function earOn(ctx, node) {
+    if (!ears.has(node)) ears.set(node, window.__viviBufferDeck.tap(ctx, node, { frames: 65536 }).catch((e) => { ears.delete(node); throw e; }));
+    return ears.get(node);
+  }
+  // a deck rebuilt with a new graph: its tap goes too (it would keep the old deck processing)
+  function earOff(node) {
+    const t = node && ears.get(node);
+    if (t) { ears.delete(node); t.then((x) => x.close(), () => {}); }
+  }
+  const monoOfChans = (c) => { const m = new Float32Array(c[0].length); for (let i = 0; i < m.length; i++) m[i] = (c[0][i] + (c[1] || c[0])[i]) / 2; return m; };
+  // `tmpl` in `file` near index i0 (±R): every 2nd place on every 4th sample, then each place near the best
+  // on every sample. (buffer-deck.js locate's 8x averaged first pass, a low-pass, picked neighbouring beats
+  // of a busy opening and its places scored under 0.85; this search found the same spots at 0.90-0.97)
+  function earLocate(file, tmpl, i0, R) {
+    const L = tmpl.length;
+    const ncc = (from, step) => {
+      let ab = 0, aa = 0, bb = 0;
+      for (let i = 0; i < L; i += step) { const x = tmpl[i], y = file[from + i]; ab += x * y; aa += x * x; bb += y * y; }
+      return aa > 0 && bb > 0 ? ab / Math.sqrt(aa * bb) : 0;
+    };
+    const lo = Math.max(0, i0 - R), hi = Math.min(file.length - L, i0 + R);
+    let best = -2, at = i0;
+    for (let k = lo; k <= hi; k += 2) { const v = ncc(k, 4); if (v > best) { best = v; at = k; } }
+    let fine = -2, fAt = at;
+    for (let k = Math.max(lo, at - 3); k <= Math.min(hi, at + 3); k++) { const v = ncc(k, 1); if (v > fine) { fine = v; fAt = k; } }
+    return { index: fAt, score: fine };
+  }
+  // How far the player's sound runs ahead of the deck's (seconds; negative: behind), or null
+  async function earError(g, node) {
+    const BD = window.__viviBufferDeck;
+    if (!BD) return null;
+    const [yt, dk] = await Promise.all([earOn(g.ctx, g.source), earOn(g.ctx, node)]);
+    const sr = g.ctx.sampleRate, L = Math.round(EAR_SEC * sr), R = Math.round(EAR_RANGE_SEC * sr);
+    const a = await yt.grab(L);
+    // the deck's audio is read once it has played past the player's by the search range
+    await new Promise((r) => setTimeout(r, EAR_RANGE_SEC * 1000 + 60));
+    const n = L + 2 * R + Math.round(0.15 * sr), b = await dk.grab(n);
+    if (a.closed || b.closed || a.chans[0].length < L || b.chans[0].length < n) return null;
+    const tmpl = monoOfChans(a.chans), file = monoOfChans(b.chans);
+    const i0 = (a.end - L) - (b.end - n);   // the template's first frame, in the deck's grab
+    if (i0 - R < 0 || i0 + R + L > n || rms(tmpl) < 1e-4 || rms(file) < 1e-4) return null;
+    const hit = earLocate(file, tmpl, i0, R);
+    // (the deck's stretcher reshapes the waveform a little: the right place scored 0.7-0.97, by the song)
+    if (!hit || hit.score < EAR_MIN) return null;
+    return { err: (hit.index - i0) / sr, score: hit.score };
+  }
+  // Brings the incoming deck `d` (the blend's, or the loop mix's once its loop is over) in step with the player `pd`'s sound, by ear,
+  // from audio time `start`; its catch-ups end by `last` (a little before the gate opens).
+  // `trackAt(t)`: where the deck's schedule has the song at audio time t, at the rate `rate`.
+  async function alignByEar(L, pd, d, trackAt, rate, start, last) {
+    const g = pd.g, ms = (s) => (s * 1000).toFixed(1);
+    const until = (t) => new Promise((r) => setTimeout(r, Math.max(0, (t - g.ctx.currentTime) * 1000)));
+    const on = () => live === L && deck === pd && !pd.done;
+    await until(start);
+    let first = null, final = null, nudges = 0, checks = 0, unchecked = false, moved = 0, prev = null;
+    const seen = [];   // each reading: [audio time, ms ahead, score, the player's seeks so far]
+    try {
+      while (on() && checks < 20) {
+        // an addon deck takes over from the incoming deck on the mix's own schedule: the player isn't heard
+        // (not one that failed or handed back: the player is heard then)
+        if (sdeck?.addon && sdeck.addonId === pd.id) return;
+        const now = g.ctx.currentTime;
+        if (now > last - 0.6) break;   // no time left to measure and catch up
+        if (pd.v.seeking || pd.v.paused || now < pd.seekingUntil || pd.errors.length < 3) { await until(now + 0.1); continue; }
+        let m = await earError(g, d.lp);
+        checks++;
+        if (!on()) return;
+        if (!m) { await until(g.ctx.currentTime + 0.15); continue; }
+        seen.push([+g.ctx.currentTime.toFixed(2), +(m.err * 1000).toFixed(1), +m.score.toFixed(2), pd.seeks]);
+        // from the first reading on, the deck follows the player's sound: the player's own quiet seeks
+        // (by its currentTime, landing tens of ms anywhere) would move it from under the deck again, and
+        // a reading from before a seek isn't compared with one after it (44.2 then 26.2 ms: nothing done)
+        pd.quietUntil = Math.min(pd.quietUntil, g.ctx.currentTime);
+        const agrees = prev && prev.nudges === nudges && prev.seeks === pd.seeks && Math.abs(m.err - prev.err) <= EAR_AGREE_SEC;
+        if (!agrees) { prev = { err: m.err, nudges, seeks: pd.seeks }; await until(g.ctx.currentTime + 0.1); continue; }
+        m = { err: (m.err + prev.err) / 2, score: m.score };
+        prev = null;
+        first ??= m.err; final = m.err; unchecked = false;
+        if (Math.abs(m.err) > 0.25) break;   // far off: the servo's to seek
+        // in step: checked again until the take-over is near (one reading 4 s ahead said 0 ms, the take-over then skipped 19)
+        if (Math.abs(m.err) <= EAR_OK_SEC) { await until(g.ctx.currentTime + 0.3); continue; }
+        // the player's sound runs m.err ahead: the deck plays that much more of the song over S
+        // (as short as NUDGE_MAX allows: time is left to check it and catch up again). m.err is heard
+        // time: at the mix rate that is m.err * rate of the song. S is at least NUDGE_MIN_SEC: the
+        // worklet keeps one pending change, so a shorter S would post the end before the start is
+        // due, and the start would be dropped (the deck would jump at t1 + S instead of gliding)
+        const t1 = g.ctx.currentTime + 0.3, S = Math.min(clamp(Math.abs(m.err) / NUDGE_MAX, NUDGE_MIN_SEC, NUDGE_SEC), last - t1 - 0.12);
+        if (S < NUDGE_MIN_SEC || d.pending.some((c) => c.active && c.output > t1 - 0.01)) break;   // (nothing heard may be queued on the deck by then: a stop is)
+        const k = clamp(m.err / S, -NUDGE_MAX, NUDGE_MAX), at = trackAt(t1) + moved;
+        d.schedule([
+          { output: t1, input: at, rate: rate * (1 + k), active: true, loop: null },
+          { output: t1 + S, input: at + rate * (1 + k) * S, rate, active: true, loop: null },
+        ]);
+        moved += rate * k * S;
+        nudges++; unchecked = true;
+        await until(t1 + S + 0.12);
+      }
+    } catch (e) { log('automix: the take-over by ear failed:', e?.message || e); return; }
+    if (!on()) return;
+    log(`automix: the take-over by ear (${seen.map((x) => x[1] + ' ms').join(', ') || 'no reading'}): ${first === null ? 'not measured' : `the player ${ms(first)} ms ahead of the incoming deck${nudges ? `, the deck caught up ${ms(moved)} ms, ${unchecked ? 'not checked again' : `then ${ms(final)} ms`}` : ''}`}`);
+    addonEvent('ear', { first, final: unchecked ? null : final, nudges, moved, checks, seen });
   }
 
   // ───────── automix: the loop mix's stretch decks (BitChord engine/loopDeck.ts) ─────────
@@ -1246,7 +1367,7 @@
   async function ensureLoopDecks(g) {
     // a new player brings a new audio context: the decks are rebuilt in it
     if (deckOut && deckOut.context !== g.ctx && live?.mix?.style !== 'loop') {
-      loopDecks?.forEach((d) => d.stop());
+      loopDecks?.forEach((d) => { d.stop(); earOff(d.lp); });
       try { deckOut.disconnect(); } catch { /* gone */ }
       deckOut = null; loopDecks = null;
     }
@@ -1427,6 +1548,8 @@
     deck.quietUntil = tk - 0.35;   // no silent seek right before the gate opens
     // the deck's level is matched to the player's (YouTube's normalisation of the new song) before it takes over
     deckTapOf(idk, g.ctx);
+    // in step by ear once the loop is over: the deck then plays the song straight on, as the player does
+    alignByEar(L, deck, idk, trackAt, 1, Math.max(now + 0.6, x.releaseAt + 0.3), tk - 0.1);
     setTimeout(() => matchInLevel(L, tk - 0.05, 'loop'), Math.max(0, (tk - 0.45 - now) * 1000));
     log(`automix: the new song waits on the player, taking over in ${(tk - now).toFixed(2)} s`);
     addonEvent('takeover', { id: st.id, tk, H, startPos: trackAt(tk), inAddon: !!loopPrep.inAddon, style: 'loop' });
@@ -1590,7 +1713,7 @@
     if (inDeck && inDeckGraph === g) return;
     inDeckMaking ??= (async () => {
       // the audio graph was rebuilt (a new player): the old deck goes with it
-      if (inDeck) { inDeck.stop(); try { inBus.disconnect(); inDeck.gain.disconnect(); } catch { /* gone */ } }
+      if (inDeck) { inDeck.stop(); earOff(inDeck.lp); try { inBus.disconnect(); inDeck.gain.disconnect(); } catch { /* gone */ } }
       inDeck = null;
       const bus = g.ctx.createGain();
       bus.connect(g.bassFilter);
@@ -1611,7 +1734,10 @@
   function warmDecks(g) {
     if (warmedFor === g || typeof SignalsmithStretch !== 'function' || !g.bassFilter) return;
     warmedFor = g;
-    Promise.all([ensureLoopDecks(g), ensureInDeck(g)]).catch((e) => log('automix: decks not made ahead:', e?.message || e));
+    Promise.all([ensureLoopDecks(g), ensureInDeck(g)])
+      // (and the take-over's ears on them and on the player: a worklet started mid-mix could be heard)
+      .then(() => window.__viviBufferDeck && Promise.all([g.source, inDeck?.lp, loopDecks?.[1]?.lp].filter(Boolean).map((n) => earOn(g.ctx, n))))
+      .catch((e) => log('automix: decks not made ahead:', e?.message || e));
   }
 
   async function prepareInDeck(g, p, pos = 0) {
@@ -1746,7 +1872,9 @@
     const now = g.ctx.currentTime, m = live.mix, rate = m.rate || 1, H = 0.025, L = live, G = L.deckGlide;
     if (st.id !== m.nextId) { abortLive('the queue played another song than the blend was for'); return; }
     // just after the curves end (an event inside one is refused), or later if the player came late
-    const tk = Math.max((G ? G.end : L.t0 + L.D) + 0.02, now + 1.6);
+    // (a next song cued near its opening: the player only plays from where the plan reaches 0:00, so
+    // the deck plays on until the player has played long enough to be matched by ear, alignByEar)
+    const tk = Math.max((G ? G.end : L.t0 + L.D) + 0.02, now + 1.6, G ? 0 : L.t0 - m.mixInTrackTime / rate + 4);
     const trackAt = (t) => (G && t >= G.end ? G.trackAtEnd + (t - G.end) : m.mixInTrackTime + (t - L.t0) * rate);
     if (trackAt(tk + 0.5) > inPrep.end) { abortLive('the player came too late for the incoming deck'); return; }
     deck?.cancel();
@@ -1769,6 +1897,8 @@
     // (while the deck still glides, the two play different moments: only the late check then)
     const early = now + 2;
     if (!G && early < tk - 1.2) setTimeout(() => matchInLevel(L, early + 0.8), (early - now) * 1000);
+    // (in step by ear first: while the deck glides, the two play different moments)
+    if (!G) alignByEar(L, deck, inDeck, trackAt, rate, from + 0.6, tk - 0.1);
     setTimeout(() => matchInLevel(L, tk - 0.05), Math.max(0, (tk - 0.45 - now) * 1000));
     log(`automix: the new song waits on the player, taking over from the incoming deck in ${(tk - now).toFixed(2)} s${G ? ` (the deck glides from x${rate.toFixed(3)} to x1.000 first, ${(G.end - L.t0 - L.D).toFixed(1)} s; the player stays at x1.000)` : ''}`);
     addonEvent('takeover', { id: st.id, tk, H, startPos: trackAt(tk), inAddon: !!inPrep.addon });
