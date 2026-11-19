@@ -1,0 +1,46 @@
+# The shared spec's fixture suites (spec/README.md) on every push and pull request: the planner
+# against its golden plans, the addon matcher and pick rules, the canvas cases, and the synthetic
+# analysis cases on the real analyser (the models are in src/vendor/automix). The real-song analysis
+# cases need decoded songs that never enter git, so they run on the developer's machine only.
+name: Spec tests
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  spec:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Automix planner against the golden plans
+        run: node scripts/automix_fixtures.mjs
+      - name: Automix planner unit tests
+        run: node --test scripts/test_automix_plan.mjs
+      - name: Transition editor (presets, lanes, window positions)
+        run: node scripts/editor_cases.mjs
+      - name: Addon matcher (BitChord's cases)
+        run: node scripts/addon_matcher_fixtures.mjs --matcher src/addons/track-matcher.js
+      - name: Addon pick rules and client readings
+        run: node scripts/addon_pick_tests.mjs
+      - name: Addon offset fit and level
+        run: node scripts/addon_offset_fixtures.mjs
+      - name: Addon client, store and page
+        run: |
+          node scripts/addon_client_tests.mjs
+          node scripts/addon_store_tests.mjs
+          node scripts/addon_page_tests.mjs
+      - name: Canvas
+        run: |
+          node scripts/video_canvas_tests.mjs
+          node scripts/canvas_spotify_tests.mjs
+          node scripts/canvas_cases_tests.mjs
+      - name: Analysis, synthetic songs on the real analyser
+        run: node scripts/analysis_cases.mjs

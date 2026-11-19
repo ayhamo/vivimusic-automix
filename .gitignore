@@ -7,3 +7,9 @@ __pycache__/
 
 # local reference copy of another extension, not part of this project
 bitchrod extesnion/
+
+# graphify knowledge graph (local, rebuilt with graphify --update)
+graphify-out/
+
+# local analysis cache (decoded real songs and each side's results; never committed)
+.cache/

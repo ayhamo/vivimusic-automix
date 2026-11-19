@@ -10,6 +10,15 @@ spec/
     pairs/*.json           5 real song pairs, captured from the extension
     golden/*.json          the planner's plans for those pairs: Classic (key v2) and Automix v2 (key v3)
     versions.md            how the engines differ, and Automix v2's rules
+    analysis-cases.md      the analysis rules: two layers (the analysers agree, the mixes agree), real songs kept local
+    analysis-cases.json    the synthetic songs with their checks, the real-song list and the planner thresholds
+    playback.md            what every mix must sound like (splice, cuts, lock, fades), each platform by its own means
+    editor.md              the transition editor: presets, lanes as exact curves, the window, beat match, overrides
+    override.schema.json   one pair's saved edit
+    editor-cases.json      every preset and lane → its curves; saved window positions → seconds
+  canvas/
+    canvas.md              the canvas sources and their order, the part and clip picking, the display and backdrops
+    canvas-cases.json      inputs → the expected choice, for each of those rules
   addons/
     protocol.md            the BitChord-compatible addon protocol and matching rules
     matcher-cases.json     YouTube song + addon rows → the row the matcher must pick; queries() per song
@@ -40,6 +49,25 @@ Golden plans today (Classic / Automix v2): pair 1 loop / loop, pair 2 loop / han
 The test Firefox (`~/.claude/firefox-test/bidi.mjs`, with uBlock) has a `capture` scenario: it plays song A, queues song B, waits until both are analysed, then asks the page for the fixture through the debug message `vivi-automix-fixture` (see README_CUSTOM.md, Debug helpers) and writes the pair file.
 
 Lyrics availability changes between captures: a song with synced lyrics one day may have none the next, and then its `sung` is null and the planner falls back to the vocal mask. Compare `sung` before blaming a planner change for a golden diff.
+
+## Analysis and playback
+
+`analysis-cases.md` holds the rules: neither analyser is tuned to copy the other; layer 1 checks
+that the analysers agree on the same decoded file; layer 2 checks that each pair gets the same mix.
+Synthetic songs run in CI (`node scripts/analysis_cases.mjs`, about a minute, on the real models).
+Real songs run locally from a git-ignored cache. `playback.md` holds the sound targets every
+platform must meet.
+
+## Canvas fixtures
+
+`canvas.md` cites the phone's code and its originals (Metrolist, Prism, BitChord) for every rule.
+Where they differ, the original is the rule. Rules marked "phone only" are platform-bound.
+`node scripts/canvas_cases_tests.mjs` runs every case the extension has a function for.
+
+## CI
+
+`.github/workflows/spec-tests.yml` runs every suite above on every push, except the real-song
+analysis cases.
 
 ## Addon fixtures
 
