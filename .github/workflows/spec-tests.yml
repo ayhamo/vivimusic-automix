@@ -1,4 +1,5 @@
-# The shared spec's fixture suites (spec/README.md) on every push and pull request: the planner
+# The shared spec's fixture suites (spec/README.md) on a push to main, a pull request, and before
+# every release (fork-sync-release.yml calls this workflow): the planner
 # against its golden plans, the addon matcher and pick rules, the canvas cases, and the synthetic
 # analysis cases on the real analyser (the models are in src/vendor/automix). The real-song analysis
 # cases need decoded songs that never enter git, so they run on the developer's machine only.
@@ -6,7 +7,9 @@ name: Spec tests
 
 on:
   push:
+    branches: [main]
   pull_request:
+  workflow_call:
 
 permissions:
   contents: read

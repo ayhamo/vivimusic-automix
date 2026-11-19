@@ -287,3 +287,30 @@ test('Editor: a style gate warns instead of refusing (sub-bass veto)', () => {
   assert.equal(p.style, 'blend');
   assert.match(p.warnings.join(' '), /sub-bass 1\.00 apart/);
 });
+
+test('Editor: a length alone on a vetoed pair says why it is not used', () => {
+  const A = loadAutomix('auto', { automixVersion: 3 });
+  const p = planPick(A, song(120, 200, { sub: 0 }), song(120, 200, { sub: 1 }), { bars: 16 });
+  assert.ok(p.handoff, 'still the hand-over: a length alone is not forced');
+  assert.match(p.warnings.join(' '), /^16 bars not used: different sub-bass/);
+});
+
+test('Editor: Loop drops beat match, and a nudge that rounds to 0 is not saved', () => {
+  const A = loadAutomix('auto');
+  assert.deepEqual({ ...A.normalizeOverride({ preset: 'loop', beatMatch: 'sync' }) }, { v: 1, preset: 'loop' });
+  const o = A.normalizeOverride({ preset: 'rise', window: { in: { bar: 2, nudgeMs: 4, sec: 4.4 } } });
+  assert.deepEqual({ ...o.window.in }, { bar: 2, sec: 4.4 });
+});
+
+test('Editor: windowLimits are where the planner clamps the window', () => {
+  const A = loadAutomix('auto');
+  const cur = song(120, 200), next = song(120, 180);
+  const m = planOf(A, cur, next);
+  const lim = A.windowLimits(m, cur, next, 24.5);
+  const span = m.bars * barSec(120);
+  assert.deepEqual([...lim.out], [24.5 + (m.rampSongSec || 0), 200 - 0.3 - span]);
+  assert.deepEqual([...lim.in], [0, 180 - 10 - span]);
+  // a saved mix-out past the end lands inside them
+  const p = planPick(A, cur, next, { preset: 'blend', bars: m.bars, window: { out: { bar: 99, sec: 0.4 + 99 * barSec(120) } } });
+  assert.ok(p.mixOutTrackTime <= lim.out[1] + 1e-6 && p.mixOutTrackTime >= lim.out[0]);
+});

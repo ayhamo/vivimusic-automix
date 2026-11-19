@@ -72,14 +72,17 @@ lanes it had. Picking a preset keeps the window and the length (Spotify does the
 
 **The UI:**
 - Presets are a chip row. Lanes sit under a folded "Customize", each a dropdown of the named shapes.
-- An edited pair shows a "Custom" badge (also for a non-Auto preset). The Auto chip resets it.
+- An edited pair shows a "Custom" badge (also for a non-Auto preset). The Auto chip takes the preset
+  back to Auto and keeps the rest of the edit (length, window, beat match, lock); "Reset to Auto"
+  clears the whole edit and the badge.
 
 **Loop (question 7):**
 - The loop mix keeps its own length and its own curves. The loop planner picks bars it found clear of
   vocals, so the length chips, the lanes and the window drag are off for Loop in v1.
 - The phone's loop renderer draws only gain, the 250 Hz shelf and HP, so any lane beyond that would be
   phone-only.
-- The beat-match mode doesn't apply either: the loop decks do their own tempo ramp.
+- The beat-match mode doesn't apply either: the loop decks do their own tempo ramp. Picking Loop
+  drops a saved beat match.
 
 **Slam (question 9):** a cut, not a fade:
 - The volume swap is an 8 ms ramp (`CUT_RAMP_SEC`), which keeps it free of clicks.
@@ -147,7 +150,10 @@ lane would be extension-only. It isn't added.
 - The planner's rate curves stay as they are for Auto.
 - Sync: the incoming deck at `r = A's BPM / B's BPM` for the whole window, then its glide back to
   ×1.0, as the planner's blend does today: [0, r] [D, r] [D + glide, 1].
-- Glide: the incoming deck goes from `r` at the start to ×1.0 at the end: [0, r] [D, 1].
+- Glide: the planner's glide (`glideSteps`), one tempo step per beat on both songs: A goes from ×1.0
+  towards B's tempo and B from A's tempo to ×1.0, geometrically, so the two meet on every beat and B
+  ends at ×1.0. Both engines play the plan's rate points; editor-cases.json checks that the plan
+  carries the glide.
 - Off: no rate curve.
 
 ## 4. Beat match (question 6)
@@ -196,7 +202,8 @@ from `bars`.
   than one beat from `sec`, the grid changed under it. Then the position is `sec`, snapped to the new
   grid's nearest downbeat, and the result says `moved: true` so the editor can mark it.
 
-**Limits (a drag past one is clamped, and the editor shows the reason):**
+**Limits (a drag past one is held there, and the readout says why: "held: A has already played up
+to there"; the planner's `windowLimits`):**
 - A's mix-out: no earlier than the planner's `earliest`, and late enough that the window ends before
   A's music does (`contentEndSec`, else the duration).
 - B's mix-in: 0 or later, the window ending at least 10 s before B's end.
@@ -208,6 +215,10 @@ from `bars`.
 - The first window edit of one side (a drag or a nudge) saves the other side too, where the plan has
   it at that moment. With one side saved, the planner would still move the other (B's skip cap, the
   vocal re-route), and B's mix-in could jump bars under a 10 ms nudge of A.
+- A length the plan can't use (a hand-over for the sub-bass or key gates, a drop-in's two bars, a
+  plain fade) shows "N bars not used:" and the reason, not "fit here".
+- A pick from before the editor that forced the filter mix (`family: filter`) places the filter mix
+  itself: a saved window shows "the saved window isn't used". Picking a preset uses it.
 - A saved mix-in isn't moved by Automix v2's kick lock (`kickLockAllowed`): the lock shifts B by
   up to an eighth of a beat, which would undo a nudge. editor-cases.json `plans` has the cases.
 - Unlike Spotify, the first and last moments of a song are reachable when the limits allow.

@@ -62,8 +62,14 @@ jobs:
             echo "build=true" >> "$GITHUB_OUTPUT"
           fi
 
-  build:
+  # the spec suites first: a release is never built and signed with a failing spec
+  spec:
     needs: check
+    if: needs.check.outputs.build == 'true'
+    uses: ./.github/workflows/spec-tests.yml
+
+  build:
+    needs: [check, spec]
     if: needs.check.outputs.build == 'true'
     runs-on: ubuntu-24.04
     steps:

@@ -104,6 +104,7 @@ const f2 = (x) => (x * 100).toFixed(0) + '%';
 // ───────── synthetic (CI) ─────────
 async function synthetic() {
   let failed = 0;
+  const fixed = [];   // known misses that pass now: their knownMiss entry should go
   const only = opt('--only', null);
   const unknown = only ? only.split(',').filter((n) => !SPEC.synthetic.some((c) => c.name === n)) : [];
   if (unknown.length) { console.error('no such case: ' + unknown.join(', ')); return 1; }
@@ -118,7 +119,8 @@ async function synthetic() {
     const verdict = (what, ok, text) => {
       const k = c.knownMiss?.[what];
       if (!ok && k) known++; else if (!ok) bad++;
-      lines.push(`${ok ? 'ok   ' : k ? 'KNOWN' : 'DIFF '} ${what}: ${text}`);
+      if (ok && k) fixed.push(`${c.name} ${what}`);
+      lines.push(`${ok ? (k ? 'FIXED' : 'ok   ') : k ? 'KNOWN' : 'DIFF '} ${what}: ${text}`);
     };
     for (const what of c.check) {
       if (what === 'tempo') {
@@ -144,6 +146,7 @@ async function synthetic() {
     for (const l of lines) console.log('       ' + l);
   }
   console.log(failed ? `${failed} case(s) failed` : 'all synthetic cases pass');
+  if (fixed.length) console.log(`known misses that pass now (drop their knownMiss in ${SPEC_FILE.replace(ROOT, '')}): ${fixed.join(', ')}`);
   return failed;
 }
 

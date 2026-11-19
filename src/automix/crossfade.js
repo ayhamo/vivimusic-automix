@@ -1622,8 +1622,9 @@
     return pts[pts.length - 1][1];
   }
   // events [t, v, step] over the curves' 0..D; mul(t / D) scales them (the trim, sampled in 32 steps
-  // too). Dplay: the seconds the mix really has (a late start, the song's tail): the times fit to it.
-  function curveEvents(pts, D, geo, mul, Dplay = D) {
+  // too). skip: the seconds a late start missed: the curves go on from there, on the planned beats.
+  // Dplay: the seconds the mix really has from then on (the song's tail): the rest fits to it.
+  function curveEvents(pts, D, geo, mul, Dplay = D, skip = 0) {
     if (!pts?.length) return null;
     const ev = [];
     const ts = pts.map((p) => p[0]);
@@ -1635,9 +1636,15 @@
       if (at.length > 1) { ev.push([t, at[0][1] * k, false], [t, at[at.length - 1][1] * k, true]); continue; }
       ev.push([t, curveAt(pts, t, geo) * k, false]);
     }
-    const fit = Dplay > 0 && D > 0 ? Dplay / D : 1;
-    if (Math.abs(fit - 1) > 1e-9) for (const e of ev) e[0] *= fit;
-    return ev;
+    let out = ev;
+    if (skip > 1e-6 && skip < D) {
+      const k0 = mul ? mul(clamp(skip / D, 0, 1)) : 1;
+      out = [[0, curveAt(pts, skip, geo) * k0, false], ...ev.filter((e) => e[0] > skip + 1e-6).map((e) => [e[0] - skip, e[1], e[2]])];
+    }
+    const left = D - (skip > 1e-6 && skip < D ? skip : 0);
+    const fit = Dplay > 0 && left > 0 ? Dplay / left : 1;
+    if (Math.abs(fit - 1) > 1e-9) for (const e of out) e[0] *= fit;
+    return out;
   }
   const curvesSec = (m, D) => (m.curves.durationSec > 0 ? m.curves.durationSec : D);
   function playEvents(param, ev, t0, from, geo) {
@@ -1652,17 +1659,17 @@
     }
   }
   // the faders of a preset (the plan's loudness trim on top, as automix.js trimmed)
-  function presetGains(m, D) {
+  function presetGains(m, D, skip = 0) {
     const t = m.trim, ss = (x) => x * x * (3 - 2 * x);
     const gi = 10 ** ((t?.inDb || 0) / 20), go = 10 ** ((t?.outDb || 0) / 20);
     const trim = !!(t && (t.inDb || t.outDb));
     const P = curvesSec(m, D);
-    return [curveEvents(m.curves.in.gain, P, false, trim ? (x) => gi + (1 - gi) * ss(x) : null, D),
-      curveEvents(m.curves.out.gain, P, false, trim ? (x) => 1 + (go - 1) * ss(x) : null, D)];
+    return [curveEvents(m.curves.in.gain, P, false, trim ? (x) => gi + (1 - gi) * ss(x) : null, D, skip),
+      curveEvents(m.curves.out.gain, P, false, trim ? (x) => 1 + (go - 1) * ss(x) : null, D, skip)];
   }
   // A preset's shelves and filters on both songs: the old song's own nodes from t0, the next song's
   // (the player's filters, which the incoming deck feeds too) from `pre`; open again after the mix.
-  function presetShape(g, m, t0, D, pre) {
+  function presetShape(g, m, t0, D, pre, skip = 0) {
     const c = m.curves, nyq = g.ctx.sampleRate / 2, end = t0 + D + 0.002;
     const lanes = [
       [live.bass?.gain, c.out.bassDb, false, null], [live.high?.gain, c.out.highDb, false, null],
@@ -1672,7 +1679,7 @@
     ];
     lanes.forEach(([param, pts, geo, rest], i) => {
       if (!param || !pts?.length) return;
-      playEvents(param, curveEvents(pts, curvesSec(m, D), geo, null, D), t0, i < 4 ? t0 : pre, geo);
+      playEvents(param, curveEvents(pts, curvesSec(m, D), geo, null, D, skip), t0, i < 4 ? t0 : pre, geo);
       if (rest != null) param.setValueAtTime(rest, end);   // (Hz curves end open: then exactly transparent)
     });
   }
@@ -1720,15 +1727,17 @@
 
     // gains: equal-power cross (AutoDJ: its own fader)
     const style = matched && !plain ? m.style : 'crossfade';
-    if (matched && plain) log('automix: the glide had no incoming deck: a plain crossfade instead');
+    // an editor preset plays its own curves either way (a glide's at x1.0); a late start skips their first seconds
+    const preset = matched && presetOn(m, m.style), skip = Math.max(0, t0 - live.t0);
+    if (matched && plain) log(`automix: the glide had no incoming deck: ${preset ? 'the preset at x1.0' : 'a plain crossfade'} instead`);
     const inn = g.gate.gain, out = live.fade.gain;
     inn.cancelScheduledValues(now); inn.setValueAtTime(0, now);
     out.cancelScheduledValues(now); out.setValueAtTime(1, now);
-    if (presetOn(m, style)) { const [eIn, eOut] = presetGains(m, D); playEvents(inn, eIn, t0, t0, false); playEvents(out, eOut, t0, t0, false); }
+    if (preset) { const [eIn, eOut] = presetGains(m, D, skip); playEvents(inn, eIn, t0, t0, false); playEvents(out, eOut, t0, t0, false); }
     else { const [cIn, cOut] = gainCurves(m, style, D); fadeCurve(inn, cIn, t0, D); fadeCurve(out, cOut, t0, D); }
 
-    blendShape(g, style, t0, D, rate);
-    log(`automix: ${style}${style !== 'crossfade' ? ' of ' + m.bars + ' bars' : ''}, ${D.toFixed(1)} s, starting in ${(t0 - now).toFixed(2)} s; next song from ${m.mixInTrackTime.toFixed(2)} s at x${rate.toFixed(3)}${m.reason ? ' (' + m.reason + ')' : ''}${djNote(m, style)}`);
+    blendShape(g, style, t0, D, rate, preset, skip);
+    log(`automix: ${style}${style !== 'crossfade' ? ' of ' + m.bars + ' bars' : ''}, ${D.toFixed(1)} s, starting in ${(t0 - now).toFixed(2)} s; next song from ${m.mixInTrackTime.toFixed(2)} s at x${rate.toFixed(3)}${m.reason ? ' (' + m.reason + ')' : ''}${djNote(m, preset ? m.style : style)}`);
     live.phase = 'mixing';
     live.mixId = st.id;
   }
@@ -1736,7 +1745,7 @@
   // The blend's EQ and filters on both songs, its toasts and its stretch of the
   // bar (mixStart..mixEnd). The incoming song's are the player's own filters,
   // which the incoming deck feeds too.
-  function blendShape(g, style, t0, D, rate) {
+  function blendShape(g, style, t0, D, rate, preset = presetOn(live.mix, style), skip = 0) {
     const ctx = g.ctx, now = ctx.currentTime, m = live.mix;
     resetPlayerFilters(g);
     // The player's filters shape the incoming song, but at the hand-over the
@@ -1750,8 +1759,8 @@
       to.setValueAtTime(m.swapDb, pre); to.setValueAtTime(m.swapDb, mid - bar / 2); to.linearRampToValueAtTime(0, mid + bar / 2);
       from.setValueAtTime(0, mid - bar / 2); from.linearRampToValueAtTime(m.swapDb, mid + bar / 2);
     };
-    if (presetOn(m, style)) {
-      presetShape(g, m, t0, D, pre);
+    if (preset) {
+      presetShape(g, m, t0, D, pre, skip);
     } else if (m.v2 && style !== 'crossfade') {
       djFilters(g, style, t0, D, pre);
     } else if (style === 'blend') {
@@ -2916,6 +2925,8 @@
       phase: live ? live.phase : amx.state,
       paused: !live && !!g?.video?.paused,
       fromDur: live ? null : st.dur,
+      // the earliest A's mix-out can be moved to now: the playhead plus the planner's lead
+      earliest: !live && g ? (g.video.currentTime - (st.off || 0)) + HAND_LEAD + 0.5 : null,
       pick: pairPicks[pairKey] || null,
       loop: lp ? { state: lp.state, why: lp.why || '' } : null,
       // before the hand-over a pick can still change this mix, and a preview can jump to it
@@ -2928,6 +2939,7 @@
     active: () => !!live,
     overview: overviewSnapshot,
     setPairPick,
+    curveAt,
     // the preview: the playing song jumps to just before its mix
     seekTo: (t) => { if (!live && st) post({ type: 'seek', t: Math.max(0, t) }); },
     // While a blend is running the <video> already plays the next song, but

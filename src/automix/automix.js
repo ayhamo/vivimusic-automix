@@ -389,9 +389,13 @@
       const warnings = [];
       const p = planFor({ fromId, toId, from, to, durationSec, pos, earliest, pick: ov, warnings });
       p.curves = blendCurves(p);
+      // a length the planner didn't use (a hand-over, a drop-in's two bars): why, not "fit here" (editor.md §6)
+      if (ov?.bars && ov.preset !== 'loop' && !warnings.length && (p.handoff || p.bridge || p.fallback || (p.shape === 'dropin' && p.bars !== ov.bars))) {
+        warnings.push(`${ov.bars} bars not used: ${p.reason || 'a plain fade here'}`);
+      }
       if (ov && ov.preset !== 'loop') {
         if (warnings.length) p.warnings = warnings;
-        if (ov.window?.in) p.windowIn = true;   // placed by the user: the kick lock leaves it (editor.md §6)
+        if (ov.window?.in && p.style === 'blend') p.windowIn = true;   // placed by the user: the kick lock leaves it (editor.md §6)
         const pc = !(p.fallback && !(from && to)) && presetCurves(ov, p.durationSec, p.style === 'crossfade' ? null : p.beatSec);
         if (pc) {
           // the preset's gain, shelves and filters; the planner's tempo stays (editor.md §9)
@@ -405,6 +409,7 @@
   }
   // An override as saved (editor.md §1, override.schema.json): Auto fields dropped, null when nothing
   // but Auto is left (Auto is the reset). Picking a preset drops a migrated pick's family.
+  const nudge = (ms) => (Number.isFinite(ms) ? clamp(Math.round(ms / 10) * 10, -2000, 2000) || 0 : 0);
   function normalizeOverride(o) {
     o = migratePick(o);
     if (!o) return null;
@@ -416,14 +421,28 @@
     if (n.preset !== 'loop') {
       if ([2, 4, 8, 16, 32].includes(o.bars)) n.bars = o.bars;
       const pos = (p) => p && Number.isFinite(p.sec) && Number.isInteger(p.bar)
-        ? { bar: p.bar, ...([1, 2, 3].includes(p.beat) ? { beat: p.beat } : {}), ...(p.nudgeMs ? { nudgeMs: clamp(Math.round(p.nudgeMs / 10) * 10, -2000, 2000) } : {}), sec: Math.round(p.sec * 1e3) / 1e3 } : null;
+        ? { bar: p.bar, ...([1, 2, 3].includes(p.beat) ? { beat: p.beat } : {}), ...(nudge(p.nudgeMs) ? { nudgeMs: nudge(p.nudgeMs) } : {}), sec: Math.round(p.sec * 1e3) / 1e3 } : null;
       const w = { out: pos(o.window?.out), in: pos(o.window?.in) };
       if (w.out || w.in) n.window = Object.fromEntries(Object.entries(w).filter(([, v]) => v));
+      // (Loop: the loop decks do their own tempo ramp, editor.md §2)
+      if (['sync', 'glide', 'off'].includes(o.beatMatch)) n.beatMatch = o.beatMatch;
     }
-    if (['sync', 'glide', 'off'].includes(o.beatMatch)) n.beatMatch = o.beatMatch;
     if (!Object.keys(n).length) return null;
     if (o.lock) n.lock = true;
     return { v: 1, ...n, ...(o.engine ? { engine: o.engine } : {}), ...(o.savedAt ? { savedAt: o.savedAt } : {}) };
+  }
+  // The window's limits as the planner clamps them (editor.md §6), in song seconds: A's mix-out from
+  // the earliest it can still start (with the tempo ramp before a blend) to where the window ends with
+  // A's music; B's mix-in from 0 to where the window ends 10 s before B's end. from: A's analysis with
+  // the playing length; earliest: the playhead plus the hand-over lead.
+  function windowLimits(m, from, to, earliest) {
+    const blend = m?.style === 'blend' && m.beatSec > 0 && m.bars > 0;
+    const outSpan = blend ? m.bars * 4 * m.beatSec : m?.durationSec || 0;
+    const inSpan = blend ? outSpan * (m.glide?.q ? 1 / m.glide.q : (m.rate || 1) / (m.outRate || 1)) : outSpan;
+    const dur = from?.durationSec || 0, end = from ? musicEnd(from).durationSec : 0;
+    const lo = Math.max(0, earliest || 0) + (blend ? m.rampSongSec || 0 : 0);
+    const hi = blend ? Math.min(end, dur - 0.3) - outSpan : end - 0.3 - outSpan;
+    return { out: [lo, Math.max(lo, hi)], in: [0, Math.max(0, (to?.durationSec || 0) - 10 - inSpan)] };
   }
   // A song's grid as the editor snaps to it: the playing song's end grid ('out'), the next song's opening ('in')
   function editorGrid(a, side) {
@@ -501,7 +520,10 @@
         return overlap(cur, next, fromGrid, pick, earliest, why, warnings);
       }
     }
-    if (pick?.family === 'filter') return filterMix(cur, next, fromGrid, toGrid && next.gridConfidence >= MIN_GRID_CONFIDENCE ? toGrid : null, requestedBars(cur, next, fromGrid, toGrid?.downbeatSec ?? 0, true), pos, earliest, 'picked in the overview');
+    if (pick?.family === 'filter') {
+      if (pick.window?.out || pick.window?.in) warnings.push("a Filter mix places itself: the saved window isn't used (pick a preset to use it)");
+      return filterMix(cur, next, fromGrid, toGrid && next.gridConfidence >= MIN_GRID_CONFIDENCE ? toGrid : null, requestedBars(cur, next, fromGrid, toGrid?.downbeatSec ?? 0, true), pos, earliest, 'picked in the overview');
+    }
     if (v3 && (!toGrid || next.gridConfidence < MIN_GRID_CONFIDENCE)) return handoff(cur, next, earliest, 'next song has no beat grid');
     if (!toGrid || next.gridConfidence < MIN_GRID_CONFIDENCE) return filterMix(cur, next, fromGrid, null, requestedBars(cur, next, fromGrid, 0, true), pos, earliest, 'next song has no beat grid');
 
@@ -904,7 +926,7 @@
   function kickLock(m, outSide, inSide) {
     const interval = m.beatSec;
     if (m.windowIn) return { none: 'the mix-in was placed in the editor' };
-    if (!kickLockAllowed(m) || !(interval > 0)) return null;
+    if (m.style !== 'blend' || !(interval > 0)) return null;
     const ck = blendClocks(m), context = KICK_CONTEXT_BEATS * interval;
     const outAt = kickOnsets(outSide, ck.out(-context) - 0.05, ck.out(ck.D + context) + 0.05);
     const inAt = kickOnsets(inSide, ck.in(-context) - 0.05, ck.in(ck.D + context) + 0.05);
@@ -1758,7 +1780,7 @@
     kickLock,
     kickSource,
     loopOrBlend,
-    presetCurves, migratePick, normalizeOverride, editorGrid,
+    presetCurves, migratePick, normalizeOverride, editorGrid, windowLimits,
     resolveWindow,
     PRESET_LANES,
     PRESET_BARS,

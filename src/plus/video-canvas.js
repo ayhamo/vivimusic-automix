@@ -16,9 +16,9 @@
   let n = 0;
   let enabled = true;
 
-  const ask = (msg) => new Promise((resolve) => {
+  const ask = (msg, ms = WAIT_MS) => new Promise((resolve) => {
     const reqId = 'vcq' + (++n);
-    const t = setTimeout(() => { waiting.delete(reqId); resolve({ ok: false, why: 'no answer in 30 s' }); }, WAIT_MS);
+    const t = setTimeout(() => { waiting.delete(reqId); resolve({ ok: false, why: `no answer in ${ms / 1000} s` }); }, ms);
     waiting.set(reqId, (m) => { clearTimeout(t); resolve(m); });
     window.postMessage({ ch: CHANNEL, dir: 'in', reqId, ...msg }, window.location.origin);
   });
@@ -65,8 +65,13 @@
 
   // the clip's blob URL for the playing song, or null (no music video, or turned off)
   window.__viviVideoCanvas = async (track) => {
-    if (!enabled || !track?.videoId || !track.song) return null;
-    if (none.has(track.videoId)) return null;
+    if (!track?.videoId || !track.song) return null;
+    if (!enabled || none.has(track.videoId)) {
+      // no lookup, but the Spotify match still gets the song's length (the player's, by id)
+      const r = await ask({ op: 'length', id: track.videoId }, 2000);   // (a read, never a download)
+      if (r?.songSec > 0) track.lengthSec = r.songSec;
+      return null;
+    }
     const r = await ask({ op: 'find', id: track.videoId, title: track.song, artist: track.artist || '', album: track.album || '' });
     // the song's length by its id (the player's, not a <video> that may still hold the last song): for the Spotify match
     if (r?.songSec > 0) track.lengthSec = r.songSec;

@@ -1485,6 +1485,7 @@
       if (d.op === 'fetch') relayAnswer(d);
       // (songSec: the song's length, read while it plays that song; content.js passes it on to the Spotify match)
       else if (d.op === 'find') { const songSec = Number(d.durationSec) || playingLength(String(d.id || '')); say({ ...(await find(d)), songSec }); }
+      else if (d.op === 'length') say({ reqId: d.reqId, ok: true, songSec: playingLength(String(d.id || '')) });
       else if (d.op === 'prefetch') { prefetch(d.ids); say({ reqId: d.reqId, ok: true }); }
       else if (d.op === 'clear') { await clearAll(); say({ reqId: d.reqId, ok: true }); }
     } catch (err) {

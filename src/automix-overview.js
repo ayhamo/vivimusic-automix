@@ -20,7 +20,7 @@
   'use strict';
   if (window.__viviAutomixOverview) return;
 
-  const COLORS = { low: '#2E45E6', mid: '#E08B35', high: '#F1DDC4', frame: '#3A9BDC', fader: '#F2C230' };
+  const COLORS = { low: '#2E45E6', mid: '#E08B35', high: '#F1DDC4', frame: '#3A9BDC' };
   const OUTSIDE_ALPHA = 0.32;      // audio outside the mix
   const BANDS = ['low', 'mid', 'high'];
   const FR = 40;                   // waveform columns per second of song
@@ -34,7 +34,7 @@
     eq: [['centerBassSwap', 'Bass swap at the centre'], ['endBassSwap', 'Bass swap at the end'], ['threeBandFade', 'Three-band fade'], ['quickBassCut', 'Quick bass cut'], ['none', 'None']],
     effect: [['none', 'None'], ['lpOut', 'Low-pass out'], ['hpIn', 'High-pass in'], ['lpBoth', 'Low-pass both'], ['hpBoth', 'High-pass both'], ['lpInHpOut', 'Low-pass in, high-pass out']],
   };
-  const LANE_COLORS = { volume: '#4C8DFF', eq: '#F5C542', effect: '#A779FF', rate: '#9AA0A6' };
+  const LANE_COLORS = { volume: '#4C8DFF', eq: '#F5C542', effect: '#A779FF' };
   const NUDGE_MS = 10, NUDGE_MAX_MS = 2000;
 
   const xf = () => window.__viviCrossfade;
@@ -159,7 +159,7 @@
 
   // ───────── the dialog ─────────
   let ui = null;   // { root, card, canvas, ... } while open
-  let frame = 0, sig = '', staticLayer = null, songsSig = '';
+  let frame = 0, sig = '', staticLayer = null, songsSig = '', drawnShape = null;
 
   function open() {
     if (ui) return;
@@ -265,6 +265,7 @@
     if (!ui) return;
     const root = ui.root;
     ui = null;
+    drag = null;   // (a drag the Esc key cut short is dropped, not saved)
     cancelAnimationFrame(frame);
     frame = 0;
     document.removeEventListener('keydown', onKey, true);
@@ -301,7 +302,7 @@
     const next = { ...(A().migratePick(s.pick) || {}), ...change };
     if ('preset' in change) delete next.family;
     if (next.preset !== 'custom') delete next.lanes;
-    if (next.preset === 'loop') { delete next.bars; delete next.window; }
+    if (next.preset === 'loop') { delete next.bars; delete next.window; delete next.beatMatch; }
     if (!next.bars) delete next.bars;
     if (!next.window) delete next.window;
     const r = xf().setPairPick(s.pairKey, next);
@@ -327,7 +328,7 @@
   // Each song is dragged under the mix's frame: its lane (top: the playing song, A; bottom: the
   // next, B) moves, and the song second at the frame's start is that song's mix-out or mix-in.
   // Snapped to that song's downbeats (beats with Shift), not at all with beat match Off.
-  let drag = null;   // { side, x0, base, sec, s, w, span, beats }
+  let drag = null;   // { side, x0, base, sec, pos, s, w, span, limit }
   const fmtSec = (t) => { t = Math.max(0, t); const m = Math.floor(t / 60); return `${m}:${(t - m * 60).toFixed(1).padStart(4, '0')}`; };
   function gridFor(s, side) { return A().editorGrid?.(A().get(side === 'out' ? s.fromId : s.toId), side) || null; }
   // a song second as a saved position: { bar, beat?, nudgeMs?, sec } on that song's grid
@@ -361,16 +362,35 @@
     ui.canvas.setPointerCapture(e.pointerId);
     e.preventDefault();
   }
+  // the limits a drag stops at (the planner's, automix.js windowLimits) and what each one means
+  function limitsOf(s, side) {
+    const a = A().get(s.fromId);
+    const from = a ? { ...a, durationSec: s.fromDur || a.durationSec } : null;
+    return A().windowLimits(s.mix, from, A().get(s.toId), s.earliest)[side];
+  }
+  const LIMIT_WHY = {
+    out: ['A has already played up to there', "the window has to end before A's music does"],
+    in: ["that is B's start", "the window has to end 10 s before B's end"],
+  };
   function dragMove(e) {
     if (!drag) return;
+    if (!(e.buttons & 1)) { drag = null; sig = ''; return; }   // released where we didn't hear it
     const s = drag.s, ov = A().migratePick(s.pick);
     // the song moves with the pointer: what was left of the frame comes under it
-    let sec = drag.base - ((e.clientX - drag.x0) / drag.w) * drag.span;
-    const dur = drag.side === 'out' ? s.fromDur || A().get(s.fromId)?.durationSec || 0 : A().get(s.toId)?.durationSec || 0;
-    sec = Math.max(0, Math.min(sec, Math.max(0, dur - s.D - (drag.side === 'in' ? 10 : 0.3))));
-    const grid = gridFor(s, drag.side);
-    drag.pos = positionOf(sec, grid, ov?.beatMatch !== 'off', e.shiftKey);
-    drag.sec = drag.pos.sec;
+    const want = drag.base - ((e.clientX - drag.x0) / drag.w) * drag.span;
+    const [lo, hi] = limitsOf(s, drag.side);
+    const sec = Math.max(lo, Math.min(want, hi));
+    const grid = gridFor(s, drag.side), snap = ov?.beatMatch !== 'off';
+    let pos = positionOf(sec, grid, snap, e.shiftKey);
+    // a snap past a limit: the nearest step inside it
+    if (snap && grid && (pos.sec < lo - 1e-6 || pos.sec > hi + 1e-6)) {
+      const step = grid.beatSec * (e.shiftKey ? 1 : 4);
+      const inside = positionOf(pos.sec + (pos.sec < lo ? step : -step), grid, snap, e.shiftKey);
+      if (inside.sec >= lo - 1e-6 && inside.sec <= hi + 1e-6) pos = inside;
+    }
+    drag.pos = pos;
+    drag.sec = pos.sec;
+    drag.limit = want < lo - 0.01 ? LIMIT_WHY[drag.side][0] : want > hi + 0.01 ? LIMIT_WHY[drag.side][1] : null;
     sig = '';
   }
   // A window edit of one side (editor.md §6): the other side is saved too, where the plan has it
@@ -456,6 +476,7 @@
     draw(s);
   }
 
+  const setIf = (node, key, v) => { if (node[key] !== v) node[key] = v; };
   function setControls(s) {
     const { presetRow, custom, laneSel, matchRow, barsRow, nudgeBtns, winReset, preview, lock, reset, badge, note } = ui;
     const ov = A()?.migratePick?.(s?.pick) || {};
@@ -466,8 +487,8 @@
     for (const b of presetRow.chips) {
       mark(b, b.dataset.v === preset);
       b.disabled = !s?.toId || (b.dataset.v === 'loop' && loopNone);
-      b.title = b.dataset.v === 'loop' && loopNone ? `No loop mix for these two: ${s.loop.why}` : '';
-      if (b.dataset.v === 'auto') b.textContent = preset === 'auto' ? autoName(s?.mix) : 'Auto';
+      setIf(b, 'title', b.dataset.v === 'loop' && loopNone ? `No loop mix for these two: ${s.loop.why}` : '');
+      if (b.dataset.v === 'auto') setIf(b, 'textContent', preset === 'auto' ? autoName(s?.mix) : 'Auto');
     }
     // (Auto: Smooth's, the lanes a first change starts from: lanesNow)
     const lanes = preset === 'loop' ? null : preset === 'custom' && ov.lanes ? ov.lanes : A()?.PRESET_LANES?.[preset] || A()?.PRESET_LANES?.smooth || null;
@@ -483,7 +504,7 @@
       const v = Number(b.dataset.v);
       mark(b, v === (ov.bars || 0));
       b.disabled = !s?.toId || (isLoop && v !== 0);
-      b.title = b.disabled && v !== 0 && s?.toId ? 'A loop mix sets its own length' : '';
+      setIf(b, 'title', b.disabled && v !== 0 && s?.toId ? 'A loop mix sets its own length' : '');
     }
     const winOn = windowEditable(s);
     for (const b of nudgeBtns) b.disabled = !winOn;
@@ -492,18 +513,18 @@
     lock.disabled = !has;
     lock.setAttribute('aria-pressed', String(!!ov.lock));
     lock.classList.toggle('vivi-on', !!ov.lock);
-    lock.textContent = ov.lock ? 'Locked' : 'Lock';
+    setIf(lock, 'textContent', ov.lock ? 'Locked' : 'Lock');
     reset.disabled = !has;
     badge.hidden = !has || (!ov.preset && !ov.lanes && !ov.window && !ov.beatMatch && !ov.bars);
     const left = s && s.editable && s.at != null ? -s.at : null;
     preview.disabled = !s?.editable || !(s.previewAt > 0) || left == null || left < 25;
-    preview.title = preview.disabled ? '' : 'Jump to just before the mix';
+    setIf(preview, 'title', preview.disabled ? '' : 'Jump to just before the mix');
     const m = s?.mix;
     let n = '';
     if (!s) n = '';
     else if (drag?.pos) {
       const other = drag.side === 'out' ? positionOf(m.mixInTrackTime, gridFor(s, 'in'), false, false) : positionOf(m.mixOutTrackTime, gridFor(s, 'out'), false, false);
-      n = drag.side === 'out' ? readout(s, drag.pos, other) : readout(s, other, drag.pos);
+      n = (drag.side === 'out' ? readout(s, drag.pos, other) : readout(s, other, drag.pos)) + (drag.limit ? ` · held: ${drag.limit}` : '');
     } else if (refused?.pair === s.pairKey) n = refused.text;
     else if (!s.editable) n = 'Mixing now: an edit is for the next time these two play.';
     else if (preset === 'loop' && m.style !== 'loop') n = loopNone ? `No loop mix for these two: ${s.loop.why}` : 'Preparing the loop mix…';
@@ -563,8 +584,11 @@
     const t0 = -pad, t1 = s.D + pad;
     const m = s.mix;
     const want = [s.pairKey, m.style, m.mixOutTrackTime.toFixed(2), m.mixInTrackTime.toFixed(2), s.D.toFixed(2), m.bars, cv.width, cv.height].join('|');
-    if (want !== sig || !staticLayer) {
+    // (s.gOut / s.x: the engine's shape of this plan, made once per plan: a replan is a new one)
+    const shape = s.x || s.gOut || s.mix;
+    if (want !== sig || !staticLayer || shape !== drawnShape) {
       sig = want;
+      drawnShape = shape;
       staticLayer = drawStatic(s, w, h, dpr, t0, t1);
     }
     const g = cv.getContext('2d');
@@ -656,17 +680,7 @@
     // filters (log Hz: 20 Hz at the bottom, 20 kHz at the top, as the opening of each song's filter)
     const c = s.mix.curves;
     if (c && s.mix.style !== 'loop') {
-      const at = (pts, t, geo) => {
-        if (t <= pts[0][0]) return pts[0][1];
-        for (let i = 1; i < pts.length; i++) {
-          const [a0, va] = pts[i - 1], [b0, vb] = pts[i];
-          if (t > b0) continue;
-          if (b0 - a0 < 1e-9) return vb;
-          const x = (t - a0) / (b0 - a0);
-          return geo ? va * Math.pow(vb / va, x) : va + (vb - va) * x;
-        }
-        return pts[pts.length - 1][1];
-      };
+      const at = xf().curveAt;
       const lane = (pts, k, color, geo, toY) => {
         if (!pts?.length) return;
         const y0 = top[k] + 2, span = laneH - 6;

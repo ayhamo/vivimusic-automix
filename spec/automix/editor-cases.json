@@ -2114,6 +2114,79 @@
     "kickLock": false,
     "warnings": []
    }
+  },
+  {
+   "name": "a Filter pick from before the editor with a saved window: the window is said to be unused",
+   "engine": 3,
+   "out": {
+    "bpm": 120,
+    "sec": 200,
+    "downbeatSec": 0.4
+   },
+   "in": {
+    "bpm": 120,
+    "sec": 200,
+    "downbeatSec": 0.4
+   },
+   "pos": 20,
+   "override": {
+    "v": 1,
+    "preset": "auto",
+    "family": "filter",
+    "window": {
+     "out": {
+      "bar": 80,
+      "sec": 160.4
+     },
+     "in": {
+      "bar": 8,
+      "sec": 16.4
+     }
+    }
+   },
+   "expect": {
+    "style": "filter",
+    "bars": 4,
+    "durationSec": 8,
+    "mixOutTrackTime": 188.4,
+    "mixInTrackTime": 0.4,
+    "glide": false,
+    "kickLock": false,
+    "warnings": [
+     "a Filter mix places itself: the saved window isn't used (pick a preset to use it)"
+    ]
+   }
+  },
+  {
+   "name": "a length alone on a pair with no intro (v2): the drop-in, with why the length is not used",
+   "engine": 3,
+   "out": {
+    "bpm": 120,
+    "sec": 200,
+    "downbeatSec": 0.4
+   },
+   "in": {
+    "bpm": 120,
+    "sec": 200,
+    "downbeatSec": 0.4
+   },
+   "pos": 20,
+   "override": {
+    "v": 1,
+    "bars": 16
+   },
+   "expect": {
+    "style": "blend",
+    "bars": 2,
+    "durationSec": 4,
+    "mixOutTrackTime": 192.4,
+    "mixInTrackTime": 0.4,
+    "glide": false,
+    "kickLock": true,
+    "warnings": [
+     "16 bars not used: no intro in the next song to blend over: a drop-in on the next song's first beat"
+    ]
+   }
   }
  ]
 }
