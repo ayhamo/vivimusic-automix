@@ -7254,5 +7254,155 @@
         "otherSearches": 1
       }
     }
+  ],
+  "snap": [
+    {
+      "name": "a lyric line just before (Prism's test)",
+      "input": {
+        "targetMs": 43000,
+        "lineStarts": [
+          20000,
+          42000,
+          50000
+        ],
+        "tempo": null
+      },
+      "expect": 41750
+    },
+    {
+      "name": "a line just after is taken too (Prism's test)",
+      "input": {
+        "targetMs": 43000,
+        "lineStarts": [
+          20000,
+          44000
+        ],
+        "tempo": null
+      },
+      "expect": 43750
+    },
+    {
+      "name": "no line near: the bar before on a steady grid (Prism's test)",
+      "input": {
+        "targetMs": 43000,
+        "lineStarts": [],
+        "tempo": {
+          "bpm": 120,
+          "steady": true,
+          "firstBeatMs": 500
+        }
+      },
+      "expect": 42500
+    },
+    {
+      "name": "no line, no grid: a second before (Prism's test)",
+      "input": {
+        "targetMs": 43000,
+        "lineStarts": [],
+        "tempo": null
+      },
+      "expect": 42000
+    },
+    {
+      "name": "a line after counts 1500 farther",
+      "input": {
+        "targetMs": 43000,
+        "lineStarts": [
+          41000,
+          44000
+        ],
+        "tempo": null
+      },
+      "expect": 40750
+    },
+    {
+      "name": "a line 4.5 s before is too far: a second before",
+      "input": {
+        "targetMs": 43000,
+        "lineStarts": [
+          38500
+        ],
+        "tempo": null
+      },
+      "expect": 42000
+    },
+    {
+      "name": "an unsteady grid is not used",
+      "input": {
+        "targetMs": 43000,
+        "lineStarts": [],
+        "tempo": {
+          "bpm": 120,
+          "steady": false,
+          "firstBeatMs": 500
+        }
+      },
+      "expect": 42000
+    },
+    {
+      "name": "never below 0",
+      "input": {
+        "targetMs": 500,
+        "lineStarts": [],
+        "tempo": null
+      },
+      "expect": 0
+    }
+  ],
+  "bestPartButton": [
+    {
+      "name": "early in the song, the part ahead",
+      "input": {
+        "atMs": 10000,
+        "startMs": 60000,
+        "knownAtMs": 0
+      },
+      "expect": true
+    },
+    {
+      "name": "past 30 s, known at the start",
+      "input": {
+        "atMs": 31000,
+        "startMs": 60000,
+        "knownAtMs": 0
+      },
+      "expect": false
+    },
+    {
+      "name": "known late: 15 s from then",
+      "input": {
+        "atMs": 40000,
+        "startMs": 90000,
+        "knownAtMs": 28000
+      },
+      "expect": true
+    },
+    {
+      "name": "never after 45 s",
+      "input": {
+        "atMs": 46000,
+        "startMs": 90000,
+        "knownAtMs": 40000
+      },
+      "expect": false
+    },
+    {
+      "name": "less than 3 s ahead: gone",
+      "input": {
+        "atMs": 57500,
+        "startMs": 60000,
+        "knownAtMs": 50000
+      },
+      "expect": false
+    },
+    {
+      "name": "exactly 3 s ahead: gone",
+      "input": {
+        "atMs": 27000,
+        "startMs": 30000,
+        "knownAtMs": 0
+      },
+      "expect": false
+    }
   ]
 }

@@ -89,6 +89,7 @@
           { "item": "src/plus/canvas-settings.js", "after": "src/music-only.js" },
           { "item": "src/plus/video-canvas.js", "after": "src/plus/canvas-settings.js" },
           { "item": "src/plus/apple-artist-header.js", "after": "src/plus/video-canvas.js" },
+          { "item": "src/plus/best-part.js", "after": "src/plus/apple-artist-header.js" },
           { "item": "src/plus/content-plus.js", "before": "src/content.js" }
         ]
       },

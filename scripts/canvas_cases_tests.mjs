@@ -198,6 +198,9 @@ await run('clipFind', async (c) => {
   const r = await V.findOn(net, song);
   return { videoId: r.ok ? r.id : null, why: r.ok ? null : r.why, otherSearches };
 });
+// §14: the best part's snap and its button
+await run('snap', (c) => V.snap(c.input.targetMs, c.input.lineStarts, c.input.tempo));
+await run('bestPartButton', (c) => V.bestPartShows(c.input.atMs, c.input.startMs, c.input.knownAtMs));
 // the chorus from synced lyrics (§6 rule 11)
 await run('chorus', (c) => V.chorusMs(c.input.lines, c.input.durationMs));
 // the stored source order and sources on, and Apple's variant pick (src/plus/canvas-settings.js)

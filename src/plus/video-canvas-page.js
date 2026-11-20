@@ -13,6 +13,8 @@
  *        { op:'prefetch', reqId?, ids:[{ id, title, artist, album, durationSec }] }
  *        { op:'clear', reqId? }
  *        { op:'chorus', id, lines:[{ start, text }], durationSec? }   (the song's synced lyrics, for §6 rule 11)
+ *        { op:'bestpart', reqId, id, durationSec? } -> { reqId, ok, startMs|null, from }   (§14; when the lyrics come
+ *        later, { type:'bestpart', id, startMs, from } is sent unasked)
  *        { op:'fetch', rid, ok, status, bytes, why }   (relay answer, see below)
  *   out: { reqId, ok:true, blobUrl, videoId, width, height, startSec, lenSec, crop?, from }
  *        { reqId, ok:false, why }
@@ -260,6 +262,35 @@
       return out;
     }
     return null;
+  }
+
+  // ═════════════════════════════ the best part (Prism's BestParts, canvas.md §14) ═════════════════════════════
+
+  /**
+   * Pulls [targetMs] back to a natural start (Prism's BestPart.snap, §14 rule 2): the nearest lyric line from 4 s before
+   * to 1.5 s after (a line after counts 1.5 s farther), 250 ms before it; else the bar before it on a steady beat grid
+   * (tempo { bpm, steady, firstBeatMs }); else a second before.
+   */
+  function snap(targetMs, lineStarts, tempo) {
+    let best = null, bestCost = Infinity;
+    for (const t of Array.isArray(lineStarts) ? lineStarts : []) {
+      if (!(t >= targetMs - 4000 && t <= targetMs + 1500)) continue;
+      const cost = Math.abs(t - targetMs) + (t > targetMs ? 1500 : 0);
+      if (cost < bestCost) { best = t; bestCost = cost; }
+    }
+    if (best != null) return Math.max(0, best - 250);
+    if (tempo && tempo.bpm > 0 && tempo.steady && tempo.firstBeatMs >= 0) {
+      const bar = 4 * 60000 / tempo.bpm;
+      const bars = Math.trunc((targetMs - tempo.firstBeatMs) / bar);
+      if (bars >= 0) return Math.trunc(tempo.firstBeatMs + bars * bar);
+    }
+    return Math.max(0, targetMs - 1000);
+  }
+
+  /** Whether the Best part button is up (§14 rule 3, Prism's BestPartButton.shows). */
+  function bestPartShows(atMs, startMs, knownAtMs) {
+    const until = Math.min(Math.max(30000, knownAtMs + 15000), 45000);
+    return atMs < until && atMs < startMs - 3000;
   }
 
   // ═════════════════════════════ the gate (Prism's ClipGate, ClipFinder.findOn; canvas.md §5 rules 7-11) ═════════════════════════════
@@ -942,7 +973,7 @@
   const core = {
     CLIP_SEC, W, H, NEVER, OTHER_TAKE,
     norm, artists, officialChannel, titleCore, matches, searchResults, pickFormat,
-    heatmapOf, partStart, chorusMs, noFrames, pick, titleSays, findOn,
+    heatmapOf, partStart, chorusMs, noFrames, pick, titleSays, findOn, snap, bestPartShows,
     grid, bars, area, diff, still, windows, choose, runnersUp, judge, cropX, change, cuts, flashing, end: loopEnd, cropRect,
     storyboardPlan, parseSidx, sidxRange, readBoxes, parseInit, parseSamples, selectSamples, buildClip,
   };
@@ -1554,11 +1585,28 @@
 
   // the chorus per song id, from the lyrics the content side saw (op 'chorus'); read by clip()
   const chorusOf = new Map();
+  const linesOf = new Map();   // song id -> its lyric lines' starts (ms), for the best part's snap
   function setChorus(id, lines, durationSec) {
     if (!id) return;
     const ms = chorusMs(lines, Math.round((durationSec || 0) * 1000));
     if (ms == null) chorusOf.delete(id); else chorusOf.set(id, ms);
     if (chorusOf.size > 50) chorusOf.delete(chorusOf.keys().next().value);
+    linesOf.set(id, (Array.isArray(lines) ? lines : []).map((l) => Number(l && (l.timeMs ?? l.start))).filter((t) => Number.isFinite(t) && t >= 0));
+    if (linesOf.size > 50) linesOf.delete(linesOf.keys().next().value);
+    // the best part asked for this song already: now it can start at a lyric line, or come from the chorus
+    if (id === bestAsked) bestPartOf(id, durationSec, false).then((r) => say({ type: 'bestpart', id, ...r })).catch(() => {});
+  }
+
+  // §14 rule 1: the song's most replayed stretch, else its chorus, snapped (no beat grid on the PC). [fetch]: ask for the curve.
+  let bestAsked = '';
+  async function bestPartOf(id, durationSec, fetch) {
+    if (notASongNow(id)) return { startMs: null, from: 'not a song' };
+    const dur = Number(durationSec) || playingLength(id);
+    const heat = fetch ? await heatmap(id) : (heats.get(id) ?? null);
+    const peak = heat == null ? null : partStart(heat, dur);
+    const raw = peak != null ? Math.round(peak * 1000) : (chorusOf.get(id) ?? null);
+    if (raw == null) return { startMs: null, from: 'none' };
+    return { startMs: snap(raw, linesOf.get(id) || [], null), from: peak != null ? 'most replayed' : 'chorus' };
   }
 
   // §5 rule 7: a podcast episode, an upload or a live stream is not a song (read while the player has it; else unknown)
@@ -1652,6 +1700,7 @@
       // (songSec: the song's length, read while it plays that song; content.js passes it on to the Spotify match)
       else if (d.op === 'find') { const songSec = Number(d.durationSec) || playingLength(String(d.id || '')); say({ ...(await find(d)), songSec }); }
       else if (d.op === 'chorus') { setChorus(String(d.id || ''), d.lines, Number(d.durationSec) || playingLength(String(d.id || ''))); }
+      else if (d.op === 'bestpart') { bestAsked = String(d.id || ''); say({ reqId: d.reqId, ok: true, ...(await bestPartOf(bestAsked, d.durationSec, true)) }); }
       else if (d.op === 'length') say({ reqId: d.reqId, ok: true, songSec: playingLength(String(d.id || '')) });
       else if (d.op === 'prefetch') { prefetch(d.ids); say({ reqId: d.reqId, ok: true }); }
       else if (d.op === 'clear') { await clearAll(); say({ reqId: d.reqId, ok: true }); }

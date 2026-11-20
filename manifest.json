@@ -158,6 +158,7 @@
         "src/plus/canvas-settings.js",
         "src/plus/video-canvas.js",
         "src/plus/apple-artist-header.js",
+        "src/plus/best-part.js",
         "src/vendor/hls.min.js",
         "src/fullscreen-mode.js",
         "src/plus/content-plus.js",
