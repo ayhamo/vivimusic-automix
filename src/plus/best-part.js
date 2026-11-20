@@ -15,8 +15,14 @@
   let cur = null;       // { id, auto, from, knownAtMs }
   let seq = 0;
 
-  chrome.storage.local.get({ [MINE]: {} }).then((s) => { mine = s[MINE] || {}; }).catch(() => {});
-  chrome.storage.onChanged.addListener((ch, area) => { if (area === 'local' && ch[MINE]) mine = ch[MINE].newValue || {}; });
+  // §14 rule 8: the Best part button setting (storage.local bestPartButton, on by default); off hides only the button
+  let buttonOn = true;
+  chrome.storage.local.get({ [MINE]: {}, bestPartButton: true }).then((s) => { mine = s[MINE] || {}; buttonOn = s.bestPartButton !== false; }).catch(() => {});
+  chrome.storage.onChanged.addListener((ch, area) => {
+    if (area !== 'local') return;
+    if (ch[MINE]) mine = ch[MINE].newValue || {};
+    if (ch.bestPartButton) buttonOn = ch.bestPartButton.newValue !== false;
+  });
 
   const video = () => document.querySelector('video');
   const songId = () => new URLSearchParams(location.search).get('v') || '';
@@ -108,7 +114,7 @@
     const bar = document.querySelector('ytmusic-player-bar');
     const s = startMs(), d = durMs(), at = posMs();
     const b = button();
-    const up = !!bar && s != null && d > 0 && shows(at, s, cur?.knownAtMs ?? 0) && !editor;
+    const up = buttonOn && !!bar && s != null && d > 0 && shows(at, s, cur?.knownAtMs ?? 0) && !editor;
     if (up) {
       const r = bar.getBoundingClientRect();
       b.style.left = (r.left + r.width / 2) + 'px';
@@ -125,11 +131,13 @@
       if (!mark) {
         mark = document.createElement('div');
         mark.className = 'vivi-best-mark';
+        // a right-click on the mark opens Your best part too (the only way in with the button off, rule 8)
+        mark.addEventListener('contextmenu', (e) => { e.preventDefault(); e.stopPropagation(); openEditor(); });
         if (getComputedStyle(slider).position === 'static') slider.style.position = 'relative';
         slider.append(mark);
       }
       mark.style.left = (frac * 100) + '%';
-      mark.title = (own() != null ? 'Your best part ' : 'Best part ') + fmt(s);
+      mark.title = (own() != null ? 'Your best part ' : 'Best part ') + fmt(s) + ' (right-click: set your own)';
     } else mark?.remove();
   }
 

@@ -1689,7 +1689,7 @@
   }
 
   // lyrics.md §11.2: YouTube's captions for the song playing, as lyric lines. The track in the listener's language
-  // first, else the first; at most 8 tracks looked at; read as json3 from this origin (with the listener's session).
+  // first, else the first; at most 8 tracks looked at; read as json3 (with the listener's session).
   async function captionsOf(id, lang) {
     const p = document.getElementById('movie_player');
     const r = p && p.getPlayerResponse && p.getPlayerResponse();
@@ -1699,16 +1699,15 @@
     const own = tracks.find((t) => String(t.languageCode || '').split('-')[0].toLowerCase() === base);
     for (const t of own ? [own, ...tracks.filter((x) => x !== own)] : tracks) {
       try {
-        const u = new URL(t.baseUrl, location.origin);
-        const url = location.origin + u.pathname + u.search;
-        const q = new URL(url); q.searchParams.set('fmt', 'json3');
+        // as given (www.youtube.com answers this origin; music.youtube.com's /api/timedtext is the app's page)
+        const q = new URL(t.baseUrl, 'https://www.youtube.com'); q.searchParams.set('fmt', 'json3');
         const res = await fetch(q.href, { credentials: 'include' });
         const text = res.ok ? await res.text() : '';
         if (!text) continue;
         const lines = [];
         for (const ev of JSON.parse(text).events || []) {
           if (!Array.isArray(ev.segs) || ev.aAppend) continue;
-          const words = ev.segs.map((s) => s.utf8 || '').join('').replace(/\s+/g, ' ').trim();
+          const words = ev.segs.map((s) => s.utf8 || '').join('').replace(/[♪♫]/g, ' ').replace(/\s+/g, ' ').trim();
           if (!words || /^[\s♪♫\[\]()]*$/.test(words)) continue;
           const start = Number(ev.tStartMs) || 0;
           lines.push({ start, end: start + (Number(ev.dDurationMs) || 3000), text: words });

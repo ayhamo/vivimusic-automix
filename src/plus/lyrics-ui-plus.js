@@ -448,9 +448,10 @@
   const MARK = (i) => '\uE000' + String(i).padStart(4, '0') + '\uE001';
   async function translateBatch(texts, tl) {
     const body = new URLSearchParams({ client: 'dict-chrome-ex', sl: 'auto', tl, dt: 't', q: texts.map((x, i) => (i ? '\n' + MARK(i) + '\n' : '') + x).join('') });
-    const res = await fetch('https://translate.googleapis.com/translate_a/single', { method: 'POST', body, credentials: 'omit' });
-    if (!res.ok) return null;
-    const root = await res.json();
+    // through the background: a content script's own request to Google doesn't get through in Firefox
+    const res = await chrome.runtime.sendMessage({ type: 'VIVI_TRANSLATE', body: body.toString() });
+    if (!res?.ok || !res.body) return null;
+    const root = JSON.parse(res.body);
     const out = (root[0] || []).map((seg) => (seg && seg[0]) || '').join('').split(/\uE000[^\uE001]*\uE001/).map((x) => x.trim());
     return out.length === texts.length && out.every(Boolean) ? { out, src: String(root[2] || '') } : null;
   }

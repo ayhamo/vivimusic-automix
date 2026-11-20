@@ -318,6 +318,11 @@
       </select>
     </div>
     <p class="theme-sub">Clips: the best part of the music video, looped. Full video: the whole video, muted.</p>
+    <div class="row" style="margin-top:10px;">
+      <span class="row-label">Best part button</span>
+      <label class="switch small"><input type="checkbox" id="bestPartButtonToggle" checked/><span class="slider"></span></label>
+    </div>
+    <p class="theme-sub">A button above the player bar early in a song that jumps to the part people replay most. Off, the mark on the seek bar stays: right-click it to set your own best part.</p>
 `, rowOrNote('spotifyCanvasEnabled'), 'afterend');
 
     place(`    <div class="row" style="margin-top:10px;">
@@ -349,6 +354,9 @@
     const appleMaster = document.getElementById('enableToggle');
     const vq = document.getElementById('videoCanvasQuality');
     const vm = document.getElementById('videoCanvasMode');
+    const bpb = document.getElementById('bestPartButtonToggle');   // §14 rule 8
+    chrome.storage.local.get({ bestPartButton: true }, (s) => { bpb.checked = s.bestPartButton !== false; });
+    bpb.addEventListener('change', () => chrome.storage.local.set({ bestPartButton: bpb.checked }));
     const aq = document.getElementById('appleCoverQuality');
     let set = CS.read({});
     // the master switches as stored (upstream's popup.js fills the checkboxes later, without a change event)

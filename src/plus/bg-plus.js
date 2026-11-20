@@ -373,6 +373,15 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       .catch((e) => sendResponse({ ok: false, error: String(e?.message || e) }));
     return true;
   }
+  if (msg?.type === 'VIVI_TRANSLATE') {
+    // lyrics.md §10: Google's keyless endpoint (it answers any origin)
+    if (typeof msg.body !== 'string' || msg.body.length > 20000) { sendResponse({ ok: false }); return undefined; }
+    fetch('https://translate.googleapis.com/translate_a/single', { method: 'POST', body: new URLSearchParams(msg.body), credentials: 'omit' })
+      .then((r) => (r.ok ? r.text() : null))
+      .then((body) => sendResponse({ ok: !!body, body: body || null }))
+      .catch((e) => sendResponse({ ok: false, error: String(e?.message || e) }));
+    return true;
+  }
   if (msg?.type === 'VIVI_SIMPMUSIC_LYRICS') {
     // lyrics.md §11.1: SimpMusic answers its own clients only (by the User-Agent) and sends no CORS header
     const id = String(msg.videoId || '');
