@@ -297,9 +297,59 @@
     wrap.append(song.row, all.row);
   }
 
+  // ── lyrics.md §4: auto-scroll (setting lyricsAutoScroll, on by default). A drag, a wheel or a trackpad scroll over
+  // the lyrics stops following; it comes back on the "Follow lyrics" button, a click on a line, or new lyrics. ──
+  let autoScroll = true, paused = false, pausedPanel = null, lastActive = null, scrollFn = null, followBtn = null;
+  try {
+    chrome.storage.local.get({ lyricsAutoScroll: true }).then((s) => { autoScroll = s.lyricsAutoScroll !== false; }).catch(() => {});
+    chrome.storage.onChanged.addListener((ch, area) => { if (area === 'local' && ch.lyricsAutoScroll) autoScroll = ch.lyricsAutoScroll.newValue !== false; });
+  } catch { /* following stays on */ }
+  const lyricsPanel = () => document.getElementById('vivi-lyrics-panel');
+  const inLyrics = (target) => { const p = lyricsPanel(); return !!(p && target instanceof Node && (p.contains(target) || target.contains?.(p))); };
+  function setFollowButton(show) {
+    if (!show) { followBtn?.remove(); followBtn = null; return; }
+    const p = lyricsPanel();
+    if (!p || followBtn?.isConnected) return;
+    followBtn = document.createElement('button');
+    followBtn.type = 'button';
+    followBtn.className = 'vivi-lyrics-follow-btn';
+    followBtn.textContent = 'Follow lyrics';
+    followBtn.style.cssText = 'position:sticky;bottom:12px;display:block;margin:8px auto 0;z-index:5;padding:6px 14px;border-radius:999px;'
+      + 'border:1px solid rgba(255,255,255,.3);background:rgba(20,20,20,.85);color:#fff;font:500 13px Roboto,Arial,sans-serif;cursor:pointer;';
+    followBtn.addEventListener('click', (e) => { e.stopPropagation(); follow(true); });
+    p.append(followBtn);
+  }
+  function pause() {
+    if (paused || !lyricsPanel()) return;
+    paused = true; pausedPanel = lyricsPanel();
+    setFollowButton(true);
+  }
+  function follow(scrollNow) {
+    paused = false; pausedPanel = null;
+    setFollowButton(false);
+    if (scrollNow && lastActive?.isConnected && scrollFn) scrollFn(lastActive);
+  }
+  /** True while following is off: lyrics-ui.js then leaves the view where the listener put it. */
+  function followPaused(active, scroll) {
+    lastActive = active; scrollFn = scroll;
+    if (paused && pausedPanel !== lyricsPanel()) follow(false);   // the lyrics were shown again
+    if (paused && followBtn && !followBtn.isConnected) setFollowButton(true);
+    return !autoScroll || paused;
+  }
+  let down = null;
+  document.addEventListener('wheel', (e) => { if (inLyrics(e.target) && Math.abs(e.deltaY) + Math.abs(e.deltaX) > 0.5) pause(); }, { capture: true, passive: true });
+  document.addEventListener('pointerdown', (e) => { down = inLyrics(e.target) ? { x: e.clientX, y: e.clientY } : null; }, true);
+  document.addEventListener('pointermove', (e) => { if (down && e.buttons && Math.hypot(e.clientX - down.x, e.clientY - down.y) > 0.5 && e.pointerType !== 'mouse') pause(); }, { capture: true, passive: true });
+  document.addEventListener('touchmove', (e) => { if (inLyrics(e.target)) pause(); }, { capture: true, passive: true });
+  document.addEventListener('pointerup', () => { down = null; }, true);
+  // a click on a line seeks there (lyrics-ui.js) and follows again
+  document.addEventListener('click', (e) => { if (paused && e.target instanceof Element && e.target.closest('.vivi-lyrics-line')) follow(false); }, true);
+  // the scrollbar dragged with the mouse
+  document.addEventListener('scroll', (e) => { if (down && inLyrics(e.target)) pause(); }, { capture: true, passive: true });
+
   plus.lyricsUi = {
     tabByPosition, onUserTabClick, makeRefreshIcon, makeRefetchTabButton, syncRefetchTabButton,
     fillPos, markRtl, songSec, holdTrack, takeDuration, fillDuration, recheckDuration, bind, activeLine,
-    globalOffset, songOffset, offsetChanged, extendOffsetPanel,
+    globalOffset, songOffset, offsetChanged, extendOffsetPanel, followPaused,
   };
 })();

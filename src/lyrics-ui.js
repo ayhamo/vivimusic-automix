@@ -844,6 +844,7 @@
 
   function scrollToActive(active) {
     if (!active) return;
+    if (VP.followPaused(active, scrollToActive)) return; // vivi+ hook: a drag stops following (lyrics.md §4)
     const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     if (!isFluidStyle() || reduce || typeof active.animate !== 'function') {
       active.scrollIntoView({ block: 'center', behavior: 'smooth' });
