@@ -12,7 +12,7 @@
   const log        = (...a) => DEBUG && console.log('[Vivi:LyricsUI]', ...a);
   const VP = window.__viviPlus.lyricsUi; // vivi+ hook (src/plus/lyrics-ui-plus.js)
   const OFFSET_DB_PFX  = 'vivi_lyrics_offset_';
-  const OFFSET_STEP_MS = 100;
+  const OFFSET_STEP_MS = 50; // vivi+ hook: lyrics.md §3.3 (was 100)
   const EXCLUDED_DB_PFX = 'vivi_lyrics_excluded_';
   let isRefetchingLyrics = false;
 
@@ -234,6 +234,7 @@
   }
 
   function loadOffset(track, provider) {
+    { const own = VP.songOffset(); if (own != null) return Promise.resolve(own); } // vivi+ hook: per song by video id (lyrics.md §3.4)
     return new Promise((resolve) => {
       const key = offsetDbKey(track, provider);
       chrome.storage.local.get(key, (r) => resolve(r[key]?.offsetMs || 0));
@@ -311,6 +312,7 @@
   // pressed (see persistManualOffset below).
   function setManualOffsetLive(ms) {
     manualOffsetMs = Number.isFinite(ms) ? ms : 0;
+    VP.offsetChanged(manualOffsetMs); // vivi+ hook: kept as changed, no Save (lyrics.md §3.4)
     updateOffsetPanelValue();
   }
 
@@ -394,7 +396,7 @@
     // Lyric time -> video time: the highlighter uses
     //   lyricMs = videoMs - sponsorOffsetMs + manualOffsetMs
     // so invert that here, otherwise a click lands off by the offsets.
-    const sec = Math.max(0, (ms + sponsorOffsetMs - manualOffsetMs) / 1000);
+    const sec = Math.max(0, (ms + sponsorOffsetMs - manualOffsetMs - VP.globalOffset()) / 1000); // vivi+ hook: the global offset
     // Ask YouTube Music's own player to seek (handled in seek-page.js)...
     try { window.postMessage({ ch: 'vivi-seek', t: sec }, window.location.origin); } catch (_) {}
     // ...and set the element directly as a fallback.
@@ -749,6 +751,7 @@
     if (result.mode === 'plain') controls.append(refetchBtn);
     else controls.append(minus, input, unit, plus, saveBtn, refetchBtn);
     wrap.appendChild(controls);
+    if (result.mode !== 'plain') VP.extendOffsetPanel(wrap, saveBtn, () => manualOffsetMs, setManualOffsetLive); // vivi+ hook: slider, reset, global (lyrics.md §3.3)
     return wrap;
   }
 
@@ -1378,7 +1381,7 @@
     // Shift the raw video position back by whatever SponsorBlock already
     // skipped past (so lyrics stay aligned to the real song, not the video
     // file's timeline), then apply the user's manual fine-tune correction.
-    const nowMs = (VP.songSec(video) * 1000) - sponsorOffsetMs + manualOffsetMs; // vivi+ hook: held during a crossfade
+    const nowMs = (VP.songSec(video) * 1000) - sponsorOffsetMs + manualOffsetMs + VP.globalOffset(); // vivi+ hook: held during a crossfade; the global offset (lyrics.md §3.1)
 
     const panel = document.getElementById(PANEL_ID);
     if (!panel) return;

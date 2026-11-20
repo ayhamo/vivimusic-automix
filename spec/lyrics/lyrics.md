@@ -118,7 +118,7 @@ Cases: `gaps`.
 
 - Early highlight: built 2026-11-20 (`src/plus/lyrics-rules.js` `activeLines`, through the hook in `src/lyrics-ui.js` tick, `src/plus/lyrics-ui-plus.js` `activeLine`), the stateless reading (§2.7); "lyrics by real timing" is storage.local `lyricsRealTiming`. The scroll still follows the active line (no clamp(350..500) look-ahead of §2.5); the Fluid style scrolls 540 ms early (`:819, 1421-1427`).
 - Duets: both voices are active together (§2.2), but only the first active line's words fill; the other is lit as a whole.
-- Offset: per song and provider only (`vivi_lyrics_offset_` + artist, title, provider; `src/lyrics-ui.js:14, 228-254`), steps of 100 ms, a Save button. No global offset. Same sign as the rule.
+- Offset: built 2026-11-20 (`src/plus/lyrics-ui-plus.js`: storage.local `viviLyricsOffsetGlobal` and `viviLyricsOffsetById`, 3000 songs; hooks in `src/lyrics-ui.js`; `lyrics-rules.js` `offsetOf`, checked by the `offset` cases): steps of 50, a slider over ±3000 per row ("This song", "All songs"), the field, Reset, no Save. The editor sits in the lyrics panel's "i" (both offsets there; no global one in the popup). A song with no offset under its video id still reads the older per-provider one (`vivi_lyrics_offset_` + artist, title, provider). Same sign as the rule.
 - Auto-scroll: every line change scrolls the line to the centre (`src/lyrics-ui.js:842-847, 1416`); a drag or wheel doesn't stop it, and there is no follow button.
 - Duets: `ttm:agent` isn't read; background vocals are (`src/lyrics.js:290, 306-307`).
 - Gaps: nothing is shown in an intro or a gap.

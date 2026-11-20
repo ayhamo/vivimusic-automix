@@ -231,8 +231,75 @@
     return actives[0] || null;
   }
 
+  // ── lyrics.md §3: offsets. A global one plus one per song by video id, added; kept as they change (no Save);
+  // steps of 50, a slider over ±3000, a field, a reset. Storage: viviLyricsOffsetGlobal, viviLyricsOffsetById. ──
+  const OFFSET_RANGE = 3000, OFFSET_MAX_SONGS = 3000;
+  let globalOffsetMs = 0, byId = {}, saveTimer = null;
+  try {
+    chrome.storage.local.get({ viviLyricsOffsetGlobal: 0, viviLyricsOffsetById: {} }).then((s) => {
+      globalOffsetMs = Number(s.viviLyricsOffsetGlobal) || 0; byId = s.viviLyricsOffsetById || {};
+    }).catch(() => {});
+    chrome.storage.onChanged.addListener((ch, area) => {
+      if (area !== 'local') return;
+      if (ch.viviLyricsOffsetGlobal) globalOffsetMs = Number(ch.viviLyricsOffsetGlobal.newValue) || 0;
+      if (ch.viviLyricsOffsetById) byId = ch.viviLyricsOffsetById.newValue || {};
+    });
+  } catch { /* no storage: offsets stay 0 */ }
+  const videoId = () => new URLSearchParams(location.search).get('v') || '';
+  const globalOffset = () => globalOffsetMs;
+  /** The playing song's own offset, or null when none was set for its video id (the older per-provider one then). */
+  const songOffset = () => { const v = byId[videoId()]; return Number.isFinite(v) ? v : null; };
+  function offsetChanged(ms) {
+    const id = videoId();
+    if (!id) return;
+    const next = { ...byId };
+    delete next[id];
+    if (ms) next[id] = ms;
+    const keys = Object.keys(next);
+    if (keys.length > OFFSET_MAX_SONGS) keys.slice(0, keys.length - OFFSET_MAX_SONGS).forEach((k) => delete next[k]);
+    byId = next;
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => { try { chrome.storage.local.set({ viviLyricsOffsetById: byId }); } catch { /* kept for this page */ } }, 400);
+  }
+  function offsetRow(label, get, set) {
+    const row = document.createElement('div');
+    row.className = 'vivi-offset-plus-row';
+    row.style.cssText = 'display:flex;align-items:center;gap:8px;margin-top:8px;font-size:12px;';
+    const name = document.createElement('span');
+    name.textContent = label;
+    name.style.cssText = 'min-width:62px;opacity:.75;';
+    const range = document.createElement('input');
+    range.type = 'range'; range.min = String(-OFFSET_RANGE); range.max = String(OFFSET_RANGE); range.step = '50';
+    range.style.cssText = 'flex:1;min-width:0;';
+    const val = document.createElement('span');
+    val.style.cssText = 'min-width:58px;text-align:right;font-variant-numeric:tabular-nums;';
+    const reset = document.createElement('button');
+    reset.type = 'button'; reset.className = 'vivi-offset-btn'; reset.textContent = 'Reset';
+    reset.style.cssText = 'width:auto;padding:0 8px;';
+    const show = () => { const v = get(); range.value = String(Math.max(-OFFSET_RANGE, Math.min(OFFSET_RANGE, v))); val.textContent = (v > 0 ? '+' : '') + v + ' ms'; };
+    range.addEventListener('input', (e) => { e.stopPropagation(); set(Number(range.value)); show(); });
+    range.addEventListener('click', (e) => e.stopPropagation());
+    reset.addEventListener('click', (e) => { e.stopPropagation(); set(0); show(); });
+    row.append(name, range, val, reset);
+    show();
+    return { row, show };
+  }
+  function extendOffsetPanel(wrap, saveBtn, getSong, setSong) {
+    if (saveBtn) saveBtn.style.display = 'none';   // applied and kept as it changes
+    const song = offsetRow('This song', getSong, setSong);
+    const all = offsetRow('All songs', globalOffset, (ms) => {
+      globalOffsetMs = ms;
+      try { chrome.storage.local.set({ viviLyricsOffsetGlobal: ms }); } catch { /* this page only */ }
+    });
+    // the song's row follows the − / + buttons and the field
+    wrap.addEventListener('click', () => setTimeout(song.show, 0), true);
+    wrap.addEventListener('change', () => setTimeout(song.show, 0));
+    wrap.append(song.row, all.row);
+  }
+
   plus.lyricsUi = {
     tabByPosition, onUserTabClick, makeRefreshIcon, makeRefetchTabButton, syncRefetchTabButton,
     fillPos, markRtl, songSec, holdTrack, takeDuration, fillDuration, recheckDuration, bind, activeLine,
+    globalOffset, songOffset, offsetChanged, extendOffsetPanel,
   };
 })();

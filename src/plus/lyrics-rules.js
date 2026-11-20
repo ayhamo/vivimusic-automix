@@ -44,7 +44,17 @@
     return out;
   }
 
-  const api = { LEAD_MS, activeLines };
+  /**
+   * §3.1-3.2: the offsets add up; the lyrics run at the player's position plus the offset (a positive one shows them
+   * earlier), and a seek by lyrics goes to the lyric's time minus the offset, never below 0.
+   */
+  function offsetOf(songMs, globalMs, playerMs, lyricMs) {
+    const offset = (Number(songMs) || 0) + (Number(globalMs) || 0);
+    const lyrics = playerMs + offset;
+    return { offset, lyrics, seekTo: Math.max(0, (lyricMs ?? lyrics) - offset) };
+  }
+
+  const api = { LEAD_MS, activeLines, offsetOf };
   globalThis.__viviLyricsRules = api;
   if (typeof module === 'object' && module.exports) module.exports = api;
 })();
