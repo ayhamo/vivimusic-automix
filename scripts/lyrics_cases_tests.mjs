@@ -5,6 +5,8 @@
 //
 //   node scripts/lyrics_cases_tests.mjs        (exit 1 on a failure)
 import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
+const PC = createRequire(import.meta.url)('../src/plus/lyrics-rules.js');
 
 const cases = JSON.parse(readFileSync(new URL('../spec/lyrics/lyrics-cases.json', import.meta.url), 'utf8'));
 
@@ -55,6 +57,22 @@ function gaps(lines) {
   return out;
 }
 
+// LyricsRetiming.kt:362-460 updateByLookAhead, read without its memory (lyrics.md §2.7)
+function activeLines(lines, pos, word, lead = 660) {
+  const it = lines.map((l, i) => { const n = lines[i + 1]; return { start: l.start, end: n && l.end > n.start && l.end - n.start < 250 ? n.start : l.end }; });
+  const predictive = pos + lead, overlap = pos + (lead > 0 ? Math.max(250, lead - (word ? 150 : 250)) : 0);
+  const out = [];
+  let maxEnd = -Infinity;
+  for (let i = 0; i < it.length; i++) {
+    const s = out.length && it[i].start < maxEnd ? overlap : predictive;
+    if (it[i].start > s && it[i].start > predictive) break;
+    const n = it[i + 1];
+    const e = n && n.start < it[i].end ? overlap : n && predictive >= n.start ? predictive : pos;
+    if (s >= it[i].start && e < it[i].end) { out.push(i); maxEnd = Math.max(maxEnd, it[i].end); }
+  }
+  return out;
+}
+
 let failed = 0, ok = 0;
 const check = (group, name, got, want) => {
   const same = JSON.stringify(got) === JSON.stringify(want);
@@ -69,6 +87,9 @@ for (const c of cases.offset) {
 }
 for (const c of cases.sides) check('sides', c.name, sides(c.input.lines, c.input.agents, c.input.respect), c.expect);
 for (const c of cases.gaps) check('gaps', c.name, gaps(c.input.lines), c.expect);
-console.log('skip  the PC: lyrics-ui.js has no pure currentLine, offset, sides or gaps functions yet (lyrics.md §12)');
+for (const c of cases.activeLines) check('activeLines', c.name, activeLines(c.input.lines, c.input.position, c.input.wordSynced, c.input.leadMs), c.expect);
+// the PC's own (src/plus/lyrics-rules.js)
+for (const c of cases.activeLines) check('activeLines (PC)', c.name, PC.activeLines(c.input.lines, c.input.position, { wordSynced: c.input.wordSynced, leadMs: c.input.leadMs }), c.expect);
+console.log('skip  the PC: no pure currentLine, offset, sides or gaps functions yet (lyrics.md §12)');
 console.log(`\nlyrics cases: ${ok} ok, ${failed} DIFF`);
 process.exit(failed ? 1 : 0);

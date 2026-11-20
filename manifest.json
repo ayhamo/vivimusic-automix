@@ -139,6 +139,7 @@
         "src/vendor/pinyin-pro.min.js",
         "src/romanize.js",
         "src/tab-locale.js",
+        "src/plus/lyrics-rules.js",
         "src/plus/lyrics-ui-plus.js",
         "src/lyrics-ui.js",
         "src/sponsorblock.js",

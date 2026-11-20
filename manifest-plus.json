@@ -77,6 +77,7 @@
           { "item": "src/fx-compat.js", "after": "src/net.js" },
           { "item": "src/plus/fx-plus.js", "after": "src/kawarp.js" },
           { "item": "src/plus/lyrics-plus.js", "before": "src/lyrics.js" },
+          { "item": "src/plus/lyrics-rules.js", "before": "src/lyrics-ui.js" },
           { "item": "src/plus/lyrics-ui-plus.js", "before": "src/lyrics-ui.js" },
           { "item": "src/automix/automix.js", "before": "src/automix/crossfade.js" },
           { "item": "src/vendor/signalsmith-stretch.js", "before": "src/automix/crossfade.js" },

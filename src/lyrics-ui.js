@@ -1389,6 +1389,7 @@
       const end = Number(el.dataset.end);
       if (nowMs >= start && nowMs < end) { active = el; break; }
     }
+    active = VP.activeLine ? VP.activeLine(lineEls, nowMs, currentResult.mode) : active; // vivi+ hook: early highlight, duets (lyrics.md §2)
 
     if (active !== activeLineEl) {
       activeLineEl?.classList.remove('vivi-lyrics-active');

@@ -36,7 +36,9 @@ The lines change ahead of the voice, so the change has finished when the line is
 5. **[view]** The scroll to the next line starts ahead of it too: clamp(the next line's start − this line's end, 350, 500) ms, never more than 450 ms of animation. `LyricsRetiming.kt:15-17`, `ML/ui/components/lyrics/LyricsView.kt` (scroll), BitChord `BC/PlayerLyrics.kt:425-426, 470-484`.
 6. **[view, strip]** A setting "lyrics by real timing" turns all leads off (default off). `ML/settings/Settings.kt:469`, `LyricsRetiming.kt:330-331`.
 
-Cases: `currentLine`.
+7. **[view]** Which lines are active is a function of the position alone (`activeLines`): Metrolist's engine also remembers the lines active a moment ago (it keeps one through a short blank and keeps a duet line it already lit), which a port may add; the cases hold the stateless reading. `LyricsRetiming.kt:362-460`.
+
+Cases: `currentLine`, `activeLines`.
 
 ## 3. Offsets
 
@@ -114,8 +116,8 @@ Cases: `gaps`.
 
 ### PC against the original (as of 917f33f)
 
-- Early highlight: none; the line is active from its start to its end (`src/lyrics-ui.js:1381-1391`). The Fluid style scrolls 540 ms early (`:819, 1421-1427`).
-- One active line at a time (`break` at `src/lyrics-ui.js:1390`): duet lines don't run together.
+- Early highlight: built 2026-11-20 (`src/plus/lyrics-rules.js` `activeLines`, through the hook in `src/lyrics-ui.js` tick, `src/plus/lyrics-ui-plus.js` `activeLine`), the stateless reading (§2.7); "lyrics by real timing" is storage.local `lyricsRealTiming`. The scroll still follows the active line (no clamp(350..500) look-ahead of §2.5); the Fluid style scrolls 540 ms early (`:819, 1421-1427`).
+- Duets: both voices are active together (§2.2), but only the first active line's words fill; the other is lit as a whole.
 - Offset: per song and provider only (`vivi_lyrics_offset_` + artist, title, provider; `src/lyrics-ui.js:14, 228-254`), steps of 100 ms, a Save button. No global offset. Same sign as the rule.
 - Auto-scroll: every line change scrolls the line to the centre (`src/lyrics-ui.js:842-847, 1416`); a drag or wheel doesn't stop it, and there is no follow button.
 - Duets: `ttm:agent` isn't read; background vocals are (`src/lyrics.js:290, 306-307`).

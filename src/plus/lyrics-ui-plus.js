@@ -18,6 +18,8 @@
  *   takeDuration(newTrack, oldTrack) / fillDuration(track, key, previous)
  *                                the song's length, once it can be trusted
  *   bind(ctx)                    lyrics-ui.js's private state (end of lyrics-ui.js)
+ *   activeLine(lineEls, nowMs, mode)   the line to treat as active (spec/lyrics/lyrics.md §2: 660 ms early,
+ *                                a duet's second voice active beside it), src/plus/lyrics-rules.js
  */
 (() => {
   'use strict';
@@ -208,8 +210,29 @@
     if (window.__viviLyricsUI) window.__viviLyricsUI.loadExcludedProviders = ctx.loadExcludedProviders;
   }
 
+  // ── lyrics.md §2: lines change 660 ms ahead of the voice; a duet's second voice is active beside the first ──
+  const RULES = globalThis.__viviLyricsRules;
+  let realTiming = false;   // "lyrics by real timing" (§2.6): no lead
+  try {
+    chrome.storage.local.get({ lyricsRealTiming: false }).then((s) => { realTiming = s.lyricsRealTiming === true; }).catch(() => {});
+    chrome.storage.onChanged.addListener((ch, area) => { if (area === 'local' && ch.lyricsRealTiming) realTiming = ch.lyricsRealTiming.newValue === true; });
+  } catch { /* no storage: the lead stays on */ }
+  let duetEls = [];
+  function activeLine(lineEls, nowMs, mode) {
+    const els = [...lineEls].filter((el) => Number.isFinite(Number(el.dataset.start)) && Number.isFinite(Number(el.dataset.end)));
+    const idx = RULES ? RULES.activeLines(els.map((el) => ({ start: Number(el.dataset.start), end: Number(el.dataset.end) })), nowMs,
+      { wordSynced: mode === 'word' || mode === 'syllable', leadMs: realTiming ? 0 : RULES.LEAD_MS }) : [];
+    const actives = idx.map((i) => els[i]);
+    // lines beyond the first (a duet's other voice) are lit here; lyrics-ui.js lights and settles the first
+    const extra = actives.slice(1);
+    for (const el of duetEls) if (!extra.includes(el) && el !== actives[0]) el.classList.remove('vivi-lyrics-active');
+    for (const el of extra) el.classList.add('vivi-lyrics-active');
+    duetEls = extra;
+    return actives[0] || null;
+  }
+
   plus.lyricsUi = {
     tabByPosition, onUserTabClick, makeRefreshIcon, makeRefetchTabButton, syncRefetchTabButton,
-    fillPos, markRtl, songSec, holdTrack, takeDuration, fillDuration, recheckDuration, bind,
+    fillPos, markRtl, songSec, holdTrack, takeDuration, fillDuration, recheckDuration, bind, activeLine,
   };
 })();
