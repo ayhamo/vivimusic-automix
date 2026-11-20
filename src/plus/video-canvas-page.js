@@ -12,6 +12,7 @@
  *        (quality 'auto'|'2160'|'1440'|'1080'|'720'|'480', mode 'clips'|'full': canvas.md §13 rules 6-7)
  *        { op:'prefetch', reqId?, ids:[{ id, title, artist, album, durationSec }] }
  *        { op:'clear', reqId? }
+ *        { op:'chorus', id, lines:[{ start, text }], durationSec? }   (the song's synced lyrics, for §6 rule 11)
  *        { op:'fetch', rid, ok, status, bytes, why }   (relay answer, see below)
  *   out: { reqId, ok:true, blobUrl, videoId, width, height, startSec, lenSec, crop?, from }
  *        { reqId, ok:false, why }
@@ -259,6 +260,31 @@
       return out;
     }
     return null;
+  }
+
+  /**
+   * The chorus from time-synced lyrics (Prism's BestPart.chorusMs, canvas.md §6 rule 11): the first line
+   * of the most repeated lyric (from 5 s, not in the last 30 s), pulled back over up to 4 lines before it
+   * that repeat nearly as often. lines: [{ timeMs | start, text }]; null when nothing repeats.
+   */
+  function chorusMs(lines, durationMs) {
+    if (durationMs >= 1 && durationMs < 60000) return null;
+    const timed = (Array.isArray(lines) ? lines : [])
+      .map((l) => ({ t: Number(l && (l.timeMs ?? l.start)), text: String((l && l.text) || '') }))
+      .filter((l) => Number.isFinite(l.t) && l.t >= 0 && l.text.trim());
+    if (timed.length < 4) return null;
+    const keys = timed.map((l) => l.text.toLowerCase().replace(/[^\p{L}\p{N}]/gu, ''));
+    const counts = new Map();
+    for (const k of keys) if (k.length >= 4) counts.set(k, (counts.get(k) || 0) + 1);
+    const most = Math.max(0, ...counts.values());
+    if (most < 2) return null;
+    const limit = durationMs > 0 ? durationMs - 30000 : Infinity;
+    const cnt = (i) => counts.get(keys[i]) || 0;
+    const first = keys.findIndex((k, i) => cnt(i) === most && timed[i].t >= 5000 && timed[i].t <= limit);
+    if (first < 0) return null;
+    let start = first;
+    while (start - 1 >= 0 && cnt(start - 1) >= 2 && cnt(start - 1) >= most - 1 && timed[start - 1].t >= 5000 && first - start < 4) start--;
+    return timed[start].t;
   }
 
   /**
@@ -876,7 +902,7 @@
   const core = {
     CLIP_SEC, W, H, NEVER, OTHER_TAKE,
     norm, artists, officialChannel, titleCore, matches, searchResults, pickFormat,
-    heatmapOf, partStart, noFrames, pick,
+    heatmapOf, partStart, chorusMs, noFrames, pick,
     grid, bars, area, diff, still, windows, choose, runnersUp, judge, cropX, change, cuts, flashing, end: loopEnd, cropRect,
     storyboardPlan, parseSidx, sidxRange, readBoxes, parseInit, parseSamples, selectSamples, buildClip,
   };
@@ -1206,7 +1232,9 @@
     try {
       const sb = await board(player, length);
       if (sb && sb.frames.length >= MIN_FRAMES) {
-        const j = judge(sb.frames, sb.interval, length, peak == null ? null : Math.round(peak * 1000), null);
+        const chorus = chorusOf.get(song.id) ?? null;   // from the lyrics the page already fetched (§6 rule 11)
+        const j = judge(sb.frames, sb.interval, length, peak == null ? null : Math.round(peak * 1000), chorus);
+        if (chorus != null && peak == null) log('chorus from the lyrics at', f1(chorus / 1000), 's');
         if (!j) {
           log(video[0], 'is a still picture (' + sb.frames.length + ' preview frames, no window that moves)');
           return { none: true, why: 'still picture' };
@@ -1429,6 +1457,15 @@
     } catch { return 0; }
   }
 
+  // the chorus per song id, from the lyrics the content side saw (op 'chorus'); read by clip()
+  const chorusOf = new Map();
+  function setChorus(id, lines, durationSec) {
+    if (!id) return;
+    const ms = chorusMs(lines, Math.round((durationSec || 0) * 1000));
+    if (ms == null) chorusOf.delete(id); else chorusOf.set(id, ms);
+    if (chorusOf.size > 50) chorusOf.delete(chorusOf.keys().next().value);
+  }
+
   let findSeq = 0;
   async function find(d) {
     const my = ++findSeq;
@@ -1508,6 +1545,7 @@
       if (d.op === 'fetch') relayAnswer(d);
       // (songSec: the song's length, read while it plays that song; content.js passes it on to the Spotify match)
       else if (d.op === 'find') { const songSec = Number(d.durationSec) || playingLength(String(d.id || '')); say({ ...(await find(d)), songSec }); }
+      else if (d.op === 'chorus') { setChorus(String(d.id || ''), d.lines, Number(d.durationSec) || playingLength(String(d.id || ''))); }
       else if (d.op === 'length') say({ reqId: d.reqId, ok: true, songSec: playingLength(String(d.id || '')) });
       else if (d.op === 'prefetch') { prefetch(d.ids); say({ reqId: d.reqId, ok: true }); }
       else if (d.op === 'clear') { await clearAll(); say({ reqId: d.reqId, ok: true }); }

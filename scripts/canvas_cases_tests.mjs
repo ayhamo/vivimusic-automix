@@ -178,6 +178,8 @@ await run('judge', (c) => {
 
 skip('display', 'video-canvas.js zoomBars() is inside its IIFE and there is no tall-clip test or clip fade; needs pure tallClip(w, h), letterboxZoom(px, w, h), clipFade(hero, bottom)');
 skip('backdrop', 'the PC has neither backdrop (no Metrolist bleed, no BitChord mesh); needs blurRadiusAt(row), bleedRows(width, artHeight), coverZoom(...), stripRows(h), meshLift(rgb)');
+// the chorus from synced lyrics (§6 rule 11)
+await run('chorus', (c) => V.chorusMs(c.input.lines, c.input.durationMs));
 // the stored source order and sources on, and Apple's variant pick (src/plus/canvas-settings.js)
 await run('settings', (c) => c.kind === 'settingsOrder' ? CS.parseOrder(c.input.stored)
   : c.kind === 'settingsEnabled' ? CS.parseEnabled(c.input.stored)

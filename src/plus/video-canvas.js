@@ -74,6 +74,24 @@
     zoomStyle.textContent = [...zooms].map(([u, k]) => `video[src="${CSS.escape(u)}"] { transform: scale(${k}) !important; }`).join('\n');
   }
 
+  // The song's synced lyrics, as upstream's lyrics view fetched them (lyrics.js fetchBestLyrics), go to the
+  // page for the chorus (canvas.md §6 rule 11). Wrapped, not fetched again: the canvas never fetches lyrics.
+  const lyrics = window.__viviLyrics;
+  if (lyrics?.fetchBestLyrics && !lyrics.viviChorusWrapped) {
+    const fetchBest = lyrics.fetchBestLyrics;
+    lyrics.fetchBestLyrics = async (track, opts) => {
+      const r = await fetchBest(track, opts);
+      try {
+        if (track?.videoId && r && r.mode !== 'plain' && Array.isArray(r.lines)) {
+          const lines = r.lines.map((l) => ({ start: l.start, text: l.text || '' }));
+          window.postMessage({ ch: CHANNEL, dir: 'in', op: 'chorus', id: track.videoId, durationSec: track.duration || 0, lines }, window.location.origin);
+        }
+      } catch { /* the lyrics view still gets its answer */ }
+      return r;
+    };
+    lyrics.viviChorusWrapped = true;
+  }
+
   // the clip's blob URL for the playing song, or null (no music video, or turned off).
   // which = 'spotify': only the song's length, for the Spotify match (the video comes later in the order)
   window.__viviVideoCanvas = async (track, which) => {
