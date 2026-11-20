@@ -33,6 +33,7 @@
         hls.on(window.Hls.Events.ERROR, function (_evt, data) {
           if (data && data.fatal) post('error', data.type + ':' + data.details);
         });
+        window.__viviApplePlayer?.(hls); // vivi+ hook: the animated cover quality (src/plus/apple-player-plus.js)
         hls.attachMedia(video);
       }
       if (!hlsStarted) {

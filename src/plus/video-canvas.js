@@ -41,12 +41,23 @@
     if (done) { waiting.delete(d.reqId); done(d); }
   });
 
-  chrome.storage.local.get({ videoCanvasEnabled: true }).then((s) => { enabled = s.videoCanvasEnabled !== false; }).catch(() => {});
-  chrome.storage.onChanged.addListener((ch, area) => {
-    if (area === 'local' && ch.videoCanvasEnabled) enabled = ch.videoCanvasEnabled.newValue !== false;
-  });
-
   const none = new Set();   // songs with no music video (the page keeps the clips themselves)
+
+  // on while 'video' is among the sources on (canvas.md §13, src/plus/canvas-settings.js); a change
+  // to the sources, the order, the quality or the mode forgets the "no video" marks (rule 10)
+  const CS = globalThis.__viviCanvasSettings;
+  let quality = CS?.KEYS.videoCanvasQuality || '480', mode = 'clips';   // rules 6-7, sent with each lookup
+  const SET_KEYS = ['canvasSourceOrder', 'canvasSourcesOn', 'videoCanvasQuality', 'videoCanvasMode', 'spotifyCanvasEnabled'];
+  chrome.storage.local.get({ canvasSourcesOn: '', videoCanvasQuality: quality, videoCanvasMode: mode }).then((s) => {
+    if (CS) { const r = CS.read(s); enabled = r.on.includes('video'); quality = r.videoQuality; mode = r.mode; }
+  }).catch(() => {});
+  chrome.storage.onChanged.addListener((ch, area) => {
+    if (area !== 'local' || !SET_KEYS.some((k) => k in ch)) return;
+    if (ch.canvasSourcesOn && CS) enabled = CS.parseEnabled(ch.canvasSourcesOn.newValue).includes('video');
+    if (ch.videoCanvasQuality && CS) quality = CS.read({ videoCanvasQuality: ch.videoCanvasQuality.newValue }).videoQuality;
+    if (ch.videoCanvasMode) mode = ch.videoCanvasMode.newValue === 'full' ? 'full' : 'clips';
+    none.clear();
+  });
 
   // The video's own black bars (letterbox, measured on the storyboard) are zoomed out of the frame,
   // wherever upstream shows the clip: one CSS rule per clip, matched by its blob URL.
@@ -63,16 +74,17 @@
     zoomStyle.textContent = [...zooms].map(([u, k]) => `video[src="${CSS.escape(u)}"] { transform: scale(${k}) !important; }`).join('\n');
   }
 
-  // the clip's blob URL for the playing song, or null (no music video, or turned off)
-  window.__viviVideoCanvas = async (track) => {
+  // the clip's blob URL for the playing song, or null (no music video, or turned off).
+  // which = 'spotify': only the song's length, for the Spotify match (the video comes later in the order)
+  window.__viviVideoCanvas = async (track, which) => {
     if (!track?.videoId || !track.song) return null;
-    if (!enabled || none.has(track.videoId)) {
+    if (!enabled || which === 'spotify' || none.has(track.videoId)) {
       // no lookup, but the Spotify match still gets the song's length (the player's, by id)
       const r = await ask({ op: 'length', id: track.videoId }, 2000);   // (a read, never a download)
       if (r?.songSec > 0) track.lengthSec = r.songSec;
       return null;
     }
-    const r = await ask({ op: 'find', id: track.videoId, title: track.song, artist: track.artist || '', album: track.album || '' });
+    const r = await ask({ op: 'find', id: track.videoId, title: track.song, artist: track.artist || '', album: track.album || '', quality, mode });
     // the song's length by its id (the player's, not a <video> that may still hold the last song): for the Spotify match
     if (r?.songSec > 0) track.lengthSec = r.songSec;
     const url = r?.ok && isOwnBlob(r.blobUrl) ? r.blobUrl : null;

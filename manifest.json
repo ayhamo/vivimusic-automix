@@ -154,6 +154,7 @@
         "src/automix/crossfade.js",
         "src/automix-overview.js",
         "src/music-only.js",
+        "src/plus/canvas-settings.js",
         "src/plus/video-canvas.js",
         "src/vendor/hls.min.js",
         "src/fullscreen-mode.js",

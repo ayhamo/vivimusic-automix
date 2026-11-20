@@ -86,7 +86,8 @@
           { "item": "src/addons/page-addons.js", "before": "src/automix/crossfade.js" },
           { "item": "src/automix-overview.js", "after": "src/automix/crossfade.js" },
           { "item": "src/music-only.js", "after": "src/automix-overview.js" },
-          { "item": "src/plus/video-canvas.js", "after": "src/music-only.js" },
+          { "item": "src/plus/canvas-settings.js", "after": "src/music-only.js" },
+          { "item": "src/plus/video-canvas.js", "after": "src/plus/canvas-settings.js" },
           { "item": "src/plus/content-plus.js", "before": "src/content.js" }
         ]
       },

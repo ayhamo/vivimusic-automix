@@ -1,5 +1,6 @@
 // The shared canvas cases (spec/canvas/canvas-cases.json) against the PC's code:
 //   src/plus/video-canvas-page.js  (its pure core, globalThis.__viviVideoCanvasCore)
+//   src/plus/canvas-settings.js    (parseOrder, parseEnabled, pickVariant)
 //   src/plus/bg-canvas.js          (viviSpotifyCanvas: totp, matches, trusted)
 //   src/apple-canvas.js + the Apple block of src/plus/bg-plus.js (search, scoring, motion URLs)
 // Prints ok or DIFF per case, "skip" for a group the PC has no pure function for, then a summary.
@@ -16,6 +17,7 @@ const cases = JSON.parse(readFileSync(new URL('spec/canvas/canvas-cases.json', r
 // ── the PC's code ──
 createRequire(import.meta.url)('../src/plus/video-canvas-page.js');
 const V = globalThis.__viviVideoCanvasCore;
+const CS = createRequire(import.meta.url)('../src/plus/canvas-settings.js');
 
 const spCtx = {
   chrome: { storage: { local: { get: async () => ({ viviCanvasOrderSet: true }), set: async () => {} } } },
@@ -97,7 +99,7 @@ function timed(spec) {
 }
 
 // ── groups ──
-skip('sourceOrder', 'the order lives in content.js hooks and the canvasPriority setting; needs a pure pick(sources, order, enabled, pending, failed) like Metrolist selectAnimatedCoverUrl');
+skip('sourceOrder', 'the order is an async loop in content.js handleTrackChange (VP.canvasOrder, tried strictly in turn); needs a pure pick(sources, order, enabled, pending, failed) like Metrolist selectAnimatedCoverUrl');
 skip('cache', 'video-canvas-page.js lookup() reads IndexedDB and bg-canvas.js keeps misses inline in find(); needs a pure lookup(value, fileExists, now) and keyOf(source, song)');
 
 // Apple scoring: one hit with inline motion art and an album id; taken = what searchAndFetchMotion returns
@@ -176,7 +178,10 @@ await run('judge', (c) => {
 
 skip('display', 'video-canvas.js zoomBars() is inside its IIFE and there is no tall-clip test or clip fade; needs pure tallClip(w, h), letterboxZoom(px, w, h), clipFade(hero, bottom)');
 skip('backdrop', 'the PC has neither backdrop (no Metrolist bleed, no BitChord mesh); needs blurRadiusAt(row), bleedRows(width, artHeight), coverZoom(...), stripRows(h), meshLift(rgb)');
-skip('settings', 'the PC has no source list, no stored order and no Apple variant pick yet (canvas.md §13); needs pure parseOrder(csv), parseEnabled(csv), pickVariant(variants, cap)');
+// the stored source order and sources on, and Apple's variant pick (src/plus/canvas-settings.js)
+await run('settings', (c) => c.kind === 'settingsOrder' ? CS.parseOrder(c.input.stored)
+  : c.kind === 'settingsEnabled' ? CS.parseEnabled(c.input.stored)
+  : CS.pickVariant(c.input.variants, c.input.cap));
 skip('badge', 'the shimmer is CSS only (plus.css:467-482); needs bandCentre(progress, width) and chromeWhite(alpha) if the PC adopts the chrome');
 
 console.log(`\ncanvas cases: ${ok} ok, ${diff} DIFF, ${skipped} skipped`);

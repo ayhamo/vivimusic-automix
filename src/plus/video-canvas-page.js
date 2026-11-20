@@ -8,7 +8,8 @@
  * small self-contained fragmented MP4 that loops muted over the art.
  *
  * Talks to the content script over window.postMessage on channel 'vivi-vcanvas':
- *   in : { op:'find', reqId, id, title, artist, album, durationSec }
+ *   in : { op:'find', reqId, id, title, artist, album, durationSec, quality?, mode? }
+ *        (quality 'auto'|'2160'|'1440'|'1080'|'720'|'480', mode 'clips'|'full': canvas.md §13 rules 6-7)
  *        { op:'prefetch', reqId?, ids:[{ id, title, artist, album, durationSec }] }
  *        { op:'clear', reqId? }
  *        { op:'fetch', rid, ok, status, bytes, why }   (relay answer, see below)
@@ -1170,6 +1171,7 @@
 
   /** The song's loop (VideoCanvas.clip): { bytes, meta } or { none:true } (no usable video) or null (not this time). */
   async function clip(song) {
+    const want = song.want || 480;
     const t0 = performance.now();
     const video = await findVideo(song.title, song.artist, song.durationSec);
     if (!video) return { none: true, why: 'no music video by the artist' };
@@ -1180,12 +1182,19 @@
       return { none: false, why: 'video not playable (' + status + ')' };
     }
     const sd = player.streamingData;
-    const f = pickFormat(sd, 720);
+    const f = pickFormat(sd, want);
     if (!f) {
       log(video[0], 'has no H.264 DASH stream');
       return { none: true, why: 'no H.264 stream' };
     }
     const dur = Number(player.videoDetails && player.videoDetails.lengthSeconds) || 0;
+    if (song.full) {
+      // Full video (§13 rule 7): the whole music video, muted, looped; no part picked
+      const c = await fetchCut(f, 0, dur + 1);
+      const out = buildClip(c.u, c.init, c.picked);
+      log(video[0], `'${video[1]}'`, 'full video', f.height + 'p itag ' + f.itag + ',', Math.round(out.bytes.length / 1048576), 'MB, ready', Math.round(performance.now() - t0), 'ms after the lookup');
+      return { bytes: out.bytes, meta: { videoId: video[0], videoTitle: video[1], width: Number(f.width) || c.init.width, height: Number(f.height) || c.init.height, startSec: 0, lenSec: Math.round(out.lenSec * 1000) / 1000, full: true } };
+    }
     const heat = await heatmap(video[0]);
     const peak = heat == null ? null : partStart(heat, dur);
     let b = [0, 0, 0, 0], crop = 0.5, wins = null, judged = false;
@@ -1256,7 +1265,15 @@
   const DAY = 24 * 3600 * 1000;
   const CACHE_BYTES = 80 * 1024 * 1024;
   const MEM_MAX = 4;
-  const keyOf = (id) => 'mv_' + id;
+  const keyOf = (id) => 'mv_' + id;   // id: the song's cache id (cacheId)
+  // the quality and mode asked last (§13 rules 6-7; Auto = 720p, the PC builds its own clip), part of the cache id
+  let pref = { want: 480, full: false };
+  const WANTS = { auto: 720, 2160: 2160, 1440: 1440, 1080: 1080, 720: 720, 480: 480 };
+  function setPref(d) {
+    if (d && d.quality != null) pref = { ...pref, want: WANTS[String(d.quality)] || 480 };
+    if (d && d.mode != null) pref = { ...pref, full: d.mode === 'full' };
+  }
+  const cacheId = (id) => id + '|' + pref.want + (pref.full ? '|full' : '');
   const mem = new Map();          // song id -> { blobUrl, meta }
   let lastShown = '';
 
@@ -1324,6 +1341,7 @@
 
   async function save(id, got) {
     const now = Date.now();
+    if (got.meta && got.bytes.byteLength > CACHE_BYTES / 2) return;   // a long full video: memory only
     if (got.meta) await idbPut(keyOf(id), { at: now, shown: now, size: got.bytes.byteLength, bytes: got.bytes.buffer.slice(got.bytes.byteOffset, got.bytes.byteOffset + got.bytes.byteLength), meta: got.meta });
     else await idbPut(keyOf(id), { at: now, miss: true, why: got.why || '' });
     if (got.meta) trim(keyOf(id));
@@ -1357,7 +1375,9 @@
   let running = false;
 
   function run(song, hi) {
-    let job = inflight.get(song.id);
+    song.ck = song.ck || cacheId(song.id);
+    song.want = pref.want; song.full = pref.full;
+    let job = inflight.get(song.ck);
     if (job) {
       if (hi && !job.started && queue.lo.includes(job)) { queue.lo.splice(queue.lo.indexOf(job), 1); queue.hi.push(job); }
       return job.done;
@@ -1365,13 +1385,13 @@
     if (hi) {
       // skipping through songs: only the newest song's lookup is still wanted
       for (const old of queue.hi.splice(0)) {
-        inflight.delete(old.song.id);
+        inflight.delete(old.song.ck);
         old.resolve({ none: false, why: 'not this time (skipped)' });
       }
     }
     job = { song, started: false };
     job.done = new Promise((resolve, reject) => { job.resolve = resolve; job.reject = reject; });
-    inflight.set(song.id, job);
+    inflight.set(song.ck, job);
     (hi ? queue.hi : queue.lo).push(job);
     pump();
     return job.done;
@@ -1385,13 +1405,13 @@
       job.started = true;
       try {
         const got = await clip(job.song);
-        if (got.meta || got.none) await save(job.song.id, got);
+        if (got.meta || got.none) await save(job.song.ck, got);
         job.resolve(got);
       } catch (e) {
         log('failed for', `'${job.song.title}':`, (e && e.message) || e);
         job.reject(e);
       } finally {
-        inflight.delete(job.song.id);
+        inflight.delete(job.song.ck);
       }
     }
     running = false;
@@ -1412,9 +1432,11 @@
   let findSeq = 0;
   async function find(d) {
     const my = ++findSeq;
-    const id = String(d.id || '');
-    if (!id || !d.title) return { reqId: d.reqId, ok: false, why: 'no song id or title' };
-    const song = { id, title: String(d.title), artist: String(d.artist || ''), album: d.album || '', durationSec: Number(d.durationSec) || playingLength(id) };
+    setPref(d);
+    const vid = String(d.id || '');
+    if (!vid || !d.title) return { reqId: d.reqId, ok: false, why: 'no song id or title' };
+    const id = cacheId(vid);   // the cache's id for this song at this quality and mode
+    const song = { id: vid, ck: id, title: String(d.title), artist: String(d.artist || ''), album: d.album || '', durationSec: Number(d.durationSec) || playingLength(vid) };
     const m = mem.get(id);
     if (m) {
       mem.delete(id); mem.set(id, m);
@@ -1453,8 +1475,9 @@
       setTimeout(async () => {
         try {
           if (typeof navigator !== 'undefined' && navigator.connection && navigator.connection.saveData) { aheadAsked.delete(id); return; }
-          if (mem.has(id) || (await lookup(id))) return;
-          const got = await run({ id, title: String(s.title), artist: String(s.artist || ''), album: s.album || '', durationSec: Number(s.durationSec) || 0 }, false);
+          const ck = cacheId(id);
+          if (mem.has(ck) || (await lookup(ck))) return;
+          const got = await run({ id, ck, title: String(s.title), artist: String(s.artist || ''), album: s.album || '', durationSec: Number(s.durationSec) || 0 }, false);
           log('ahead:', `'${s.title}'`, got.meta ? 'loop cached' : got.none ? 'has no video' : 'not this time');
         } catch (e) {
           aheadAsked.delete(id);

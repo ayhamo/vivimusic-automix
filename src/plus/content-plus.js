@@ -141,15 +141,28 @@
 
   async function fetchLyricsCanvas(track, key) {
     try {
-      const mv = await window.__viviVideoCanvas?.(track); // vivi+ hook: the song's music video first
-      if (mv) { if (key === C.trackKey() && canvasPlacement !== 'cover') setLyricsCanvas(mv); return; }
+      // the Canvas sources (music video, Spotify) in the listener's order, the ones on only (§13)
+      const want = canvasSet.order.filter((n) => n !== 'apple' && canvasSet.on.includes(n));
+      if (!want.includes('spotify')) {
+        const mv = want.includes('video') ? await window.__viviVideoCanvas?.(track, 'video') : null;
+        if (mv && key === C.trackKey() && canvasPlacement !== 'cover') setLyricsCanvas(mv);
+        return;
+      }
+      if (want[0] === 'video') {
+        const mv = await window.__viviVideoCanvas?.(track, 'video');
+        if (mv) { if (key === C.trackKey() && canvasPlacement !== 'cover') setLyricsCanvas(mv); return; }
+      } else await window.__viviVideoCanvas?.(track, 'spotify');   // the song's length for the Spotify match
       const r = await chrome.runtime.sendMessage({
         type: 'VIVI_SPOTIFY_CANVAS',
         track: { song: track.song, artist: track.artist, videoId: track.videoId, album: track.album || null, duration: track.lengthSec || null },
       });
       if (key !== C.trackKey() || canvasPlacement === 'cover') return;
-      if (!r?.ok) { log('No Spotify Canvas for the lyrics background:', r?.error || 'none'); return; }
-      setLyricsCanvas(r.videoUrl);
+      if (r?.ok && r.videoUrl) { setLyricsCanvas(r.videoUrl); return; }
+      log('No Spotify Canvas for the lyrics background:', r?.error || 'none');
+      if (want[1] === 'video') {
+        const mv = await window.__viviVideoCanvas?.(track, 'video');
+        if (mv && key === C.trackKey() && canvasPlacement !== 'cover') setLyricsCanvas(mv);
+      }
     } catch (e) {
       warn('Spotify Canvas (lyrics background):', e?.message || e);
     }
@@ -223,8 +236,26 @@
     if (canvasBlurPx != null && Number.isFinite(px)) root.setProperty('--vivi-canvas-blur', Math.max(0, Math.min(30, px)) + 'px');
   }
 
+  // ───────────────────────── Source order (canvas.md §13) ─────────────────────────
+  // The listener's order and sources on (src/plus/canvas-settings.js). content.js's
+  // handleTrackChange takes the order from here: [name, on, attempt] per source, tried
+  // strictly in turn (§1 rule 2: a source still loading holds the ones after it).
+  const CS = globalThis.__viviCanvasSettings;
+  let canvasSet = CS ? CS.read({}) : { order: ['video', 'spotify', 'apple'], on: ['video', 'spotify', 'apple'] };
+  P.sourceOn = (n) => canvasSet.on.includes(n);
+  P.canvasOrder = CS && ((attempts, canvasOn, appleOn) => canvasSet.order.map((n) => [
+    n, (n === 'apple' ? appleOn : canvasOn) && canvasSet.on.includes(n), attempts[n],
+  ]));
+
   // Settings message: returns true when the Canvas must be re-checked.
   P.canvasSettings = (msg) => {
+    if (CS && ('canvasSourceOrder' in msg || 'canvasSourcesOn' in msg)) {
+      canvasSet = CS.read({ canvasSourceOrder: msg.canvasSourceOrder ?? canvasSet.order.join(','), canvasSourcesOn: msg.canvasSourcesOn ?? CS.storeEnabled(canvasSet.on) });
+      setLyricsCanvas(null);
+      return true;
+    }
+    // a new quality or mode: look the song up again (rule 10; the Apple player reads its quality itself)
+    if (['appleCoverQuality', 'videoCanvasQuality', 'videoCanvasMode'].some((k) => k in msg)) return true;
     if ('lyricsLineBlur' in msg || 'canvasBlurPx' in msg) applyBlurSettings(msg.lyricsLineBlur, msg.canvasBlurPx);
     if ('spotifyCanvasPlacement' in msg) {
       canvasPlacement = ['lyrics', 'side'].includes(msg.spotifyCanvasPlacement) ? msg.spotifyCanvasPlacement : 'cover';
@@ -505,12 +536,14 @@
   P.storageDefaults = {
     wheelVolumeEnabled: true, appleArtistArtEnabled: true, nerdStatsEnabled: false,
     spotifyCanvasPlacement: 'cover', lyricsLineBlur: 'low', canvasBlurPx: 3,
+    canvasSourceOrder: '', canvasSourcesOn: '',
     ...LISTENBRAINZ_DEFAULTS,
   };
 
   P.applyStored = (stored) => {
     initWheelVolume();
     canvasPlacement = ['lyrics', 'side'].includes(stored.spotifyCanvasPlacement) ? stored.spotifyCanvasPlacement : 'cover';
+    if (CS) canvasSet = CS.read(stored);
     applyBlurSettings(stored.lyricsLineBlur, stored.canvasBlurPx);
     wheelVolumeEnabled = stored.wheelVolumeEnabled !== false;
     appleArtistArtEnabled = stored.appleArtistArtEnabled !== false;

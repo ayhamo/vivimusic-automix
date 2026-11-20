@@ -233,6 +233,125 @@
     </div>
 `, rowOrNote('canvasPrioritySelect'), 'afterend');
 
+  // ── Canvas settings (spec/canvas/canvas.md §13; src/plus/canvas-settings.js) ──
+  // The Canvas switch (#spotifyCanvasEnabled: the music video and Spotify) and the Apple
+  // animated artwork switch (#enableToggle) are the two master switches; under them the source
+  // list in the order tried, each with up/down and its own switch, then the qualities and the
+  // mode. No Spotify login (rule 9): the sign-in blocks and the old two-way "prefer" are hidden.
+  const CS = window.__viviCanvasSettings;
+  const SEL = 'background:rgba(255,255,255,0.06); color:var(--text-1); border:1px solid rgba(255,255,255,0.12); border-radius:8px; padding:5px 8px; font-size:12.5px;';
+  if (CS) {
+    document.head.insertAdjacentHTML('beforeend', `<style>
+      #spotifyDisconnected, #spotifyConnected { display: none !important; }
+      .vivi-src-row { display:flex; align-items:center; gap:8px; padding:6px 0; transition:opacity .15s; }
+      .vivi-src-row + .vivi-src-row { border-top:1px solid rgba(255,255,255,0.06); }
+      .vivi-src-row .vivi-src-name { flex:1; font-size:12.5px; color:var(--text-1); }
+      .vivi-src-row .vivi-src-name small { display:block; font-size:10.5px; color:var(--text-3); }
+      .vivi-src-row.master-off { opacity:.45; }
+      .vivi-src-move { width:24px; height:24px; border-radius:6px; border:1px solid rgba(255,255,255,0.12); background:rgba(255,255,255,0.06); color:var(--text-1); font-size:11px; line-height:1; cursor:pointer; padding:0; }
+      .vivi-src-move:disabled { opacity:.3; cursor:default; }
+    </style>`);
+    const relabel = (id, label, note) => {
+      const row = document.getElementById(id)?.closest('.row');
+      const l = row?.querySelector('.row-label');
+      if (l) l.textContent = label;
+      const n = row?.nextElementSibling;
+      if (note && n?.matches('p.theme-sub')) n.textContent = note;
+    };
+    relabel('spotifyCanvasEnabled', 'Canvas', "The song's music video or Spotify's Canvas, played silently over the cover. Spotify needs no account.");
+    const prio = document.getElementById('canvasPrioritySelect')?.closest('.row');
+    if (prio) { const n = prio.nextElementSibling; prio.style.display = 'none'; if (n?.matches('p.theme-sub')) n.style.display = 'none'; }
+
+    place(`    <div style="margin-top:12px;">
+      <div class="row-label" style="margin-bottom:4px;">Sources, in the order tried</div>
+      <div id="viviCanvasSources"></div>
+    </div>
+    <p class="theme-sub">The first source with a clip wins. The music video and Spotify follow the Canvas switch; Apple follows Apple Music Animated Artwork (Artwork). A source turned off keeps its place.</p>
+    <div class="row" style="margin-top:10px;">
+      <span class="row-label">Music video quality</span>
+      <select id="videoCanvasQuality" style="${SEL}">
+        <option value="auto">Auto</option><option value="2160">2160p</option><option value="1440">1440p</option>
+        <option value="1080">1080p</option><option value="720">720p</option><option value="480">480p</option>
+      </select>
+    </div>
+    <div class="row" style="margin-top:6px;">
+      <span class="row-label">Music video canvas</span>
+      <select id="videoCanvasMode" style="${SEL}">
+        <option value="clips">Clips</option><option value="full">Full video</option>
+      </select>
+    </div>
+    <p class="theme-sub">Clips: the best part of the music video, looped. Full video: the whole video, muted.</p>
+`, rowOrNote('spotifyCanvasEnabled'), 'afterend');
+
+    place(`    <div class="row" style="margin-top:10px;">
+      <span class="row-label">Animated artwork quality</span>
+      <select id="appleCoverQuality" style="${SEL}">
+        <option value="360">360p</option><option value="720">720p</option><option value="1080">1080p</option><option value="original">Original</option>
+      </select>
+    </div>
+`, rowOrNote('enableToggle'), 'afterend');
+
+    const NAMES = { video: ['Music video', "the song's own video on YouTube"], spotify: ['Spotify Canvas', 'no account needed'], apple: ['Apple Music', 'animated cover'] };
+    const list = document.getElementById('viviCanvasSources');
+    const canvasMaster = document.getElementById('spotifyCanvasEnabled');
+    const appleMaster = document.getElementById('enableToggle');
+    const vq = document.getElementById('videoCanvasQuality');
+    const vm = document.getElementById('videoCanvasMode');
+    const aq = document.getElementById('appleCoverQuality');
+    let set = CS.read({});
+    // the master switches as stored (upstream's popup.js fills the checkboxes later, without a change event)
+    const masters = { canvas: true, apple: true };
+    const masterOn = (n) => (n === 'apple' ? masters.apple : masters.canvas);
+    function render() {
+      list.textContent = '';
+      set.order.forEach((n, i) => {
+        const row = document.createElement('div');
+        row.className = 'vivi-src-row' + (masterOn(n) ? '' : ' master-off');
+        row.innerHTML = `<span class="vivi-src-name"></span>
+          <button class="vivi-src-move" data-d="-1" title="Try earlier">&#9650;</button>
+          <button class="vivi-src-move" data-d="1" title="Try later">&#9660;</button>
+          <label class="switch small"><input type="checkbox"/><span class="slider"></span></label>`;
+        const name = row.querySelector('.vivi-src-name');
+        name.textContent = NAMES[n][0];
+        const sub = document.createElement('small'); sub.textContent = NAMES[n][1]; name.append(sub);
+        const [up, down] = row.querySelectorAll('.vivi-src-move');
+        up.disabled = i === 0; down.disabled = i === set.order.length - 1;
+        const box = row.querySelector('input');
+        box.checked = set.on.includes(n);
+        box.disabled = !masterOn(n);
+        for (const b of [up, down]) b.addEventListener('click', () => {
+          const j = i + Number(b.dataset.d), o = set.order.slice();
+          [o[i], o[j]] = [o[j], o[i]];
+          set.order = o;
+          save({ canvasSourceOrder: o.join(',') });
+        });
+        box.addEventListener('change', () => {
+          set.on = CS.SOURCES.filter((x) => (x === n ? box.checked : set.on.includes(x)));
+          save({ canvasSourcesOn: CS.storeEnabled(set.on) });
+        });
+        list.append(row);
+      });
+      vq.disabled = vm.disabled = !(masterOn('video') && set.on.includes('video'));
+      aq.disabled = !(masterOn('apple') && set.on.includes('apple'));
+    }
+    function save(patch) {
+      chrome.storage.local.set(patch);
+      relay(patch);
+      render();
+    }
+    chrome.storage.local.get({ ...CS.KEYS, enabled: true, spotifyCanvasEnabled: true }, (s) => {
+      set = CS.read(s);
+      masters.canvas = s.spotifyCanvasEnabled !== false; masters.apple = s.enabled !== false;
+      vq.value = set.videoQuality; vm.value = set.mode; aq.value = set.coverQuality;
+      render();
+    });
+    canvasMaster?.addEventListener('change', () => { masters.canvas = canvasMaster.checked; render(); });
+    appleMaster?.addEventListener('change', () => { masters.apple = appleMaster.checked; render(); });
+    vq.addEventListener('change', () => save({ videoCanvasQuality: vq.value }));
+    vm.addEventListener('change', () => save({ videoCanvasMode: vm.value }));
+    aq.addEventListener('change', () => save({ appleCoverQuality: aq.value }));
+  }
+
   // ListenBrainz section, before Updates
   place(`  <!-- ListenBrainz -->
   <div class="section">

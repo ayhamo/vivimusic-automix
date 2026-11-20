@@ -2226,13 +2226,14 @@
   }
 
 
-  async function fetchSpotifyCanvas(track) {
+  async function fetchSpotifyCanvas(track, which) { // vivi+ hook: which = 'video' | 'spotify' | both (the §13 source order)
     if (!spotifyCanvasEnabled) return null;
-    const key = `${track.artist}—${track.song}`;
+    const key = `${track.artist}—${track.song}` + (which ? '|' + which : ''); // vivi+ hook
     if (spotifyCanvasRequestKey === key) return currentSpotifyCanvasUrl;
     spotifyCanvasRequestKey = key;
-    const mv = await window.__viviVideoCanvas?.(track); // vivi+ hook: the song's music video first (src/plus/video-canvas.js)
+    const mv = await window.__viviVideoCanvas?.(track, which); // vivi+ hook: the song's music video first (src/plus/video-canvas.js)
     if (mv) return spotifyCanvasRequestKey === key ? (currentSpotifyCanvasUrl = mv) : null;
+    if (which === 'video') return null; // vivi+ hook
     try {
       const response = await chrome.runtime.sendMessage({
         type: 'VIVI_SPOTIFY_CANVAS',
@@ -3056,8 +3057,8 @@
     // Try Spotify Canvas. Returns 'stop' if the caller should return immediately
     // (either it rendered something, or a real video was detected mid-fetch),
     // or 'miss' if there was nothing to show and the other source should be tried.
-    async function attemptSpotify() {
-      const spotifyCanvas = await fetchSpotifyCanvas(track);
+    async function attemptSpotify(which) { // vivi+ hook (which)
+      const spotifyCanvas = await fetchSpotifyCanvas(track, which);
       if (key !== currentTrackKey) return 'stop'; // track moved on again while we were waiting
       // Re-check here, not just at the top of this function: when the track
       // first changes, YT Music's player-bar stats line (views/likes vs.
@@ -3132,13 +3133,13 @@
     // same song shows Apple Music's artwork instantly (cached URL + the
     // browser's own HTTP cache for the actual bytes).
     if (VP.lyricsCanvas?.(track, key, spotifyCanvasEnabled && !imageOnlyMode)) { // vivi+ hook: Spotify Canvas behind the lyrics, the cover gets Apple only
-      const apple = appleCanvasEnabled;
+      const apple = appleCanvasEnabled && VP.sourceOn?.('apple') !== false; // vivi+ hook: Apple's own source switch (§13)
       if (apple && await attemptApple() === 'stop') return;
       setBackgroundVar(null);
       if (apple) scheduleRetry(track, key, 0);
       return;
     }
-    if (canvasPriority === 'apple' && appleCanvasEnabled && spotifyCanvasEnabled) {
+    if (!VP.canvasOrder && canvasPriority === 'apple' && appleCanvasEnabled && spotifyCanvasEnabled) { // vivi+ hook: the §13 order is strict
       const cached = await readCache(key);
       if (key !== currentTrackKey) return;
       if (isAppleCacheReady(cached)) {
@@ -3158,9 +3159,9 @@
       return;
     }
 
-    const order = canvasPriority === 'apple'
+    const order = VP.canvasOrder?.({ video: () => attemptSpotify('video'), spotify: () => attemptSpotify('spotify'), apple: attemptApple }, spotifyCanvasEnabled, appleCanvasEnabled) || (canvasPriority === 'apple'
       ? [['apple', appleCanvasEnabled, attemptApple], ['spotify', spotifyCanvasEnabled, attemptSpotify]]
-      : [['spotify', spotifyCanvasEnabled, attemptSpotify], ['apple', appleCanvasEnabled, attemptApple]];
+      : [['spotify', spotifyCanvasEnabled, attemptSpotify], ['apple', appleCanvasEnabled, attemptApple]]); // vivi+ hook
 
     let appleMissed = false;
     for (const [name, sourceEnabled, attempt] of order) {

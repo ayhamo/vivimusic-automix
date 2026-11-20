@@ -5,8 +5,8 @@
 //
 // Loaded after spotify.js and background.js. It wraps upstream's spotifyCanvasForTrack (a global
 // function, called by background.js for VIVI_SPOTIFY_CANVAS), so upstream's file is unchanged:
-// the no-login lookup runs first, and upstream's own lookup (it needs the Spotify sign-in) only
-// when ours fails with an error.
+// only the no-login lookup runs: Spotify's canvas is anonymous only (canvas.md §13 rule 9), so
+// upstream's signed-in lookup is never called.
 
 'use strict';
 
@@ -202,9 +202,8 @@ const viviSpotifyCanvas = (() => {
 })();
 globalThis.viviSpotifyCanvas = viviSpotifyCanvas;   // for the test page and the console
 
-// vivi+ hook: wraps upstream's lookup (spotify.js); upstream's saved canvas URLs are used first
+// vivi+ hook: replaces upstream's lookup (spotify.js); upstream's saved canvas URLs are used first
 if (typeof spotifyCanvasForTrack === 'function') {
-  const upstreamSpotifyCanvas = spotifyCanvasForTrack;
   // eslint-disable-next-line no-global-assign
   spotifyCanvasForTrack = async function (track) {
     const key = `${track.artist}—${track.song}`;
@@ -216,13 +215,14 @@ if (typeof spotifyCanvasForTrack === 'function') {
       return url;
     } catch (e) {
       console.warn('[vivi canvas] spotify without login failed:', e?.message || e);
-      return upstreamSpotifyCanvas(track);
+      return null;
     }
   };
 }
 
-// The phone's source order (music video, Spotify, Apple): the music video comes in Spotify's place
-// (src/plus/video-canvas.js), so Spotify goes before Apple. Set once; the popup can change it after.
-chrome.storage.local.get({ viviCanvasOrderSet: false }).then((s) => {
-  if (!s.viviCanvasOrderSet) chrome.storage.local.set({ canvasPriority: 'spotify', viviCanvasOrderSet: true });
+// The source order (canvas.md §13, canvasSourceOrder; default music video, Spotify, Apple). Once:
+// the old two-way "prefer" select becomes the order (Apple first only if it was picked in it).
+chrome.storage.local.get({ viviCanvasOrderSet: false, canvasPriority: 'spotify', canvasSourceOrder: null }).then((s) => {
+  if (s.canvasSourceOrder != null) return;
+  chrome.storage.local.set({ canvasSourceOrder: s.viviCanvasOrderSet && s.canvasPriority === 'apple' ? 'apple' : '', canvasPriority: 'spotify', viviCanvasOrderSet: true });
 }).catch(() => {});
