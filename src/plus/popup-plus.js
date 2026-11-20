@@ -610,7 +610,17 @@
       const box = sw.querySelector('input');
       box.checked = a.enabled;
       box.addEventListener('change', () => ask({ type: 'VIVI_ADDONS_TOGGLE', id: a.id, enabled: box.checked }).then(refreshAddons));
-      row.append(dot, label,
+      // 8.4.2: the addon's own quality options (from its manifest), shown when it lists 2 or more
+      let pick = null;
+      if (a.qualities) {
+        pick = document.createElement('select');
+        pick.title = "This addon's quality (used when Best is picked above)";
+        pick.style.cssText = 'max-width:96px; background:rgba(255,255,255,0.06); color:var(--text-1); border:1px solid rgba(255,255,255,0.12); border-radius:6px; padding:2px 4px; font-size:11.5px;';
+        for (const o of a.qualities) { const op = document.createElement('option'); op.value = o.value; op.textContent = o.label; pick.appendChild(op); }
+        pick.value = a.quality && a.qualities.some((o) => o.value === a.quality) ? a.quality : a.qualities[0].value;
+        pick.addEventListener('change', () => ask({ type: 'VIVI_ADDONS_QUALITY', id: a.id, quality: pick.value === a.qualities[0].value ? null : pick.value }));
+      }
+      row.append(dot, label, ...(pick ? [pick] : []),
         btn('↑', 'Ask it earlier', () => ask({ type: 'VIVI_ADDONS_MOVE', id: a.id, by: -1 }).then(refreshAddons), i === 0),
         btn('↓', 'Ask it later', () => ask({ type: 'VIVI_ADDONS_MOVE', id: a.id, by: 1 }).then(refreshAddons), i === state.addons.length - 1),
         sw,

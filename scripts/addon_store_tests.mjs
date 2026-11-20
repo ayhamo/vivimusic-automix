@@ -49,7 +49,7 @@ const msg = (m) => S.handle(m);
 
 check('starts empty and off', await msg({ type: 'VIVI_ADDONS_LIST' }), { enabled: false, tier: 'LOSSLESS', slackSec: 5, cacheMB: 512, cache: null, addons: [] });
 const added = await msg({ type: 'VIVI_ADDONS_ADD', url: 'https://a.example/SECRET-A/manifest.json' });
-check('add: the name and host come back, never the link', added, { ok: true, addon: { id: 'id1', name: 'Addon a', host: 'a.example', enabled: true, health: { state: 'unused' } } });
+check('add: the name and host come back, never the link', added, { ok: true, addon: { id: 'id1', name: 'Addon a', host: 'a.example', enabled: true, health: { state: 'unused' }, quality: null } });
 await msg({ type: 'VIVI_ADDONS_ADD', url: 'https://b.example/SECRET-B/manifest.json' });
 await msg({ type: 'VIVI_ADDONS_ADD', url: 'https://c.example/SECRET-C' });
 check('add: the same addon twice is refused', (await msg({ type: 'VIVI_ADDONS_ADD', url: 'https://A.example/SECRET-A' })).error, 'That addon is already in the list.');
@@ -78,7 +78,7 @@ await msg({ type: 'VIVI_ADDONS_SETTINGS', tier: 'ULTRA' });
 l = await msg({ type: 'VIVI_ADDONS_LIST' });
 check('settings: slack clamped to 10, an unknown tier ignored', [l.enabled, l.tier, l.slackSec], [true, 'HIGH', 10]);
 const got = await msg({ type: 'VIVI_ADDONS_RESOLVE', song: { title: 'x' } });
-check('resolve: only the on addons, in order, with the settings', resolveCalls.at(-1), { addons: [{ base: 'https://b.example/SECRET-B', id: 'id2' }], opt: { slackSec: 10, tier: 'HIGH' } });
+check('resolve: only the on addons, in order, with the settings', resolveCalls.at(-1), { addons: [{ base: 'https://b.example/SECRET-B', id: 'id2', quality: null }], opt: { slackSec: 10, tier: 'HIGH' } });
 check('resolve: the answer leaves the link out', [got.addon, /SECRET/.test(JSON.stringify(got))], [{ name: 'Addon b', host: 'b.example' }, false]);
 const f = await msg({ type: 'VIVI_ADDONS_FIND', song: { title: 'x' } });
 check('find: a ticket, the candidates by host', [typeof f.ticket, f.candidates], ['string', [{ addon: 'b.example', rows: 2 }]]);
@@ -126,6 +126,21 @@ const oldest = findSongs.at(-1).isrc;
 await msg({ type: 'VIVI_ADDONS_FIND', song: { videoId: 'k204', title: 'x' } });
 check('isrc: the last 200 songs are kept', [oldest, findSongs.at(-1).isrc], [undefined, 'USUG11901204']);
 check('other message types are not ours', await S.handle({ type: 'VIVI_LISTENBRAINZ_STATUS' }), undefined);
+
+// 8.4.2: the quality picker, from each addon's manifest, shown with 2 or more options
+client.manifest = async (base) => /b\.example/.test(base) ? { settings: [{ key: 'quality', options: [{ value: 'max', label: 'Max (Hi-Res)' }, { value: 'cd', label: 'CD https://x.example/t' }] }] } : /d.example/.test(base) ? { settings: [{ key: 'quality', options: [{ value: 'only', label: 'Only' }] }] } : Promise.reject(new Error('down'));
+{
+  await msg({ type: 'VIVI_ADDONS_ADD', url: 'https://d.example/SECRET-D' });
+  const L = await msg({ type: 'VIVI_ADDONS_LIST' });
+  const b = L.addons.find((a) => a.host === 'b.example'), c = L.addons.find((a) => a.host === 'd.example');
+  check('picker: options from the manifest, labels without links; one option or none: no picker', [b.qualities, b.quality, 'qualities' in c], [[{ value: 'max', label: 'Max (Hi-Res)' }, { value: 'cd', label: 'CD [link]' }], null, false]);
+  check('picker: a pick is kept', [(await msg({ type: 'VIVI_ADDONS_QUALITY', id: b.id, quality: 'cd' })).ok, storage.data.addonsList.find((a) => a.id === b.id).quality], [true, 'cd']);
+  await msg({ type: 'VIVI_ADDONS_FIND', song: { title: 'Picked', artist: 'X', durationSec: 200 } });
+  check('picker: the pick goes with the search (its quality parameter and the cache key)', findCalls.at(-1).addons.find((a) => a.id === b.id).quality, 'cd');
+  await msg({ type: 'VIVI_ADDONS_QUALITY', id: b.id, quality: null });
+  check('picker: cleared: its first option again', storage.data.addonsList.find((a) => a.id === b.id).quality, null);
+  check('picker: an unknown addon', (await msg({ type: 'VIVI_ADDONS_QUALITY', id: 'zz', quality: 'x' })).error, 'No such addon.');
+}
 
 console.log(failed ? `${failed} failed` : 'all passed');
 process.exit(failed ? 1 : 0);

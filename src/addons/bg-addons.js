@@ -7,17 +7,18 @@
  *
  *   storage.local:
  *     addonsEnabled   false        the master switch
- *     addonsList      []           [{ id, base, name, host, enabled }] in priority order
+ *     addonsList      []           [{ id, base, name, host, enabled, quality? }] in priority order (quality: the picker's value, 8.4.2)
  *     addonsTier      'LOSSLESS'   'LOSSLESS' (the best) | 'HIRES' | 'CD' | 'HIGH' | 'LOW'
  *     addonsSlackSec  5            length slack, 0-10 s
  *     addonsCacheMB   512          the persistent addon cache's size (0: off; file-cache.js, §8.1.6)
  *
  *   messages (type, then fields):
- *     VIVI_ADDONS_LIST                     -> { enabled, tier, slackSec, cacheMB, cache: { files, bytes }, addons: [{ id, name, host, enabled, health }] }
+ *     VIVI_ADDONS_LIST                     -> { enabled, tier, slackSec, cacheMB, cache: { files, bytes }, addons: [{ id, name, host, enabled, health, quality, qualities? }] }
  *     VIVI_ADDONS_ADD      { url }         -> { ok, addon } or { ok: false, error }
  *     VIVI_ADDONS_REMOVE   { id }
  *     VIVI_ADDONS_MOVE     { id, by }      by -1 up, +1 down
  *     VIVI_ADDONS_TOGGLE   { id, enabled }
+ *     VIVI_ADDONS_QUALITY  { id, quality }  the addon's quality pick (null: its first option)
  *     VIVI_ADDONS_SETTINGS { enabled?, tier?, slackSec?, cacheMB? }
  *     VIVI_ADDONS_RESOLVE  { song }        -> client.resolve's answer, the addon's URL left out
  *     VIVI_ADDONS_FIND     { song }        -> { ticket, candidates, tried } search only (the look-ahead)
@@ -44,7 +45,7 @@
     const get = () => storage.get(DEFAULTS);
     const setList = (addonsList) => storage.set({ addonsList });
     // what leaves the background: never the base URL
-    const shown = (a, health) => ({ id: a.id, name: a.name, host: a.host, enabled: a.enabled !== false, health: healthOf(health[a.host]) });
+    const shown = (a, health) => ({ id: a.id, name: a.name, host: a.host, enabled: a.enabled !== false, health: healthOf(health[a.host]), quality: a.quality ?? null });
     function healthOf(h) {
       if (!h) return { state: 'unused' };
       if (h.coolUntil && h.coolUntil > Date.now()) return { state: 'resting', until: h.coolUntil, last: h.last || null };
@@ -56,7 +57,10 @@
       const s = await get();
       const health = client.health();
       const cache = files ? await files.stats().catch(() => null) : null;
-      return { enabled: s.addonsEnabled === true, tier: s.addonsTier, slackSec: s.addonsSlackSec, cacheMB: s.addonsCacheMB, cache, addons: s.addonsList.map((a) => shown(a, health)) };
+      // 8.4.2: each addon's quality options, from its manifest (cached 10 min), shown with 2 or more
+      const qualities = await Promise.all(s.addonsList.map((a) => Promise.resolve(client.manifest?.(a.base)).then(qualityOptions, () => null)));
+      return { enabled: s.addonsEnabled === true, tier: s.addonsTier, slackSec: s.addonsSlackSec, cacheMB: s.addonsCacheMB, cache,
+        addons: s.addonsList.map((a, i) => ({ ...shown(a, health), ...(qualities[i] ? { qualities: qualities[i] } : {}) })) };
     }
 
     // list edits one at a time: each reads the list and writes it back, and two at once lost one
@@ -101,6 +105,12 @@
       const j = Math.max(0, Math.min(l.length - 1, i + Math.sign(by)));
       const [a] = l.splice(i, 1); l.splice(j, 0, a); return l;
     });
+    const qualityOptions = (man) => {
+      const q = (man?.settings || []).find((x) => x.key === 'quality');
+      const opts = (q?.options || []).map((o) => ({ value: String(o.value), label: plain(o.label ?? o.value) })).slice(0, 20);
+      return opts.length >= 2 ? opts : null;
+    };
+    const setQuality = (id, quality) => edit(id, (l, i) => (l[i] = { ...l[i], quality: quality == null || quality === '' ? null : String(quality).slice(0, 80) }, l));
     const toggle = (id, enabled) => edit(id, (l, i) => (l[i] = { ...l[i], enabled: enabled !== false }, l));
 
     async function settings({ enabled, tier, slackSec, cacheMB } = {}) {
@@ -121,7 +131,7 @@
       const s = await get();
       const on = s.addonsList.filter((a) => a.enabled !== false);
       if (!s.addonsEnabled || !on.length) return { none: 'addons off' };
-      const got = await client.resolve(song, on.map((a) => ({ base: a.base, id: a.id })), { slackSec: s.addonsSlackSec, tier: s.addonsTier });
+      const got = await client.resolve(song, on.map((a) => ({ base: a.base, id: a.id, quality: a.quality ?? null })), { slackSec: s.addonsSlackSec, tier: s.addonsTier });
       return outward(got);
     }
     // what the page gets of an answer: names, hosts, row and stream facts; no link, no file URL
@@ -171,7 +181,7 @@
       const on = s.addonsList.filter((a) => a.enabled !== false);
       if (!s.addonsEnabled || !on.length) return { none: 'addons off' };
       const opt = { slackSec: s.addonsSlackSec, tier: s.addonsTier };
-      const { found, tried } = await client.find(song, on.map((a) => ({ base: a.base, id: a.id })), opt);
+      const { found, tried } = await client.find(song, on.map((a) => ({ base: a.base, id: a.id, quality: a.quality ?? null })), opt);
       const shownTried = tried.map(({ addon, why }) => ({ addon, why }));
       if (!found.length) return { none: 'no addon has it', tried: shownTried };
       const ticket = keepTicket({ at: Date.now(), song, opt, found, tried });
@@ -186,7 +196,7 @@
       const known = withIsrc(t.song);
       if (!t.opened && known !== t.song) {
         t.song = known;
-        const again = await client.find(known, t.found.map((f) => ({ base: f.addon.base, id: f.addon.id })), t.opt).catch(() => null);
+        const again = await client.find(known, t.found.map((f) => ({ base: f.addon.base, id: f.addon.id, quality: f.addon.quality ?? null })), t.opt).catch(() => null);
         if (again?.found?.length) { t.found = again.found; t.tried = again.tried; }
       }
       // §8.1.6: a file played before, in rank order (each addon's rows in order), needs no /stream
@@ -302,6 +312,7 @@
         case 'VIVI_ADDONS_REMOVE': return remove(msg.id);
         case 'VIVI_ADDONS_MOVE': return move(msg.id, msg.by);
         case 'VIVI_ADDONS_TOGGLE': return toggle(msg.id, msg.enabled);
+        case 'VIVI_ADDONS_QUALITY': return setQuality(msg.id, msg.quality);
         case 'VIVI_ADDONS_SETTINGS': return settings(msg);
         case 'VIVI_ADDONS_RESOLVE': return resolve(msg.song || {});
         case 'VIVI_ADDONS_FIND': return find(msg.song || {});
@@ -313,7 +324,7 @@
         default: return undefined;
       }
     }
-    return { list, add, remove, move, toggle, settings, resolve, find, open, upgrade, refresh, fetchFile, noteIsrc, handle, ticketOf: (t) => tickets.get(t) };
+    return { list, add, remove, move, toggle, setQuality, settings, resolve, find, open, upgrade, refresh, fetchFile, noteIsrc, handle, ticketOf: (t) => tickets.get(t) };
   }
 
   const api = { create, DEFAULTS, TIERS };
