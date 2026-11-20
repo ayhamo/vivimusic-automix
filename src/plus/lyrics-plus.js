@@ -65,7 +65,7 @@
   function extendKeys(defaults, settings, priorityKeys) {
     // { lyricsplus, ...upstream, paxsenix, genius, spotify }
     for (const obj of [defaults, settings]) {
-      insertKeys(obj, { lyricsplus: true }, 'spotify', { paxsenix: true, genius: true });
+      insertKeys(obj, { lyricsplus: true }, 'spotify', { paxsenix: true, genius: true, simpmusic: true, ytcaptions: true });
     }
     // ['lyricsplus', ..., 'betterlyrics', 'paxsenix', ...]
     priorityKeys.unshift('lyricsplus');
@@ -95,6 +95,76 @@
       L.log('Paxsenix request failed', e?.message || e);
       return null;
     }
+  }
+
+  // SimpMusic (lyrics.md §11.1): keyed by the video id. Of its tracks, the one closest to the song's length within
+  // 10 s; its word-synced lyrics first, then its line-synced. Its answer: { type: 'success', data: [{ durationSeconds,
+  // richSyncLyrics, syncedLyrics, plainLyric }] }; the rich sync comes HTML-escaped (BitChord's EnhancedLrc).
+  const decodeEntities = (t) => (typeof t !== 'string' || !t.includes('&') ? t : t
+    .replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCodePoint(parseInt(h, 16)))
+    .replace(/&#(\d+);/g, (_, d) => String.fromCodePoint(Number(d)))
+    .replace(/&apos;/g, "'").replace(/&quot;/g, '"').replace(/&nbsp;/g, ' ').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&'));
+  function pickSimpMusic(body, durationSec) {
+    const list = Array.isArray(body?.data) ? body.data : [];
+    if (body?.type !== 'success' && body?.success !== true) return null;
+    const sec = Number(durationSec) || 0;
+    const len = (t) => Number(t?.durationSeconds ?? t?.duration) || 0;
+    let best = null;
+    for (const t of list) {
+      if (sec > 0 && Math.abs(len(t) - sec) > 10) continue;
+      if (!best || Math.abs(len(t) - sec) < Math.abs(len(best) - sec)) best = t;
+    }
+    return best;
+  }
+  async function fromSimpMusic(track) {
+    try {
+      if (!track.videoId) return null;
+      const response = await chrome.runtime.sendMessage({ type: 'VIVI_SIMPMUSIC_LYRICS', videoId: track.videoId });
+      if (!response?.ok || !response.body) return null;
+      const t = pickSimpMusic(JSON.parse(response.body), track.duration);
+      if (!t) return null;
+      const api = window.__viviLyrics;
+      const rich = typeof t.richSyncLyrics === 'string' && t.richSyncLyrics.trim() ? api.parseEnhancedLRC(t.richSyncLyrics) : null;
+      let parsed = rich && rich.lines?.length ? rich
+        : typeof t.syncedLyrics === 'string' && t.syncedLyrics.trim() ? api.parseLRC(t.syncedLyrics) : null;
+      if (!parsed || !parsed.lines?.length) return null;
+      for (const l of parsed.lines) {
+        l.text = decodeEntities(l.text);
+        if (Array.isArray(l.words)) for (const w of l.words) w.text = decodeEntities(w.text);
+      }
+      parsed = L.checkTiming(parsed, track, 'SimpMusic');
+      if (!parsed) return null;
+      parsed.provider = 'SimpMusic';
+      return parsed;
+    } catch (e) {
+      L.log('SimpMusic request failed', e?.message || e);
+      return null;
+    }
+  }
+
+  // YouTube's captions (lyrics.md §11.2): the page reads the player's caption tracks (video-canvas-page.js op
+  // 'captions'); line-synced only. Asked last, when no other source has the song.
+  let capSeq = 0;
+  function fromYtCaptions(track) {
+    if (!track.videoId) return Promise.resolve(null);
+    return new Promise((resolve) => {
+      const reqId = 'vlq' + (++capSeq);
+      const done = (lines) => {
+        clearTimeout(timer); window.removeEventListener('message', on);
+        if (!Array.isArray(lines) || !lines.length) { resolve(null); return; }
+        const parsed = L.checkTiming({ mode: 'line', lines }, track, 'YouTube captions');
+        if (parsed) parsed.provider = 'YouTube captions';
+        resolve(parsed || null);
+      };
+      const on = (e) => {
+        const d = e.data;
+        if (e.source === window && d && d.ch === 'vivi-vcanvas' && d.dir === 'out' && d.reqId === reqId) done(d.ok ? d.lines : null);
+      };
+      const timer = setTimeout(() => done(null), 8000);
+      window.addEventListener('message', on);
+      window.postMessage({ ch: 'vivi-vcanvas', dir: 'in', op: 'captions', reqId, id: track.videoId, lang: navigator.language || 'en' }, window.location.origin);
+    });
   }
 
   // Genius — plain-text lyrics fallback
@@ -206,6 +276,7 @@
     add('paxsenix', fromPaxsenix);
     add('lyricsplus', fromLyricsPlus);
     add('genius', fromGenius);
+    add('simpmusic', fromSimpMusic);
   }
 
   // Smart Fallback Cascade: if no lyrics were found on the first pass
@@ -249,11 +320,13 @@
         best = await raceProviders(titleJobs, onUpdate);
       }
     }
+    // 3. YouTube's own captions, after every other source (lyrics.md §11.3)
+    if (!best && on('ytcaptions')) best = await fromYtCaptions(track);
     return best;
   }
 
   // Result labels of our providers, for providerKeyForName().
-  const PLUS_KEY_BY_NAME = { Paxsenix: 'paxsenix', LyricsPlus: 'lyricsplus', Genius: 'genius' };
+  const PLUS_KEY_BY_NAME = { Paxsenix: 'paxsenix', LyricsPlus: 'lyricsplus', Genius: 'genius', SimpMusic: 'simpmusic', 'YouTube captions': 'ytcaptions' };
 
   function bind(ctx) {
     L = ctx;
@@ -281,5 +354,5 @@
     } catch { return {}; }
   }
 
-  plus.lyrics = { extendKeys, cleanTrack, addProviders, fallback, bind, cleanTitleForLyrics, cleanArtistForLyrics, agentOf };
+  plus.lyrics = { extendKeys, cleanTrack, addProviders, fallback, bind, cleanTitleForLyrics, cleanArtistForLyrics, agentOf, pickSimpMusic, decodeEntities };
 })();

@@ -373,6 +373,16 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       .catch((e) => sendResponse({ ok: false, error: String(e?.message || e) }));
     return true;
   }
+  if (msg?.type === 'VIVI_SIMPMUSIC_LYRICS') {
+    // lyrics.md §11.1: SimpMusic answers its own clients only (by the User-Agent) and sends no CORS header
+    const id = String(msg.videoId || '');
+    if (!/^[\w-]{11}$/.test(id)) { sendResponse({ ok: false }); return undefined; }
+    fetch('https://api-lyrics.simpmusic.org/v1/' + id, { headers: { 'User-Agent': 'SimpMusicLyrics/1.0', Accept: 'application/json' }, credentials: 'omit' })
+      .then((r) => (r.ok ? r.text() : null))
+      .then((body) => sendResponse({ ok: !!body, body: body || null }))
+      .catch((e) => sendResponse({ ok: false, error: String(e?.message || e) }));
+    return true;
+  }
   if (msg?.type === 'VIVI_GENIUS_LYRICS') {
     getGeniusLyrics(msg.track || {})
       .then((html) => sendResponse({ ok: !!html, html: html || null }))

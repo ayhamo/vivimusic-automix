@@ -9,7 +9,7 @@
   // ── What upstream's scripts read from us ──
   window.viviPlusPopup = {
     // popup.js: extra lyrics providers (on by default) and their priority labels
-    providers: { lyricsplus: true, paxsenix: true, genius: true },
+    providers: { lyricsplus: true, paxsenix: true, genius: true, simpmusic: true, ytcaptions: true },
     priorityLabels: { paxsenix: 'Paxsenix (Apple Music)', lyricsplus: 'LyricsPlus (Syllable / Word)' },
     // popup.js: where the update button leads (upstream's points at its own AMO listing)
     updatePage: 'https://github.com/ayhamo/vivimusic-automix/releases/latest',
@@ -222,6 +222,11 @@
       <label class="switch small"><input type="checkbox" id="lyricsRealTimingToggle"/><span class="slider"></span></label>
     </div>
     <p class="theme-sub">Off: each line lights up a little before it is sung, so it's in place when the voice comes. On: exactly on time.</p>
+    <div class="row" style="margin-top:8px;">
+      <span class="row-label">Translate the lyrics</span>
+      <label class="switch small"><input type="checkbox" id="lyricsTranslateToggle"/><span class="slider"></span></label>
+    </div>
+    <p class="theme-sub">Shows each line in your browser's language under it, by Google Translate. Nothing shows for a song already in that language.</p>
 `, rowOrNote('lyricsAnimSelect'), 'afterend');
 
   // Lyrics: extra providers
@@ -236,6 +241,14 @@
       <div class="provider-row">
         <span class="pname">Genius<small>Fallback</small></span><span class="lvls"><i class="lvl lvl-line" style="background:rgba(255,255,255,0.15);color:#fff;">PLAIN</i></span>
         <label class="switch small"><input type="checkbox" id="prov-genius" checked/><span class="slider"></span></label>
+      </div>
+      <div class="provider-row">
+        <span class="pname">SimpMusic<small>By the video</small></span><span class="lvls"><i class="lvl lvl-word">WORD</i><i class="lvl lvl-line">LINE</i></span>
+        <label class="switch small"><input type="checkbox" id="prov-simpmusic" checked/><span class="slider"></span></label>
+      </div>
+      <div class="provider-row">
+        <span class="pname">YouTube captions<small>Last resort</small></span><span class="lvls"><i class="lvl lvl-line">LINE</i></span>
+        <label class="switch small"><input type="checkbox" id="prov-ytcaptions" checked/><span class="slider"></span></label>
       </div>
 `, document.getElementById('prov-lrclib')?.closest('.provider-row'), 'afterend');
 
@@ -646,7 +659,8 @@
     const sp = document.getElementById('lyricsLineSpacingRange'), spVal = document.getElementById('lyricsLineSpacingVal');
     const showSize = (v) => { size.value = String(v || 36); sizeVal.textContent = v ? v + ' px' : 'Style'; };
     const showSp = (v) => { sp.value = String(v || 1.3); spVal.textContent = v ? Number(v).toFixed(1) + '×' : 'Style'; };
-    chrome.storage.local.get({ lyricsTextSize: 0, lyricsLineSpacing: 0, lyricsAutoScroll: true, lyricsDuetSides: true, lyricsRealTiming: false }, (s) => {
+    chrome.storage.local.get({ lyricsTextSize: 0, lyricsLineSpacing: 0, lyricsAutoScroll: true, lyricsDuetSides: true, lyricsRealTiming: false, lyricsTranslate: false }, (s) => {
+      document.getElementById('lyricsTranslateToggle').checked = s.lyricsTranslate === true;
       showSize(s.lyricsTextSize); showSp(s.lyricsLineSpacing);
       document.getElementById('lyricsAutoScrollToggle').checked = s.lyricsAutoScroll !== false;
       document.getElementById('lyricsDuetSidesToggle').checked = s.lyricsDuetSides !== false;
@@ -656,7 +670,7 @@
     size.addEventListener('dblclick', () => { showSize(0); chrome.storage.local.set({ lyricsTextSize: 0 }); });
     sp.addEventListener('input', () => { const v = Math.round(Number(sp.value) * 10) / 10; showSp(v); chrome.storage.local.set({ lyricsLineSpacing: v }); });
     sp.addEventListener('dblclick', () => { showSp(0); chrome.storage.local.set({ lyricsLineSpacing: 0 }); });
-    for (const [id, key] of [['lyricsAutoScrollToggle', 'lyricsAutoScroll'], ['lyricsDuetSidesToggle', 'lyricsDuetSides'], ['lyricsRealTimingToggle', 'lyricsRealTiming']]) {
+    for (const [id, key] of [['lyricsAutoScrollToggle', 'lyricsAutoScroll'], ['lyricsDuetSidesToggle', 'lyricsDuetSides'], ['lyricsRealTimingToggle', 'lyricsRealTiming'], ['lyricsTranslateToggle', 'lyricsTranslate']]) {
       const box = document.getElementById(id);
       box.addEventListener('change', () => chrome.storage.local.set({ [key]: box.checked }));
     }

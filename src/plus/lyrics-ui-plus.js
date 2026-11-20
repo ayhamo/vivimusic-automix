@@ -385,6 +385,7 @@
   let gapEls = [];
   function addGaps(list, result) {
     gapEls = [];
+    translate(list, result);
     if (!RULES || !result || result.mode === 'plain' || !Array.isArray(result.lines)) return;
     const lineEls = list.querySelectorAll('.vivi-lyrics-line');
     for (const [start, end, before] of RULES.gaps(result.lines)) {
@@ -425,6 +426,74 @@
     read();
     chrome.storage.onChanged.addListener((ch, area) => { if (area === 'local' && (ch.lyricsTextSize || ch.lyricsLineSpacing)) read(); });
   } catch { /* the style's sizes */ }
+
+  // ── lyrics.md §10: translation (setting lyricsTranslate, off by default). Google's keyless endpoint, into the
+  // browser's language; the lines go in batches of up to 3500 characters joined by private-use markers (BitChord's
+  // LyricsTranslation). Each translation sits under its line at 0.64 of its size, 0.7 opaque on the active line and
+  // 0.3 on the others. A song already in that language shows nothing. ──
+  let translateOn = false, lastList = null, lastResult = null;
+  const transCache = new Map();
+  try {
+    chrome.storage.local.get({ lyricsTranslate: false }).then((s) => { translateOn = s.lyricsTranslate === true; if (translateOn && lastList) translate(lastList, lastResult); }).catch(() => {});
+    chrome.storage.onChanged.addListener((ch, area) => {
+      if (area !== 'local' || !ch.lyricsTranslate) return;
+      translateOn = ch.lyricsTranslate.newValue === true;
+      if (lastList) translate(lastList, lastResult);
+    });
+  } catch { /* stays off */ }
+  const transCss = document.createElement('style');
+  transCss.textContent = '.vivi-lyrics-trans{display:block;margin-top:.12em;font-size:.64em;font-weight:500;line-height:1.3;opacity:.3;-webkit-text-fill-color:currentColor;pointer-events:none}'
+    + '.vivi-lyrics-line.vivi-lyrics-active .vivi-lyrics-trans{opacity:.7}';
+  (document.head || document.documentElement).append(transCss);
+  const MARK = (i) => '\uE000' + String(i).padStart(4, '0') + '\uE001';
+  async function translateBatch(texts, tl) {
+    const body = new URLSearchParams({ client: 'dict-chrome-ex', sl: 'auto', tl, dt: 't', q: texts.map((x, i) => (i ? '\n' + MARK(i) + '\n' : '') + x).join('') });
+    const res = await fetch('https://translate.googleapis.com/translate_a/single', { method: 'POST', body, credentials: 'omit' });
+    if (!res.ok) return null;
+    const root = await res.json();
+    const out = (root[0] || []).map((seg) => (seg && seg[0]) || '').join('').split(/\uE000[^\uE001]*\uE001/).map((x) => x.trim());
+    return out.length === texts.length && out.every(Boolean) ? { out, src: String(root[2] || '') } : null;
+  }
+  async function translate(list, result) {
+    lastList = list; lastResult = result;
+    list.querySelectorAll('.vivi-lyrics-trans').forEach((el) => el.remove());
+    if (!translateOn || !result || !Array.isArray(result.lines)) return;
+    const tl = String(navigator.language || 'en');
+    const slots = [];
+    result.lines.forEach((l, i) => { const x = String((l && l.text) || '').trim(); if (x) slots.push({ i, x }); });
+    if (!slots.length) return;
+    const key = tl + '\n' + slots.map((s) => s.x).join('\n');
+    let got = transCache.get(key);
+    if (!got) {
+      const batches = [];
+      let cur = [], len = 0;
+      for (const s of slots) {
+        const add = s.x.length + (cur.length ? 8 : 0);
+        if (cur.length && len + add > 3500) { batches.push(cur); cur = []; len = 0; }
+        cur.push(s); len += add;
+      }
+      if (cur.length) batches.push(cur);
+      try {
+        const answers = [];
+        for (let k = 0; k < batches.length; k += 2) answers.push(...await Promise.all(batches.slice(k, k + 2).map((b) => translateBatch(b.map((s) => s.x), tl))));
+        if (answers.some((a) => !a)) return;
+        got = { texts: answers.flatMap((a) => a.out), src: answers[0].src };
+      } catch { return; }
+      transCache.set(key, got);
+      if (transCache.size > 20) transCache.delete(transCache.keys().next().value);
+    }
+    if (lastResult !== result || !list.isConnected || !translateOn) return;
+    if (got.src.split('-')[0].toLowerCase() === tl.split('-')[0].toLowerCase()) return;   // already in that language
+    const lineEls = list.querySelectorAll('.vivi-lyrics-line');
+    slots.forEach((s, k) => {
+      const el = lineEls[s.i];
+      if (!el || got.texts[k] === s.x) return;
+      const sub = document.createElement('span');
+      sub.className = 'vivi-lyrics-trans';
+      sub.textContent = got.texts[k];
+      el.appendChild(sub);
+    });
+  }
 
   plus.lyricsUi = {
     tabByPosition, onUserTabClick, makeRefreshIcon, makeRefetchTabButton, syncRefetchTabButton,

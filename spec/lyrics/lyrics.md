@@ -125,8 +125,8 @@ Cases: `gaps`.
 - Music videos: on since 2026-11-20 for everyone, once (`src/plus/bg-plus.js`, flag `vivi_video_lyrics_on_2026_11`); the PC keeps upstream's switch "Show lyrics for video songs" (the rule has none).
 - Text size and spacing: built 2026-11-20 as popup sliders (storage.local `lyricsTextSize` 10-40, `lyricsLineSpacing` 1.0-2.5, `src/plus/lyrics-ui-plus.js` `applySize`), but the default is the style's own sizes (22-36 px, `src/canvas.css:158-171, 342, 361`), not 36 and 1.3: a set size applies to every line, so the styles' larger active line is lost. The popup also has switches for §2.6 (real timing), §4.1 (auto-scroll) and §5.2 (sides).
 - Romanization: off / only / both (`lyricsRoman`), the romanized line under the original at 0.62 em (`src/canvas.css:1311`); a language picker.
-- Translation: none.
-- Sources: no SimpMusic, no YouTube captions. The PC races its providers (`src/lyrics.js:1050-1119`).
+- Translation: built 2026-11-20 (`src/plus/lyrics-ui-plus.js` `translate`, through the line-render hook; storage.local `lyricsTranslate`, a popup switch, not a lyrics-menu one), into the browser's language. Kept in memory for the last 20 songs, not on disk. No Latin-script retry through Input Tools (BitChord's).
+- Sources: built 2026-11-20. SimpMusic (`src/plus/lyrics-plus.js` `fromSimpMusic`, fetched by `src/plus/bg-plus.js`) joins the race, not after it: the PC races its providers (`src/lyrics.js:1050-1119`). Its answer is `{ type: "success", data: [{ durationSeconds, … }] }`, not BitChord's `success` and `duration` (BitChord's fork reads none of it). YouTube captions (`fromYtCaptions`, read by the page in `src/plus/video-canvas-page.js` op `captions`) are asked only when nothing else answered. Both are popup provider switches, on by default.
 
 ### Phone strip against the original
 
