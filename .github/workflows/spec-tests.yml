@@ -39,6 +39,7 @@ jobs:
         run: |
           node scripts/addon_client_tests.mjs
           node scripts/addon_store_tests.mjs
+          node scripts/addon_file_cache_tests.mjs
           node scripts/addon_page_tests.mjs
       - name: Canvas
         run: |

@@ -10,18 +10,19 @@
  *     addonsList      []           [{ id, base, name, host, enabled }] in priority order
  *     addonsTier      'LOSSLESS'   'LOSSLESS' (the best) | 'HIRES' | 'CD' | 'HIGH' | 'LOW'
  *     addonsSlackSec  5            length slack, 0-10 s
+ *     addonsCacheMB   512          the persistent addon cache's size (0: off; file-cache.js, §8.1.6)
  *
  *   messages (type, then fields):
- *     VIVI_ADDONS_LIST                     -> { enabled, tier, slackSec, addons: [{ id, name, host, enabled, health }] }
+ *     VIVI_ADDONS_LIST                     -> { enabled, tier, slackSec, cacheMB, cache: { files, bytes }, addons: [{ id, name, host, enabled, health }] }
  *     VIVI_ADDONS_ADD      { url }         -> { ok, addon } or { ok: false, error }
  *     VIVI_ADDONS_REMOVE   { id }
  *     VIVI_ADDONS_MOVE     { id, by }      by -1 up, +1 down
  *     VIVI_ADDONS_TOGGLE   { id, enabled }
- *     VIVI_ADDONS_SETTINGS { enabled?, tier?, slackSec? }
+ *     VIVI_ADDONS_SETTINGS { enabled?, tier?, slackSec?, cacheMB? }
  *     VIVI_ADDONS_RESOLVE  { song }        -> client.resolve's answer, the addon's URL left out
  *     VIVI_ADDONS_FIND     { song }        -> { ticket, candidates, tried } search only (the look-ahead)
  *     VIVI_ADDONS_ISRC     { videoId, isrc } -> { ok }: the ISRC the lyrics lookup learned (protocol.md §7, ISRC first)
- *     VIVI_ADDONS_OPEN     { ticket }      -> { addon, row, stream, tried } or { none, tried }: /stream + probe
+ *     VIVI_ADDONS_OPEN     { ticket }      -> { addon, row, stream, tried, cached? } or { none, tried }: the cache, else /stream + probe
  *     VIVI_ADDONS_FETCH    { ticket }      -> { bytes (ArrayBuffer), mime } or { none }: the opened file (Firefox passes ArrayBuffers)
  *
  * globalThis.__viviAddons
@@ -32,10 +33,11 @@
   const Pick = globalThis.__viviAddonPick || (typeof require === 'function' ? require('./pick.js') : null);
 
   const TIERS = ['LOSSLESS', 'HIRES', 'CD', 'HIGH', 'LOW'];   // (LOSSLESS: the addon's best)
-  const DEFAULTS = { addonsEnabled: false, addonsList: [], addonsTier: 'LOSSLESS', addonsSlackSec: 5 };
+  const DEFAULTS = { addonsEnabled: false, addonsList: [], addonsTier: 'LOSSLESS', addonsSlackSec: 5, addonsCacheMB: 512 };
+  const CACHE_SIZES = [0, 256, 512, 1024, 2048];   // MB
   const MAX_ADDONS = 12;
 
-  function create({ storage, client = C.create({ log: (...a) => console.info('[vivi addons]', ...a) }), newId = () => Math.random().toString(36).slice(2, 10), fetch: doFetch = globalThis.fetch?.bind(globalThis) } = {}) {
+  function create({ storage, client = C.create({ log: (...a) => console.info('[vivi addons]', ...a) }), newId = () => Math.random().toString(36).slice(2, 10), fetch: doFetch = globalThis.fetch?.bind(globalThis), files = null } = {}) {
     const get = () => storage.get(DEFAULTS);
     const setList = (addonsList) => storage.set({ addonsList });
     // what leaves the background: never the base URL
@@ -50,7 +52,8 @@
     async function list() {
       const s = await get();
       const health = client.health();
-      return { enabled: s.addonsEnabled === true, tier: s.addonsTier, slackSec: s.addonsSlackSec, addons: s.addonsList.map((a) => shown(a, health)) };
+      const cache = files ? await files.stats().catch(() => null) : null;
+      return { enabled: s.addonsEnabled === true, tier: s.addonsTier, slackSec: s.addonsSlackSec, cacheMB: s.addonsCacheMB, cache, addons: s.addonsList.map((a) => shown(a, health)) };
     }
 
     // list edits one at a time: each reads the list and writes it back, and two at once lost one
@@ -97,13 +100,15 @@
     });
     const toggle = (id, enabled) => edit(id, (l, i) => (l[i] = { ...l[i], enabled: enabled !== false }, l));
 
-    async function settings({ enabled, tier, slackSec } = {}) {
+    async function settings({ enabled, tier, slackSec, cacheMB } = {}) {
       const patch = {};
       if (typeof enabled === 'boolean') patch.addonsEnabled = enabled;
       if (TIERS.includes(tier)) patch.addonsTier = tier;
       const n = Number(slackSec);
       if (slackSec != null && Number.isFinite(n)) patch.addonsSlackSec = Math.max(0, Math.min(10, Math.round(n)));
+      if (CACHE_SIZES.includes(Number(cacheMB))) patch.addonsCacheMB = Number(cacheMB);
       if (Object.keys(patch).length) await storage.set(patch);
+      if ('addonsCacheMB' in patch) await files?.trim();
       return { ok: true };
     }
 
@@ -113,7 +118,7 @@
       const s = await get();
       const on = s.addonsList.filter((a) => a.enabled !== false);
       if (!s.addonsEnabled || !on.length) return { none: 'addons off' };
-      const got = await client.resolve(song, on.map((a) => ({ base: a.base })), { slackSec: s.addonsSlackSec, tier: s.addonsTier });
+      const got = await client.resolve(song, on.map((a) => ({ base: a.base, id: a.id })), { slackSec: s.addonsSlackSec, tier: s.addonsTier });
       return outward(got);
     }
     // what the page gets of an answer: names, hosts, row and stream facts; no link, no file URL
@@ -163,7 +168,7 @@
       const on = s.addonsList.filter((a) => a.enabled !== false);
       if (!s.addonsEnabled || !on.length) return { none: 'addons off' };
       const opt = { slackSec: s.addonsSlackSec, tier: s.addonsTier };
-      const { found, tried } = await client.find(song, on.map((a) => ({ base: a.base })), opt);
+      const { found, tried } = await client.find(song, on.map((a) => ({ base: a.base, id: a.id })), opt);
       const shownTried = tried.map(({ addon, why }) => ({ addon, why }));
       if (!found.length) return { none: 'no addon has it', tried: shownTried };
       const ticket = keepTicket({ at: Date.now(), song, opt, found, tried });
@@ -177,14 +182,28 @@
       const known = withIsrc(t.song);
       if (!t.opened && known !== t.song) {
         t.song = known;
-        const again = await client.find(known, t.found.map((f) => ({ base: f.addon.base })), t.opt).catch(() => null);
+        const again = await client.find(known, t.found.map((f) => ({ base: f.addon.base, id: f.addon.id })), t.opt).catch(() => null);
         if (again?.found?.length) { t.found = again.found; t.tried = again.tried; }
       }
+      // §8.1.6: a file played before, in rank order (each addon's rows in order), needs no /stream
+      if (!t.opened) { const hit = await cached(t); if (hit) t.opened = Promise.resolve(hit); }
       if (!t.opened) t.opened = client.open(t.found, t.song, t.opt, [...t.tried]).catch((e) => ({ none: C.scrub(e?.message || e), tried: [] }));
       const got = await t.opened;
       if (!got.addon) t.opened = null;   // nothing (a limit, say): may be asked again later
       t.got = got.addon ? got : null;
-      return outward(got);
+      return { ...outward(got), ...(got.cacheKey ? { cached: true } : {}) };
+    }
+    const cacheKey = (addon, row, opt) => files && addon?.id && row?.id ? files.keyOf(addon.id, row.id, addon.quality ?? opt?.tier) : null;
+    async function cached(t) {
+      if (!files) return null;
+      for (const { addon, rows } of t.found) {
+        for (const row of rows) {
+          const key = cacheKey(addon, row, t.opt);
+          const meta = key && await files.has(key).catch(() => null);
+          if (meta) return { addon: { base: addon.base, name: addon.name, host: addon.host, id: addon.id }, row, stream: meta.stream || {}, tried: [...t.tried], cacheKey: key };
+        }
+      }
+      return null;
     }
 
     // FETCH (protocol.md §8, PC step 2): the opened file's bytes, for the page to fit and play.
@@ -214,6 +233,12 @@
       const t = tickets.get(ticket);
       const s = t?.got?.stream;
       if (!s) return { none: t ? 'not opened' : 'ticket expired' };
+      if (t.got.cacheKey) {
+        const hit = await files.get(t.got.cacheKey).catch(() => null);
+        if (hit) return { bytes: hit.bytes, mime: hit.meta?.mime || s.mimeType || mimeOf(s.codec), cached: true };
+        t.opened = null; t.got = null;   // the browser let it go: OPEN again
+        return { none: 'the cached file is gone' };
+      }
       const ctl = new AbortController();
       const timer = setTimeout(() => ctl.abort(), FILE_TIMEOUT_MS);
       try {
@@ -223,8 +248,12 @@
         if (size > FILE_MAX_BYTES) { try { await r.body?.cancel(); } catch { /* gone */ } return { none: `the file is too big (${Math.round(size / 1e6)} MB)` }; }
         const bytes = await readCapped(r, FILE_MAX_BYTES);   // (no Content-Length: counted as it comes)
         if (!bytes) return { none: `the file is too big (over ${Math.round(FILE_MAX_BYTES / 1e6)} MB)` };
-        const mime = (r.headers.get('content-type') || '').split(';')[0].trim();
-        return { bytes, mime: /^audio\//.test(mime) ? mime : s.mimeType || mimeOf(s.codec) };
+        const ct = (r.headers.get('content-type') || '').split(';')[0].trim();
+        const mime = /^audio\//.test(ct) ? ct : s.mimeType || mimeOf(s.codec);
+        // kept for the next play (§8.1.6): the stream's facts, never its URL or headers
+        const key = cacheKey(t.got.addon, t.got.row, t.opt);
+        if (key) files.put(key, bytes, { mime, stream: outward(t.got).stream }).catch(() => {});
+        return { bytes, mime };
       } catch (e) {
         return { none: ctl.signal.aborted ? 'the file took too long' : C.scrub(`the file failed: ${e?.message || e}`) };
       } finally { clearTimeout(timer); }
@@ -256,7 +285,9 @@
 
   // the extension's background: one store, one listener for our message types only
   if (typeof chrome === 'object' && chrome?.runtime?.onMessage && chrome?.storage?.local) {
-    const store = create({ storage: chrome.storage.local });
+    const FC = globalThis.__viviAddonFileCache;
+    const files = FC && globalThis.caches ? FC.create({ storage: chrome.storage.local, maxBytes: async () => (await chrome.storage.local.get({ addonsCacheMB: DEFAULTS.addonsCacheMB })).addonsCacheMB * 1e6 }) : null;
+    const store = create({ storage: chrome.storage.local, files });
     // content scripts (YouTube Music's tab) may only FIND, OPEN and FETCH; the list and its
     // settings change only from the extension's own pages (the popup)
     const PAGE_TYPES = new Set(['VIVI_ADDONS_FIND', 'VIVI_ADDONS_OPEN', 'VIVI_ADDONS_FETCH']);

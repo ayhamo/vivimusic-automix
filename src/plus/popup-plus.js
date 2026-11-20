@@ -530,6 +530,17 @@
       <input type="range" id="addonsSlackSec" min="0" max="10" step="1" value="5"/>
     </div>
     <p class="theme-sub" style="margin-top:2px;">An addon's song may be this much longer or shorter than YouTube's and still be used. Atmos versions and short previews are never used.</p>
+    <div class="row" style="margin-top:8px; display:flex; align-items:center; justify-content:space-between; gap:8px;">
+      <span style="font-size:12.5px;">Keep played songs</span>
+      <select id="addonsCacheSelect" style="background:rgba(255,255,255,0.06); color:var(--text-1); border:1px solid rgba(255,255,255,0.12); border-radius:8px; padding:5px 8px; font-size:12.5px;">
+        <option value="0">Off</option>
+        <option value="256">256 MB</option>
+        <option value="512" selected>512 MB</option>
+        <option value="1024">1 GB</option>
+        <option value="2048">2 GB</option>
+      </select>
+    </div>
+    <p class="theme-sub" style="margin-top:2px;" id="addonsCacheInfo">A song played again comes from here, with no download. The least recently played go first.</p>
   </div>
 `, document.getElementById('eqToggle')?.closest('.section'), 'afterend');
 
@@ -550,6 +561,8 @@
   const addonsSlack = document.getElementById('addonsSlackSec');
   const addonsSlackVal = document.getElementById('addonsSlackVal');
   const addonsListEl = document.getElementById('addonsList');
+  const addonsCacheSelect = document.getElementById('addonsCacheSelect');
+  const addonsCacheInfo = document.getElementById('addonsCacheInfo');
 
   const HEALTH = {
     unused: ['rgba(255,255,255,0.3)', 'Not asked yet'],
@@ -612,6 +625,9 @@
       addonsTierSelect.value = state.tier;
       addonsSlack.value = state.slackSec;
       addonsSlackVal.textContent = state.slackSec + ' s';
+      if (state.cacheMB != null) addonsCacheSelect.value = String(state.cacheMB);
+      const held = state.cache?.files ? ` Holds ${state.cache.files} song${state.cache.files === 1 ? '' : 's'}, ${Math.round(state.cache.bytes / 1e6)} MB.` : '';
+      addonsCacheInfo.textContent = 'A song played again comes from here, with no download. The least recently played go first.' + held;
       renderAddons(state);
     });
   }
@@ -652,6 +668,7 @@
   addonsTierSelect.addEventListener('change', () => ask({ type: 'VIVI_ADDONS_SETTINGS', tier: addonsTierSelect.value }));
   addonsSlack.addEventListener('input', () => { addonsSlackVal.textContent = addonsSlack.value + ' s'; });
   addonsSlack.addEventListener('change', () => ask({ type: 'VIVI_ADDONS_SETTINGS', slackSec: Number(addonsSlack.value) }));
+  addonsCacheSelect.addEventListener('change', () => ask({ type: 'VIVI_ADDONS_SETTINGS', cacheMB: Number(addonsCacheSelect.value) }).then(refreshAddons));
 
   /* -------------------------------------------------------------------------
    * ListenBrainz Scrobbling

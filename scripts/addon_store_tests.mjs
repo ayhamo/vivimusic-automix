@@ -47,7 +47,7 @@ const fakeFetch = async (url, init) => {
 const S = A.create({ storage, client, newId: () => 'id' + ++n, fetch: fakeFetch });
 const msg = (m) => S.handle(m);
 
-check('starts empty and off', await msg({ type: 'VIVI_ADDONS_LIST' }), { enabled: false, tier: 'LOSSLESS', slackSec: 5, addons: [] });
+check('starts empty and off', await msg({ type: 'VIVI_ADDONS_LIST' }), { enabled: false, tier: 'LOSSLESS', slackSec: 5, cacheMB: 512, cache: null, addons: [] });
 const added = await msg({ type: 'VIVI_ADDONS_ADD', url: 'https://a.example/SECRET-A/manifest.json' });
 check('add: the name and host come back, never the link', added, { ok: true, addon: { id: 'id1', name: 'Addon a', host: 'a.example', enabled: true, health: { state: 'unused' } } });
 await msg({ type: 'VIVI_ADDONS_ADD', url: 'https://b.example/SECRET-B/manifest.json' });
@@ -78,7 +78,7 @@ await msg({ type: 'VIVI_ADDONS_SETTINGS', tier: 'ULTRA' });
 l = await msg({ type: 'VIVI_ADDONS_LIST' });
 check('settings: slack clamped to 10, an unknown tier ignored', [l.enabled, l.tier, l.slackSec], [true, 'HIGH', 10]);
 const got = await msg({ type: 'VIVI_ADDONS_RESOLVE', song: { title: 'x' } });
-check('resolve: only the on addons, in order, with the settings', resolveCalls.at(-1), { addons: [{ base: 'https://b.example/SECRET-B' }], opt: { slackSec: 10, tier: 'HIGH' } });
+check('resolve: only the on addons, in order, with the settings', resolveCalls.at(-1), { addons: [{ base: 'https://b.example/SECRET-B', id: 'id2' }], opt: { slackSec: 10, tier: 'HIGH' } });
 check('resolve: the answer leaves the link out', [got.addon, /SECRET/.test(JSON.stringify(got))], [{ name: 'Addon b', host: 'b.example' }, false]);
 const f = await msg({ type: 'VIVI_ADDONS_FIND', song: { title: 'x' } });
 check('find: a ticket, the candidates by host', [typeof f.ticket, f.candidates], ['string', [{ addon: 'b.example', rows: 2 }]]);

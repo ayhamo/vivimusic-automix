@@ -113,7 +113,7 @@
       else Object.assign(s, { state: 'found', why: r.none, tried: r.tried });   // a limit or a miss: may be opened again later
       const st = r.stream;
       show();
-      log(`${s.meta?.artist} - ${s.meta?.song}: ${r.addon ? `${r.addon.name} (${r.addon.host}) row ${r.row.id}, ${st.codec || '?'}${st.sampleRate ? ' ' + st.sampleRate / 1000 + ' kHz' : ''}${st.bitDepth ? '/' + st.bitDepth : ''}` : 'nothing to play: ' + r.none} (OPEN ${((Date.now() - t0) / 1000).toFixed(1)} s)`, r.tried?.length ? r.tried : '');
+      log(`${s.meta?.artist} - ${s.meta?.song}: ${r.addon ? `${r.addon.name} (${r.addon.host}) row ${r.row.id}, ${st.codec || '?'}${st.sampleRate ? ' ' + st.sampleRate / 1000 + ' kHz' : ''}${st.bitDepth ? '/' + st.bitDepth : ''}` : 'nothing to play: ' + r.none} (OPEN ${((Date.now() - t0) / 1000).toFixed(1)} s${r.cached ? ', from the cache' : ''})`, r.tried?.length ? r.tried : '');
       s.open = null;
       return s;
     })();

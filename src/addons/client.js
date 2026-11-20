@@ -401,7 +401,7 @@
           if (!p.ok) { tried.push({ addon: addon.host, row: row.id, why: p.why }); continue; }
           note(addon.base, true, 'ok', now() - t0);
           log(`addons: ${man.name} (${addon.host}) has it: row ${row.id}, ${s.codec || '?'}${s.sampleRate ? ' ' + s.sampleRate / 1000 + ' kHz' : ''}${s.bitDepth ? '/' + s.bitDepth : ''}`);
-          return { addon: { base: addon.base, name: man.name, host: addon.host }, row, stream: s };
+          return { addon: { base: addon.base, name: man.name, host: addon.host, id: addon.id }, row, stream: s };
         }
       } catch (e) {
         if (e.kind === 'limit') { tried.push({ addon: addon.host, why: e.message }); return null; }   // not a fault
