@@ -354,56 +354,83 @@
       healthOf.set(base, h);
     }
 
-    // Look-ahead (§8): search and pick only, every addon in priority order. No /stream calls,
-    // so it is safe for the next song. -> { found: [{ addon, rows }], tried }
-    async function find(target, addons, { slackSec = 5, tier = 'LOSSLESS' } = {}) {
-      const tried = [], found = [];
-      for (const a of addons) {
-        const addon = { tier, ...a, base: baseOf(a.base) };
-        const host = redact(addon.base);
-        const h = healthOf.get(addon.base);
-        if (h && h.coolUntil > now()) { tried.push({ addon: host, why: 'resting after failures' }); continue; }
-        const t0 = now();
-        try {
-          const man = await manifest(addon.base);
-          if (man.needsOfficial) { tried.push({ addon: host, why: NEEDS_OFFICIAL }); continue; }
-          if (!man.usable) { tried.push({ addon: host, why: 'no search' }); continue; }
-          let open = [], refused = [];
-          for (const q of M.queries(target)) {
-            ({ open, refused } = Pick.rowsToOpen(await search(addon, target, q, man), target, { slackSec }));
-            if (open.length) break;
-          }
-          note(addon.base, true, open.length ? 'ok' : 'no match', now() - t0);
-          if (!open.length) { tried.push({ addon: host, why: 'no match', refused }); continue; }
-          found.push({ addon: { ...addon, name: man.name, host }, rows: open });
-        } catch (e) { failed(addon.base, host, e, t0, tried); }
-      }
-      return { found, tried };
+    // Look-ahead (§8): search and pick only, every addon at once (§8.1.4), listed in priority order.
+    // No /stream calls, so it is safe for the next song. -> { found: [{ addon, rows }], tried }
+    async function find(target, addons, opt = {}) {
+      const lanes = addons.map(() => []);
+      const got = await Promise.all(addons.map((a, i) => findOne(a, target, opt, lanes[i])));
+      return { found: got.filter(Boolean), tried: lanes.flat() };
+    }
+    // one addon's search and pick -> { addon, rows } or null (why in `tried`)
+    async function findOne(a, target, { slackSec = 5, tier = 'LOSSLESS' } = {}, tried) {
+      const addon = { tier, ...a, base: baseOf(a.base) };
+      const host = redact(addon.base);
+      const h = healthOf.get(addon.base);
+      if (h && h.coolUntil > now()) { tried.push({ addon: host, why: 'resting after failures' }); return null; }
+      const t0 = now();
+      try {
+        const man = await manifest(addon.base);
+        if (man.needsOfficial) { tried.push({ addon: host, why: NEEDS_OFFICIAL }); return null; }
+        if (!man.usable) { tried.push({ addon: host, why: 'no search' }); return null; }
+        let open = [], refused = [];
+        for (const q of M.queries(target)) {
+          ({ open, refused } = Pick.rowsToOpen(await search(addon, target, q, man), target, { slackSec }));
+          if (open.length) break;
+        }
+        note(addon.base, true, open.length ? 'ok' : 'no match', now() - t0);
+        if (!open.length) { tried.push({ addon: host, why: 'no match', refused }); return null; }
+        return { addon: { ...addon, name: man.name, host }, rows: open };
+      } catch (e) { failed(addon.base, host, e, t0, tried); return null; }
     }
 
-    // Just before the song is needed: /stream and the probe, row by row, addon by addon.
-    // -> { addon, row, stream, tried } or { none, tried }
-    async function open(found, target, { slackSec = 5 } = {}, tried = []) {
-      for (const { addon, rows } of found) {
-        const t0 = now();
-        try {
-          const man = await manifest(addon.base);
-          for (const row of rows) {
-            const s = await stream(addon, row, man).catch((e) => (e.kind === 'miss' ? { miss: e.message } : Promise.reject(e)));
-            if (s.miss) { tried.push({ addon: addon.host, row: row.id, why: s.miss }); continue; }
-            if (s.transport !== 'file') { tried.push({ addon: addon.host, row: row.id, why: s.transport + ' (not played yet)' }); continue; }
-            const p = await probe(s.url, { ...row, tier: s.tier ?? row.tier, kbps: s.bitrate ?? row.kbps }, target.durationSec, slackSec, s.headers);
-            if (!p.ok) { tried.push({ addon: addon.host, row: row.id, why: p.why }); continue; }
-            note(addon.base, true, 'ok', now() - t0);
-            log(`addons: ${man.name} (${addon.host}) has it: row ${row.id}, ${s.codec || '?'}${s.sampleRate ? ' ' + s.sampleRate / 1000 + ' kHz' : ''}${s.bitDepth ? '/' + s.bitDepth : ''}`);
-            return { addon: { base: addon.base, name: man.name, host: addon.host }, row, stream: s, tried };
-          }
-        } catch (e) {
-          if (e.kind === 'limit') { tried.push({ addon: addon.host, why: e.message }); continue; }   // not a fault
-          failed(addon.base, addon.host, e, t0, tried);
+    // Just before the song is needed: /stream and the probe, the addons raced (§8.1.4), each with
+    // its own rows in its own order. -> { addon, row, stream, tried } or { none, tried }
+    function open(found, target, opt = {}, tried = []) {
+      return race(found.map(({ addon, rows }) => (tr) => openOne(addon, rows, target, opt, tr)), tried);
+    }
+    // one addon's rows, in order, until one opens and passes the probe -> { addon, row, stream } or null
+    async function openOne(addon, rows, target, { slackSec = 5 } = {}, tried) {
+      const t0 = now();
+      try {
+        const man = await manifest(addon.base);
+        for (const row of rows) {
+          const s = await stream(addon, row, man).catch((e) => (e.kind === 'miss' ? { miss: e.message } : Promise.reject(e)));
+          if (s.miss) { tried.push({ addon: addon.host, row: row.id, why: s.miss }); continue; }
+          if (s.transport !== 'file') { tried.push({ addon: addon.host, row: row.id, why: s.transport + ' (not played yet)' }); continue; }
+          const p = await probe(s.url, { ...row, tier: s.tier ?? row.tier, kbps: s.bitrate ?? row.kbps }, target.durationSec, slackSec, s.headers);
+          if (!p.ok) { tried.push({ addon: addon.host, row: row.id, why: p.why }); continue; }
+          note(addon.base, true, 'ok', now() - t0);
+          log(`addons: ${man.name} (${addon.host}) has it: row ${row.id}, ${s.codec || '?'}${s.sampleRate ? ' ' + s.sampleRate / 1000 + ' kHz' : ''}${s.bitDepth ? '/' + s.bitDepth : ''}`);
+          return { addon: { base: addon.base, name: man.name, host: addon.host }, row, stream: s };
         }
+      } catch (e) {
+        if (e.kind === 'limit') { tried.push({ addon: addon.host, why: e.message }); return null; }   // not a fault
+        failed(addon.base, addon.host, e, t0, tried);
       }
-      return { none: 'no addon has it', tried };
+      return null;
+    }
+
+    // §8.1.4: every lane at once; the first playable answer wins, and of answers ready in the same
+    // turn the higher-ranked addon's. Lanes still running go on (their answers are cached, §6).
+    // `tried` gets each lane's misses in rank order, as far as they have got.
+    function race(lanes, tried) {
+      const own = lanes.map(() => []), got = lanes.map(() => undefined);
+      let left = lanes.length, settled = false, waiting = false;
+      return new Promise((resolve) => {
+        const decide = () => {
+          if (settled) return;
+          const i = got.findIndex((r) => r?.addon);
+          if (i < 0 && left) return;
+          settled = true;
+          tried.push(...own.flat());
+          resolve(i < 0 ? { none: 'no addon has it', tried } : { ...got[i], tried });
+        };
+        if (!left) decide();
+        lanes.forEach((lane, i) => lane(own[i]).catch(() => null).then((r) => {
+          got[i] = r || null; left--;
+          if (r?.addon && !waiting) { waiting = true; sleep(0).then(decide); } else if (!left) decide();
+        }));
+      });
     }
 
     function failed(base, host, e, t0, tried) {
@@ -413,10 +440,10 @@
       log(`addons: ${host}: ${scrub(e.message)}`);
     }
 
-    // The first addon, in priority order, with a row that opens and passes the probe.
-    async function resolve(target, addons, opt = {}) {
-      const { found, tried } = await find(target, addons, opt);
-      return open(found, target, opt, tried);
+    // The addons raced end to end (each its search, then its rows); the first playable answer,
+    // the higher-ranked of those ready together (§8.1.4).
+    function resolve(target, addons, opt = {}) {
+      return race(addons.map((a) => async (tr) => { const f = await findOne(a, target, opt, tr); return f && openOne(f.addon, f.rows, target, opt, tr); }), []);
     }
 
     const health = () => Object.fromEntries([...healthOf].map(([b, h]) => [redact(b), { ...h }]));

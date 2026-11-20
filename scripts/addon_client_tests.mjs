@@ -184,6 +184,45 @@ behaviour.withfallback = {
   check('stream 404: the row\'s streamURL', got.stream?.url, fileUrl('withfallback', 'a'));
 }
 
+// ---- §8.1.4 the race: every addon at once, the first playable answer wins ----
+const later = (ms, f) => (...a) => setTimeout(() => f(...a), ms);
+const raceAddon = (name, { searchMs = 0, streamMs = 0, rows = [row('r1')] } = {}) => {
+  behaviour[name] = {
+    search: later(searchMs, (u, send) => send(200, { tracks: rows })),
+    stream: later(streamMs, (u, send, id) => send(200, { url: fileUrl(name, id), format: 'flac', codec: 'flac' })),
+  };
+  return { base: base(name) };
+};
+{
+  const slow = raceAddon('raceslow', { streamMs: 900 }), fast = raceAddon('racefast');
+  const t = Date.now();
+  const got = await fresh().resolve(song, [slow, fast]);
+  check('race: a slow first addon loses to a fast second one, without waiting for it', [got.stream?.url, Date.now() - t < 800], [fileUrl('racefast', 'r1'), true]);
+}
+{
+  // ready together: a tie window long enough for both local answers
+  const a = raceAddon('racetieA', { streamMs: 30 }), b = raceAddon('racetieB');
+  const c = C.create({ sleep: (ms) => new Promise((r) => setTimeout(r, ms || 300)) });
+  const got = await c.resolve(song, [a, b]);
+  check('race: answers ready together go to the higher-ranked addon', got.stream?.url, fileUrl('racetieA', 'r1'));
+}
+{
+  const a = raceAddon('raceparA', { searchMs: 400 }), b = raceAddon('raceparB', { searchMs: 400 });
+  const t = Date.now();
+  const f = await fresh().find(song, [a, b]);
+  check('race: the searches run at once (two 400 ms searches in under 750 ms)', [f.found.length, Date.now() - t < 750], [2, true]);
+}
+{
+  const a = raceAddon('raceordA', { searchMs: 300 }), b = raceAddon('raceordB');
+  const f = await fresh().find(song, [a, b]);
+  check('race: find lists the addons in priority order, the first answering last', f.found.map((x) => x.addon.base), [base('raceordA'), base('raceordB')]);
+}
+{
+  const none1 = raceAddon('racenoneA', { searchMs: 200, rows: [] }), none2 = raceAddon('racenoneB', { rows: [row('x', { title: 'Something Else', artist: 'Nobody' })] });
+  const got = await fresh().resolve(song, [none1, none2]);
+  check('race: no addon has it: every miss, in rank order', [got.none, got.tried.map((x) => x.why)], ['no addon has it', ['no match', 'no match']]);
+}
+
 // ---- §4a stream limits, the look-ahead, the stream's own headers ----
 behaviour.limited = {
   search: (u, send) => send(200, { tracks: [row('a')] }),
