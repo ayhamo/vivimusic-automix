@@ -47,7 +47,7 @@
     "_about": "Firefox runs the background as an event page from this list (Chrome uses service_worker and importScripts). Upstream's importScripts helpers are added in their order; these are our additions.",
     "drop": ["src/stargate.js", "src/smooth-update.js"],
     "before_background": ["src/listenbrainz.js", "src/fx-headers.js"],
-    "after_background": ["src/plus/bg-plus.js", "src/plus/bg-canvas.js", "src/addons/track-matcher.js", "src/addons/pick.js", "src/addons/client.js", "src/addons/file-cache.js", "src/addons/bg-addons.js"]
+    "after_background": ["src/plus/canvas-settings.js", "src/plus/bg-plus.js", "src/plus/bg-canvas.js", "src/addons/track-matcher.js", "src/addons/pick.js", "src/addons/client.js", "src/addons/file-cache.js", "src/addons/bg-addons.js"]
   },
   "content_scripts": [
     {
@@ -88,6 +88,7 @@
           { "item": "src/music-only.js", "after": "src/automix-overview.js" },
           { "item": "src/plus/canvas-settings.js", "after": "src/music-only.js" },
           { "item": "src/plus/video-canvas.js", "after": "src/plus/canvas-settings.js" },
+          { "item": "src/plus/apple-artist-header.js", "after": "src/plus/video-canvas.js" },
           { "item": "src/plus/content-plus.js", "before": "src/content.js" }
         ]
       },

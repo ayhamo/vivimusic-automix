@@ -874,4 +874,98 @@ clearSpotify = async function clearSpotify() {
     canvasCache.set(key, { value: result, expiresAtMs: Date.now() + CACHE_TTL_MS });
     return result;
   };
+  // ── Apple artist image and video for the artist page's header (canvas.md §13 rule 8) ──
+  // Metrolist's fetchArtistArtwork (AnimatedArtworkService.kt:270-341, 736-785, 977-1050): the
+  // artist id by an exact name match on iTunes (two or more exact matches: none), then the artist
+  // from Apple's catalog: its artwork as the image, its motion video (wide 16:9, then fullscreen
+  // 16:9, then square) at the quality asked. Hits 30 days, misses (and a video asked but none)
+  // 7 days, failures not kept. Key: storefront, language, name, both switches, the quality.
+  const ARTIST_CACHE = 'viviAppleArtistHeaderCache';
+  const ARTIST_HIT_MS = 30 * 864e5, ARTIST_MISS_MS = 7 * 864e5, ARTIST_MAX = 200;
+  const profileName = (s) => String(s || '').trim().toLowerCase().replace(/[\u2018\u2019\u201B\u2032]/g, "'").replace(/\s+/g, ' ');
+  const trustedApple = (u, ext) => {
+    try {
+      const x = new URL(u);
+      return x.protocol === 'https:' && /(^|\.)(apple\.com|mzstatic\.com|aaplimg\.com|cdn-apple\.com)$/i.test(x.hostname) && (!ext || x.pathname.endsWith(ext));
+    } catch { return false; }
+  };
+
+  async function appleArtistId(name, country) {
+    const url = `https://itunes.apple.com/search?term=${encodeURIComponent(name)}&entity=musicArtist&attribute=artistTerm&limit=200&country=${country}`;
+    const r = await fetch(url);
+    if (!r.ok) throw new Error('artist id lookup HTTP ' + r.status);
+    const target = profileName(name);
+    const ids = [...new Set(((await r.json())?.results || [])
+      .filter((x) => profileName(x.artistName) === target && x.artistId > 0).map((x) => x.artistId))];
+    return ids.length === 1 ? ids[0] : null;   // none, or ambiguous
+  }
+
+  // the HLS variant for the quality (canvas-settings.js pickVariant over RESOLUTION and BANDWIDTH)
+  async function appleVariant(master, quality) {
+    const CS = globalThis.__viviCanvasSettings;
+    const r = await fetch(master);
+    if (!r.ok) return null;
+    const lines = (await r.text()).split(/\r?\n/);
+    const vs = [];
+    for (let i = 0; i < lines.length; i++) {
+      if (!lines[i].startsWith('#EXT-X-STREAM-INF:')) continue;
+      const res = /RESOLUTION=(\d+)x(\d+)/.exec(lines[i]), bw = /[:,]BANDWIDTH=(\d+)/.exec(lines[i]);
+      const uri = (lines[i + 1] || '').trim();
+      if (!res || !uri || uri.startsWith('#')) continue;
+      const abs = new URL(uri, master).toString();
+      if (trustedApple(abs, '.m3u8')) vs.push({ url: abs, v: [Number(res[1]), Number(res[2]), Number(bw?.[1] || 0)] });
+    }
+    if (!vs.length) return master;
+    const i = CS ? CS.pickVariant(vs.map((x) => x.v), CS.capOf(quality)) : 0;
+    return i >= 0 ? vs[i].url : master;
+  }
+
+  async function appleArtistHeader({ artist, image, video, quality }) {
+    if (!artist || (!image && !video)) return { ok: true, imageUrl: null, videoUrl: null };
+    const country = defaultStorefront();
+    const lang = String(navigator.language || '').split('-')[0].toLowerCase();
+    const key = [country, lang, profileName(artist), !!image, !!video, quality || '720'].join('|');
+    const { [ARTIST_CACHE]: cache = {} } = await chrome.storage.local.get(ARTIST_CACHE);
+    const hit = cache[key];
+    if (hit && Date.now() - hit.at <= (hit.short ? ARTIST_MISS_MS : ARTIST_HIT_MS)) return { ok: true, imageUrl: hit.imageUrl, videoUrl: hit.videoUrl, from: 'cache' };
+
+    let result = null;
+    try {
+      const id = await appleArtistId(artist, country);
+      if (id) {
+        const root = await ampGet(`/v1/catalog/${country}/artists/${id}`, {
+          'art[url]': 'c,f', extend: video ? 'editorialVideo' : undefined, 'format[resources]': 'map',
+          l: lang ? `${lang}-${country}` : undefined, platform: 'web',
+        });
+        const a = root?.resources?.artists?.[String(id)]?.attributes || root?.data?.[0]?.attributes;
+        if (a) {
+          let imageUrl = null, videoUrl = null;
+          const art = a.artwork;
+          if (image && art?.url && art.width && art.height) {
+            const u = art.url.replace('{w}', art.width).replace('{h}', art.height).replace('{c}', 'bb').replace('{f}', 'webp');
+            if (trustedApple(u)) imageUrl = u;
+          }
+          if (video) {
+            const ev = a.editorialVideo || {};
+            const asset = ['motionArtistWide16x9', 'motionArtistFullscreen16x9', 'motionArtistSquare1x1'].map((k) => ev[k]).find((x) => x?.video);
+            if (asset && trustedApple(asset.video, '.m3u8')) videoUrl = await appleVariant(asset.video, quality);
+          }
+          if (imageUrl || videoUrl) result = { imageUrl, videoUrl };
+        }
+      }
+    } catch (e) {
+      return { ok: false, error: String(e?.message || e) };   // not kept: tried again next time
+    }
+    cache[key] = { imageUrl: result?.imageUrl || null, videoUrl: result?.videoUrl || null, at: Date.now(), short: !result || (!!video && !result.videoUrl) };
+    const keys = Object.keys(cache);
+    if (keys.length > ARTIST_MAX) keys.sort((x, y) => cache[x].at - cache[y].at).slice(0, keys.length - ARTIST_MAX).forEach((k) => delete cache[k]);
+    await chrome.storage.local.set({ [ARTIST_CACHE]: cache });
+    return { ok: true, imageUrl: result?.imageUrl || null, videoUrl: result?.videoUrl || null, from: 'net' };
+  }
+
+  chrome.runtime?.onMessage?.addListener((msg, _sender, sendResponse) => {   // (no runtime in the node tests)
+    if (msg?.type !== 'VIVI_APPLE_ARTIST_HEADER') return undefined;
+    appleArtistHeader(msg).then(sendResponse, (e) => sendResponse({ ok: false, error: String(e?.message || e) }));
+    return true;
+  });
 }

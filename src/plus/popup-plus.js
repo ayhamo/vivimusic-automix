@@ -289,6 +289,21 @@
         <option value="360">360p</option><option value="720">720p</option><option value="1080">1080p</option><option value="original">Original</option>
       </select>
     </div>
+    <div class="row" style="margin-top:10px;">
+      <span class="row-label">Apple artist images</span>
+      <label class="switch"><input type="checkbox" id="appleArtistImages"/><span class="slider"></span></label>
+    </div>
+    <div class="row" style="margin-top:6px;">
+      <span class="row-label">Apple artist videos</span>
+      <label class="switch"><input type="checkbox" id="appleArtistVideos"/><span class="slider"></span></label>
+    </div>
+    <div class="row" style="margin-top:6px;">
+      <span class="row-label">Artist video quality</span>
+      <select id="appleArtistVideoQuality" style="${SEL}">
+        <option value="360">360p</option><option value="720">720p</option><option value="1080">1080p</option><option value="original">Original</option>
+      </select>
+    </div>
+    <p class="theme-sub">Apple Music's artist photo and motion video in the artist page's header.</p>
 `, rowOrNote('enableToggle'), 'afterend');
 
     const NAMES = { video: ['Music video', "the song's own video on YouTube"], spotify: ['Spotify Canvas', 'no account needed'], apple: ['Apple Music', 'animated cover'] };
@@ -350,6 +365,27 @@
     vq.addEventListener('change', () => save({ videoCanvasQuality: vq.value }));
     vm.addEventListener('change', () => save({ videoCanvasMode: vm.value }));
     aq.addEventListener('change', () => save({ appleCoverQuality: aq.value }));
+
+    // Apple artist images and videos (§13 rule 8): both off; videos follow images until set
+    const ai = document.getElementById('appleArtistImages');
+    const av = document.getElementById('appleArtistVideos');
+    const avq = document.getElementById('appleArtistVideoQuality');
+    const artistUi = () => { avq.disabled = !av.checked; };
+    chrome.storage.local.get({ appleArtistImages: false, appleArtistVideos: null, appleArtistVideoQuality: '720' }, (s) => {
+      ai.checked = s.appleArtistImages === true;
+      av.checked = s.appleArtistVideos == null ? ai.checked : s.appleArtistVideos === true;
+      avq.value = CS.COVER_QUALITIES.includes(String(s.appleArtistVideoQuality)) ? String(s.appleArtistVideoQuality) : '720';
+      artistUi();
+    });
+    ai.addEventListener('change', () => {
+      chrome.storage.local.get({ appleArtistVideos: null }, (s) => {
+        if (s.appleArtistVideos == null) av.checked = ai.checked;   // still following
+        chrome.storage.local.set({ appleArtistImages: ai.checked });
+        artistUi();
+      });
+    });
+    av.addEventListener('change', () => { chrome.storage.local.set({ appleArtistVideos: av.checked }); artistUi(); });
+    avq.addEventListener('change', () => chrome.storage.local.set({ appleArtistVideoQuality: avq.value }));
   }
 
   // ListenBrainz section, before Updates
