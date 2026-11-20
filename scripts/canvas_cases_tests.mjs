@@ -176,6 +176,7 @@ await run('judge', (c) => {
 
 skip('display', 'video-canvas.js zoomBars() is inside its IIFE and there is no tall-clip test or clip fade; needs pure tallClip(w, h), letterboxZoom(px, w, h), clipFade(hero, bottom)');
 skip('backdrop', 'the PC has neither backdrop (no Metrolist bleed, no BitChord mesh); needs blurRadiusAt(row), bleedRows(width, artHeight), coverZoom(...), stripRows(h), meshLift(rgb)');
+skip('settings', 'the PC has no source list, no stored order and no Apple variant pick yet (canvas.md §13); needs pure parseOrder(csv), parseEnabled(csv), pickVariant(variants, cap)');
 skip('badge', 'the shimmer is CSS only (plus.css:467-482); needs bandCentre(progress, width) and chromeWhite(alpha) if the PC adopts the chrome');
 
 console.log(`\ncanvas cases: ${ok} ok, ${diff} DIFF, ${skipped} skipped`);

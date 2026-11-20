@@ -15,7 +15,8 @@
   "clipJudge": "canvas.md §7. Prism FrameJudge.kt (bars 97-112, isStill 130-140, windows 149-177, choose 203-210, cropX 232-257, judge 59-69) and ClipRefine.kt (cuts 79-91, flashing 94-117, end 123-126, the flash loop 195-198).",
   "display": "canvas.md §8. Phone AnimatedCover.java:170-174 (tallClip), 190-201 (letterboxZoom); BitChord NowPlayingScreen.kt:1548-1550 (clip fade).",
   "backdrop": "canvas.md §9-10. Metrolist FullscreenArtworkBleed.kt:120-127, 156-163, 341, 408-411; BitChord ArtworkMeshBackdrop.kt:747-755 (lifted). The bleed cases (blurRadius, bleedRows, coverZoom, stripRows) are phone-only: the bleed is blended onto YouTube's own art, so a player that draws its own backdrop (BitChord's mesh) marks them not applicable.",
-  "badge": "canvas.md §11. BitChord PlayerControls.kt:1911-1913 (band), PlayerChrome.kt:24-33 (chrome alphas; chromeWhite is BitChord's PlayerChrome rule, §11.2)."
+  "badge": "canvas.md §11. BitChord PlayerControls.kt:1911-1913 (band), PlayerChrome.kt:24-33 (chrome alphas; chromeWhite is BitChord's PlayerChrome rule, §11.2).",
+  "settings": "canvas.md §13. Metrolist AnimatedCoverSelection.kt:28-39 (parseOrder, parseEnabled; our ids video, spotify, apple), SettingsFeatureControls.kt:168-171 (all off stored as NONE), AnimatedArtworkService.kt:1195-1245, 1276-1282 (variant pick; cap null = Original). A variant is [width, height, bandwidth]; expect its index."
  },
  "sourceOrder": [
   {
@@ -6446,6 +6447,185 @@
     "alpha": 0.7
    },
    "expect": 0.55
+  }
+ ],
+ "settings": [
+  {
+   "name": "order: empty is the default",
+   "kind": "settingsOrder",
+   "input": {
+    "stored": ""
+   },
+   "expect": [
+    "video",
+    "spotify",
+    "apple"
+   ]
+  },
+  {
+   "name": "order: one named, the rest follow in the default order",
+   "kind": "settingsOrder",
+   "input": {
+    "stored": "apple"
+   },
+   "expect": [
+    "apple",
+    "video",
+    "spotify"
+   ]
+  },
+  {
+   "name": "order: unknown names dropped, a repeat counts once",
+   "kind": "settingsOrder",
+   "input": {
+    "stored": "spotify,bogus,spotify,apple"
+   },
+   "expect": [
+    "spotify",
+    "apple",
+    "video"
+   ]
+  },
+  {
+   "name": "sources on: empty is all on",
+   "kind": "settingsEnabled",
+   "input": {
+    "stored": ""
+   },
+   "expect": [
+    "video",
+    "spotify",
+    "apple"
+   ]
+  },
+  {
+   "name": "sources on: NONE is none",
+   "kind": "settingsEnabled",
+   "input": {
+    "stored": "NONE"
+   },
+   "expect": []
+  },
+  {
+   "name": "sources on: the ones named, in the default order",
+   "kind": "settingsEnabled",
+   "input": {
+    "stored": "apple,video"
+   },
+   "expect": [
+    "video",
+    "apple"
+   ]
+  },
+  {
+   "name": "Apple variant: 720p cap takes the 720 one",
+   "kind": "appleVariant",
+   "input": {
+    "cap": 720,
+    "variants": [
+     [
+      360,
+      360,
+      800000
+     ],
+     [
+      720,
+      720,
+      2000000
+     ],
+     [
+      1080,
+      1080,
+      4000000
+     ]
+    ]
+   },
+   "expect": 1
+  },
+  {
+   "name": "Apple variant: Original takes the largest",
+   "kind": "appleVariant",
+   "input": {
+    "cap": null,
+    "variants": [
+     [
+      360,
+      360,
+      800000
+     ],
+     [
+      720,
+      720,
+      2000000
+     ],
+     [
+      1080,
+      1080,
+      4000000
+     ]
+    ]
+   },
+   "expect": 2
+  },
+  {
+   "name": "Apple variant: nothing under the cap takes the smallest",
+   "kind": "appleVariant",
+   "input": {
+    "cap": 360,
+    "variants": [
+     [
+      1080,
+      1080,
+      4000000
+     ],
+     [
+      720,
+      720,
+      2000000
+     ]
+    ]
+   },
+   "expect": 1
+  },
+  {
+   "name": "Apple variant: the shorter side counts (tall 1080x1440 under 1080p)",
+   "kind": "appleVariant",
+   "input": {
+    "cap": 1080,
+    "variants": [
+     [
+      720,
+      960,
+      1500000
+     ],
+     [
+      1080,
+      1440,
+      5000000
+     ]
+    ]
+   },
+   "expect": 1
+  },
+  {
+   "name": "Apple variant: same size, the higher bandwidth",
+   "kind": "appleVariant",
+   "input": {
+    "cap": 720,
+    "variants": [
+     [
+      720,
+      720,
+      2000000
+     ],
+     [
+      720,
+      720,
+      3000000
+     ]
+    ]
+   },
+   "expect": 1
   }
  ]
 }

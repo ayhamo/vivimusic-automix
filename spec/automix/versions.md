@@ -19,10 +19,10 @@ record of how Original and Advanced differed.
 | Part | Behaviour |
 |---|---|
 | Loop mix | Same planner (`planLoopMix`), same sung-part check (synced lyrics, else the vocal mask), same schedule and curves (`loopCurves`). The loop on Vaina Loca → SI NO ES CONTIGO comes from here. |
-| Which style | Loop mix when the pair has one, else blend, else filter mix, else a 12 s crossfade. |
+| Which style | Loop mix when the pair has one, else blend, else filter mix, else a plain crossfade of the user's crossfade length (1–12 s; 12 s where the platform has no such setting). |
 | Tempo | Only ever speeds up (the slower song is brought up), at most +25% (−10% for the folded case), the playing song ramps 0.75% per beat before the mix-out; half/double time folded. |
 | Blend length | Auto (phone rules: usually 4 bars, 8 when both songs are calm, never over 12–16 s) or "up to N bars"; shortened on a weak grid (`effectiveBlendBars`). |
-| Fallbacks | Filter mix when a grid is missing or tempos are too far apart; 12 s crossfade without analysis. |
+| Fallbacks | Filter mix when a grid is missing or tempos are too far apart; a plain crossfade of the user's crossfade length (12 s without such a setting) without analysis. |
 | After the mix | The incoming deck glides back to ×1.0 at 0.25% per 0.25 s; the stream deck (Phase 2) takes over. |
 
 ## Planning: Advanced only

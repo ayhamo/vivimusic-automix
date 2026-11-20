@@ -316,6 +316,9 @@
   const TEMPO_STEP_PER_BEAT = 0.0075;
   const FILTER_MAX_BARS = 8;
   const FALLBACK_SEC = 12;
+  // the plain crossfade's length: the user's crossfade slider (1-12 s) when the
+  // engine passes it (plan's fadeSec), else 12 s (versions.md: Fallbacks)
+  let fallbackSec = FALLBACK_SEC;
 
   function effectiveBlendBars(requested, fromConf, toConf) {
     const conf = Math.min(fromConf, toConf);
@@ -382,8 +385,9 @@
   // [pick]: what the Automix overview asked for this pair, { style, bars }
   // (style 'blend', 'filter' or 'crossfade'; either may be null: Auto).
   // (an editor override, editor.md §9, or a pick from before the editor: migratePick)
-  function plan({ fromId, toId, from, to, durationSec, pos, earliest, pick = null }) {
+  function plan({ fromId, toId, from, to, durationSec, pos, earliest, pick = null, fadeSec = null }) {
     const ov = migratePick(pick);
+    fallbackSec = fadeSec > 0 ? Math.min(FALLBACK_SEC, Math.max(1, Math.round(fadeSec))) : FALLBACK_SEC;
     pinnedBars = (ov?.preset !== 'loop' && (ov?.bars || PRESET_BARS[ov?.preset])) || null;
     try {
       const warnings = [];
@@ -405,7 +409,7 @@
         }
       }
       return p;
-    } finally { pinnedBars = null; }
+    } finally { pinnedBars = null; fallbackSec = FALLBACK_SEC; }
   }
   // An override as saved (editor.md §1, override.schema.json): Auto fields dropped, null when nothing
   // but Auto is left (Auto is the reset). Picking a preset drops a migrated pick's family.
@@ -471,7 +475,7 @@
     if (!bars && !outW && !inW) return base;
     const end = musicEnd(cur).durationSec, room = end - 0.3 - earliest;
     if (room < 1) { warnings?.push('no room left in this song for the window asked for'); return base; }
-    const want = bars && fromGrid ? bars * fromGrid.barSec : base.durationSec || FALLBACK_SEC;
+    const want = bars && fromGrid ? bars * fromGrid.barSec : base.durationSec || fallbackSec;
     if (bars && fromGrid && want > room + 0.01) warnings?.push(`${bars} bars don't fit before the end: ${room.toFixed(1)} s`);
     const D = Math.min(want, room), hi = Math.max(earliest, end - 0.3 - D);
     let mixOut = hi;
@@ -1103,7 +1107,8 @@
     };
   }
 
-  // AutoMix's fallback: a plain 12 s equal-power fade, no beatmatch, no EQ.
+  // AutoMix's fallback: a plain equal-power fade of the user's crossfade length
+  // (12 s when none is given), no beatmatch, no EQ.
   // BitChord web put it on the last 12 s before the outro; here, like the
   // blend, it ends with the song.
   // Automix v2's "beatmatch or do nothing" (Orchard's boundary hand-off): two
@@ -1209,9 +1214,9 @@
   }
 
   function fallback(cur, next, earliest, reason) {
-    const target = cur.durationSec - 0.3 - FALLBACK_SEC;
+    const target = cur.durationSec - 0.3 - fallbackSec;
     const mixOut = Math.max(earliest, target);
-    const dur = Math.max(0, Math.min(FALLBACK_SEC, cur.durationSec - 0.3 - mixOut));
+    const dur = Math.max(0, Math.min(fallbackSec, cur.durationSec - 0.3 - mixOut));
     return {
       style: 'crossfade', fallback: true, reason,
       mixOutTrackTime: mixOut, durationSec: dur, mixInTrackTime: next.introEndSec ?? 0, rate: 1,

@@ -2786,7 +2786,7 @@
         const pick = A.migratePick(pairPicks[pairKey] || null);
         const loopPicked = pick?.preset === 'loop';
         const noLoop = !!pick && !loopPicked;
-        let p = A.plan({ fromId: st.id, toId: st.next, from, to, durationSec: st.dur, pos, earliest: pos + HAND_LEAD + 0.5, pick: noLoop ? pick : null });
+        let p = A.plan({ fromId: st.id, toId: st.next, from, to, durationSec: st.dur, pos, earliest: pos + HAND_LEAD + 0.5, pick: noLoop ? pick : null, fadeSec: seconds() });
         p.nextId = st.next || '';
         // The loop mix (BitChord AutoDJ): prepared in the background as soon as
         // both songs are analysed, so the status shows it from the start; when

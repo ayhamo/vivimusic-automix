@@ -97,6 +97,17 @@ test('No analysis yet: the placeholder crossfade sits at the end too', () => {
   assert.ok(Math.abs(p.mixOutTrackTime - (150 - 0.3 - 12)) < 1e-6);
 });
 
+test('The plain crossfade takes the user crossfade length (fadeSec 1-12 s), 12 s without one', () => {
+  const A = loadAutomix('auto');
+  const at = (fadeSec) => A.plan({ fromId: 'a', toId: 'b', from: null, to: null, durationSec: 150, pos: 10, earliest: 14.5, fadeSec });
+  for (const [ask, want] of [[5, 5], [1, 1], [12, 12], [30, 12], [0, 12], [null, 12]]) {
+    const p = at(ask);
+    assert.ok(p.fallback && Math.abs(p.durationSec - want) < 1e-6, `fadeSec ${ask}: ${p.durationSec} s`);
+    assert.ok(Math.abs(p.mixOutTrackTime - (150 - 0.3 - want)) < 1e-6);
+  }
+  assert.equal(at(null).durationSec, 12, 'a later plan without fadeSec is back at 12 s');
+});
+
 test('Never more than 12 s of music skipped after a blend (60-200 BPM, every setting)', () => {
   for (const bars of ['auto', 4, 8, 16, 32]) {
     const A = loadAutomix(bars);
