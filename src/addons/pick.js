@@ -101,7 +101,15 @@
     return maxSec < songSec - slackSec ? { ok: false, why: `file holds at most ${Math.round(maxSec)} s` } : { ok: true, maxSec };
   }
 
-  const api = { rowOf, rowsToOpen, probeVerdict, tierOf, isAtmos, isrcOf };
+  // offset-map.md, Level: YouTube's own normalisation for an addon copy, from the player
+  // response's playerConfig.audioConfig.loudnessDb (never perceptualLoudnessDb): a cut of
+  // loudnessDb when it is positive, nothing otherwise (YouTube never boosts a quiet song)
+  function loudnessGainDb(audioConfig) {
+    const v = audioConfig?.loudnessDb;
+    return typeof v === 'number' && Number.isFinite(v) && v > 0 ? -v : 0;
+  }
+
+  const api = { rowOf, rowsToOpen, probeVerdict, tierOf, isAtmos, isrcOf, loudnessGainDb };
   globalThis.__viviAddonPick = api;
   if (typeof module === 'object' && module.exports) module.exports = api;
 })();

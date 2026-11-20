@@ -223,6 +223,16 @@ const raceAddon = (name, { searchMs = 0, streamMs = 0, rows = [row('r1')] } = {}
   check('race: no addon has it: every miss, in rank order', [got.none, got.tried.map((x) => x.why)], ['no addon has it', ['no match', 'no match']]);
 }
 
+{
+  // an addon at its per-minute limit: its lane asks nothing, the other addon plays (§4a, §8.1.4)
+  const full = raceAddon('racefull', { rows: [row('g1')] }), other = raceAddon('raceother', { streamMs: 50 });
+  const c = fresh();
+  const man = await c.manifest(full.base);
+  for (const id of ['f1', 'f2', 'f3', 'f4', 'f5']) await c.stream(full, { id }, man);
+  const n0 = hitsOf('racefull', 'stream').length;
+  const got = await c.resolve(song, [full, other]);
+  check('race: an addon at its limit makes no /stream call, the other one plays', [hitsOf('racefull', 'stream').length - n0, got.stream?.url, got.tried[0].why.startsWith('stream limit')], [0, fileUrl('raceother', 'r1'), true]);
+}
 // ---- §4a stream limits, the look-ahead, the stream's own headers ----
 behaviour.limited = {
   search: (u, send) => send(200, { tracks: [row('a')] }),

@@ -35,6 +35,7 @@ for (const c of cases.readStream) {
   const s = client.readStream(c.answer);
   check('readStream: ' + c.name, Object.fromEntries(Object.keys(c.expect).map((k) => [k, s[k]])), c.expect);
 }
+for (const c of cases.loudnessGain) check('loudnessGain: ' + c.name, P.loudnessGainDb(c.audioConfig), c.expectDb);
 for (const [u, want] of cases.baseOf) check(`baseOf "${u}"`, C.baseOf(u), want);
 for (const [a, b, want] of cases.sameAddon) check(`sameAddon ${a} ~ ${b}`, C.sameAddon(a, b), want);
 

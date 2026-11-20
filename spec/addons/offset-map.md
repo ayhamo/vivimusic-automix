@@ -49,7 +49,13 @@ Result: `{ offsetSec, score, coarseScore, checkSec, checkScore }`, or `{ none: '
 
 ## Level
 
-**[phone only], and BitChord:** YouTube's `loudnessDb` for the song, on whichever copy plays: the addon copy gets the same normalisation YouTube's player gives its own copy (a cut of `loudnessDb` dB when it is positive, nothing when it isn't). No measured gain, no boost. On the phone it is a sample gain, not the element volume.
+**[phone only], and BitChord:** YouTube's `loudnessDb` for the song, on whichever copy plays: the addon copy gets the same normalisation YouTube's player gives its own copy. No measured gain. On the phone it is a sample gain, not the element volume.
+
+- **Cut only.** A gain of −`loudnessDb` dB when `loudnessDb` is positive, 0 dB when it is zero, negative or missing. A quiet song is never boosted, because YouTube's player doesn't boost it, and the aim is the level YouTube's own copy would play at. A cut can't clip, so no peak guard is needed. (BitChord applied −`loudnessDb` both ways, clamped, so a negative value boosted. It follows this rule now.)
+- **The value:** `playerConfig.audioConfig.loudnessDb` from the song's player response (field 47 of `audioConfig` in the protobuf answer, as the phone reads it). Never `perceptualLoudnessDb`, which is another measure: with only that field the gain is 0 dB.
+- **Cases:** `pick-cases.json`, group `loudnessGain` (6; the PC's `pick.js loudnessGainDb`).
+
+The PC's boost below is not a `loudnessDb` boost: it is measured against YouTube's copy of the same song and brings the file to that copy's loudness, never above it.
 
 **[PC only]:** the measured gain below. The deck starts at YouTube's `loudnessDb` level (the element volume) and moves to the measured one, ramped, once it is measured. The PC has the whole file, so measuring costs no extra download.
 
