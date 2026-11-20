@@ -2087,7 +2087,7 @@
   // back to it, and without its copy it played YouTube's sound ~40 s (fetched and fitted again,
   // queued behind the video's analysis)
   const LEFT_KEEP_MS = 5 * 60e3;
-  let left = { id: null, at: 0 }, tickId = null;
+  let left = { id: null, at: 0 }, tickId = null, tickAt = 0;   // tickAt: when the song started here (take-over timing)
   const keptLeft = (k) => k === left.id && performance.now() - left.at < LEFT_KEEP_MS;
   function pruneAddons(idle = false) {
     if (testRecording) return;
@@ -2108,7 +2108,7 @@
     const AP = window.__viviAddonsPage;
     if (!AP?.isOn() || !st || st.ad || !st.id) return;
     AP.deckAlive?.();   // the badge's "Upgrading Quality" only while this runs (no audio graph: no deck)
-    if (st.id !== tickId) { if (tickId) left = { id: tickId, at: performance.now() }; tickId = st.id; }
+    if (st.id !== tickId) { if (tickId) left = { id: tickId, at: performance.now() }; tickId = st.id; tickAt = performance.now(); }
     pruneAddons();
     if (adeck?.id !== st.id && !live) {
       const run = adeck = { id: st.id, state: 'starting' };
@@ -2249,7 +2249,7 @@
       const rec = {
         id, buf: full, off: fit.offsetSec, k: 10 ** (lvl.gainDb / 20), gainDb: lvl.gainDb, lvl, fit,
         name: s.addon.name, host: s.addon.host, stream: s.stream,
-        took: { all: t3 - t0, fetch: t1 - t0, fit: t3 - t1 },
+        took: { all: t3 - t0, fetch: t1 - t0, fit: t3 - t1 }, fileBytes: file.bytes.byteLength,
       };
       log(`addons: ${rec.name} (${rec.host}) fits: offset ${(rec.off * 1000).toFixed(1)} ms (score ${fit.score.toFixed(3)}, check ${fit.checkScore.toFixed(3)} at ${fit.checkSec.toFixed(0)} s), ` +
         `level ${lvl.gainDb >= 0 ? '+' : ''}${lvl.gainDb.toFixed(2)} dB (wanted ${lvl.wantDb?.toFixed(2)}${lvl.capped ? ', capped by ' + lvl.capped : ''}), ` +
@@ -2287,7 +2287,14 @@
     d.load(rec.buf, rec.off, rec.mono);
     log(`addons: deck loaded in ${(performance.now() - tL).toFixed(0)} ms (main thread)`);
     sdeck = d;
-    say('playing', { offsetSec: rec.off, gainDb: rec.lvl.gainDb, wantDb: rec.lvl.wantDb, capped: rec.lvl.capped, score: rec.fit.score, checkScore: rec.fit.checkScore });
+    // what the copy costs and how long the song played YouTube's sound first (protocol.md §8 intro:
+    // these decide whether the PC ever streams); a deck a mix starts (takeAt) has no wait of its own
+    const decodedMB = (rec.buf.length * rec.buf.numberOfChannels * 4 + (rec.mono?.length || 0) * 4) / 1e6;
+    const takeoverMs = takeAt ? 0 : Math.round(performance.now() - tickAt);
+    log(`addons: take-over ${takeAt ? 'at the mix (prepared ahead)' : (takeoverMs / 1000).toFixed(1) + ' s after the song started'}; ` +
+      `the copy holds ${decodedMB.toFixed(0)} MB decoded (${rec.buf.sampleRate} Hz x ${rec.buf.numberOfChannels}, with its mono) from a ${((rec.fileBytes || 0) / 1e6).toFixed(1)} MB file`);
+    say('playing', { offsetSec: rec.off, gainDb: rec.lvl.gainDb, wantDb: rec.lvl.wantDb, capped: rec.lvl.capped, score: rec.fit.score, checkScore: rec.fit.checkScore,
+      takeoverMs, mixTake: !!takeAt, decodedMB: Math.round(decodedMB), fileMB: Math.round((rec.fileBytes || 0) / 1e5) / 10, took: rec.took });
     addonEvent('deck', { id, takeAt, startPos, off: rec.off, k: rec.k });
     d.follow({
       clock: () => (st && st.id === id && !st.ad && graph() === g ? { pos: v.currentTime - st.off, playing: !v.paused && !v.seeking && v.readyState >= 3 } : null),
