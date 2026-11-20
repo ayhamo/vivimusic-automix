@@ -7755,6 +7755,73 @@
       }
     }
   ],
+  "videoArtists": [
+    {
+      "name": "a band name with \"and\" is one artist",
+      "input": {
+        "artist": "The Head and the Heart"
+      },
+      "expect": [
+        "The Head and the Heart"
+      ]
+    },
+    {
+      "name": "\"&\" separates",
+      "input": {
+        "artist": "Lady Gaga & Bruno Mars"
+      },
+      "expect": [
+        "Lady Gaga",
+        "Bruno Mars"
+      ]
+    },
+    {
+      "name": "commas and \"&\"",
+      "input": {
+        "artist": "Ozuna, J Balvin & Chencho Corleone"
+      },
+      "expect": [
+        "Ozuna",
+        "J Balvin",
+        "Chencho Corleone"
+      ]
+    },
+    {
+      "name": "\"x\" and \"×\" separate",
+      "input": {
+        "artist": "Ed Sheeran x Taylor Swift × Khalid"
+      },
+      "expect": [
+        "Ed Sheeran",
+        "Taylor Swift",
+        "Khalid"
+      ]
+    },
+    {
+      "name": "feat., ft., featuring and with separate",
+      "input": {
+        "artist": "Daddy Yankee feat. Snow ft. Nicky Jam featuring Anuel with Bad Bunny"
+      },
+      "expect": [
+        "Daddy Yankee",
+        "Snow",
+        "Nicky Jam",
+        "Anuel",
+        "Bad Bunny"
+      ]
+    },
+    {
+      "name": "\"and\" inside a name next to a real separator",
+      "input": {
+        "artist": "Crosby, Stills, Nash and Young"
+      },
+      "expect": [
+        "Crosby",
+        "Stills",
+        "Nash and Young"
+      ]
+    }
+  ],
   "videoChoices": [
     {
       "name": "the pairing first, then the search's order",

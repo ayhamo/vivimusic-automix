@@ -81,11 +81,11 @@
     return String(s || '').toLowerCase().replace(/\(.*?\)|\[.*?]/g, '').replace(/[^\p{L}\p{N}]/gu, '');
   }
 
-  /** The artists named in YT's artist line ("A & B", "A, B", "A x B", "A feat. B"). */
+  /** The artists named in YT's artist line ("A & B", "A, B", "A x B", "A feat. B"); never split on "and" (§5 rule 13). */
   function artists(artist) {
     const out = [];
     if (artist != null) {
-      for (const a of String(artist).split(/\s*(?:,|&|\band\b|\bx\b|\bfeat\.?|\bft\.?|\bwith\b)\s*/i)) {
+      for (const a of String(artist).split(/\s*(?:,|&|×|\bx\b|\bfeaturing\b|\bfeat\.?|\bft\.?|\bwith\b)\s*/i)) {
         if (norm(a)) out.push(a.trim());
       }
     }
@@ -1002,7 +1002,7 @@
   const core = {
     CLIP_SEC, W, H, NEVER, OTHER_TAKE,
     norm, artists, officialChannel, titleCore, matches, searchResults, pickFormat,
-    heatmapOf, partStart, chorusMs, noFrames, pick, titleSays, findOn, snap, bestPartShows, videoChoices, choiceTag,
+    heatmapOf, partStart, chorusMs, noFrames, pick, titleSays, findOn, snap, bestPartShows, videoChoices, choiceTag, artists,
     grid, bars, area, diff, still, windows, choose, runnersUp, judge, cropX, change, cuts, flashing, end: loopEnd, cropRect,
     storyboardPlan, parseSidx, sidxRange, readBoxes, parseInit, parseSamples, selectSamples, buildClip,
   };

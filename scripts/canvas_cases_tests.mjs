@@ -211,6 +211,7 @@ await run('settings', (c) => c.kind === 'settingsOrder' ? CS.parseOrder(c.input.
 // §15: the song's canvas menu
 await run('songMenu', (c) => CS.songMenu(c.input));
 await run('pickPart', (c) => CS.pickPart(c.input.startMs, c.input.others, c.input.pickMs));
+await run('videoArtists', (c) => V.artists(c.input.artist));
 await run('videoChoices', (c) => V.videoChoices(c.input.pairing, c.input.found, c.input.rejected));
 skip('badge', 'the shimmer is CSS only (plus.css:467-482); needs bandCentre(progress, width) and chromeWhite(alpha) if the PC adopts the chrome');
 

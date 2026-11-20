@@ -95,7 +95,9 @@ Original: Prism `PR/innertube/MusicVideoMatch.kt`, `PR/innertube/YouTubeMusic.kt
 11. **[both]** None of those passed: the first video as it is (`own`): its type and title are not held against it, only what can't make a loop (not playable, no stream, a still) refuses it. So an official lyric video, a live take or an unmarked upload is the canvas when the song has nothing better. ClipFinder `:128-133`; owner's rule in Prism, 2026-11-13: "if a song has a video, Canvas should be allowed".
 12. **[both]** No result of either search passes rules 2-5: a lyric video by the artist is taken as it is (rule 11): the results of both searches again, by rules 2-4 with the lyric words (`lyric(s)`, `letra(s)`, `paroles`, `testo`) allowed; the first, if any, goes through the gate as the song's own. Prism gets this from YouTube's pairing, which hands it the lyric video when that is all the song has (its `titleSays` `lyricsOk`, `ClipFinder.kt:317-319`: "if the song has a video it should have a canvas"); the apps search, so they ask for it. BitChord `ForkVideoCanvas.clip`, `ForkMusicVideoMatch.candidates` (`lyricsOk`).
 
-Cases: `videoMatch`, `titleGate`, `clipFind` (on a fake network: `first` is what the search finds, `others` what the second search gives, each video's type, title, status and whether it is still).
+13. **[both]** The artists of the song (rules 2 and 4) are its artist line split on `,` `&` ` × ` ` x ` `feat.` `ft.` `featuring` `with`, as §4 rule 4, never on "and": "The Head and the Heart" is one artist. A part left empty is dropped.
+
+Cases: `videoArtists`, `videoMatch`, `titleGate`, `clipFind` (on a fake network: `first` is what the search finds, `others` what the second search gives, each video's type, title, status and whether it is still).
 
 ## 6. The part: BestPart
 
