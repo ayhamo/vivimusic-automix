@@ -1,6 +1,6 @@
 // Vivimusic Web+: one song's canvas (spec/canvas/canvas.md §15, Prism's song menu): a small Canvas button on the
 // player page's art opens the song's rows: the Canvas, Spotify canvas and Animated cover switches, Pick another
-// part, Pick another video, Use and Not this video. YT Music's own song menu isn't ours, so the rows live here.
+// part, Pick another video, Use, Not this video and Reset this song's canvas. YT Music's own song menu isn't ours, so the rows live here.
 // The choices are kept per song by src/plus/video-canvas.js (window.__viviCanvasSongs, storage.local
 // viviCanvasChoices); content.js's hook VP.reCheckCanvas shows a change at once.
 'use strict';
@@ -229,6 +229,10 @@
         change(id, { rejected: away, picked: st.choice.picked === st.ans.videoId ? null : st.choice.picked, part: null });
         closeMenu();
       });
+    }
+    // rule 10: forget every choice of the song at once (the only way back from Not this video and the picks)
+    if (CS.hasChoice(st.choice)) {
+      row("Reset this song's canvas", () => { songs()?.save(id, {}).then(reCheck); closeMenu(); });
     }
     if (menu.children.length === 1) menu.append(Object.assign(document.createElement('div'), { className: 'note', textContent: 'Nothing to choose for this song yet.' }));
   }

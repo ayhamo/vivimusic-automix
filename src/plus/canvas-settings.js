@@ -73,6 +73,11 @@
     return { canvasSwitch: videos && !!(s.hasLoop || s.loopOff), pickVideo: videos && !s.loopOff, pickPart: shows, notThisVideo: shows };
   }
 
+  /** Whether the song has any choice kept (§15 rules 9-10): Reset this song's canvas shows only then. */
+  function hasChoice(c) {
+    return !!c && Object.values(c).some((v) => v != null && v !== false && !(Array.isArray(v) && !v.length));
+  }
+
   /** A part picked (§15 rule 4, Prism's ClipRepository.pickPart): it plays, and the part it was takes its place among the others. */
   function pickPart(startMs, others, pickMs) {
     const list = Array.isArray(others) ? others : [];
@@ -94,7 +99,7 @@
     };
   }
 
-  const api = { SOURCES, KEYS, COVER_QUALITIES, VIDEO_QUALITIES, parseOrder, parseEnabled, storeEnabled, pickVariant, capOf, read, songMenu, pickPart };
+  const api = { SOURCES, KEYS, COVER_QUALITIES, VIDEO_QUALITIES, parseOrder, parseEnabled, storeEnabled, pickVariant, capOf, read, songMenu, pickPart, hasChoice };
   globalThis.__viviCanvasSettings = api;
   if (typeof module === 'object' && module.exports) module.exports = api;
 })();

@@ -7561,6 +7561,69 @@
       "expect": false
     }
   ],
+  "songReset": [
+    {
+      "name": "a song nobody chose anything for: no Reset",
+      "input": {
+        "choice": {}
+      },
+      "expect": false
+    },
+    {
+      "name": "only a turned-away video: Reset shows",
+      "input": {
+        "choice": {
+          "rejected": [
+            "abc"
+          ]
+        }
+      },
+      "expect": true
+    },
+    {
+      "name": "an empty turned-away list and switches left on: no Reset",
+      "input": {
+        "choice": {
+          "rejected": [],
+          "loopOff": false,
+          "use": null
+        }
+      },
+      "expect": false
+    },
+    {
+      "name": "a picked part: Reset shows",
+      "input": {
+        "choice": {
+          "part": {
+            "video": "abc",
+            "startMs": 64000,
+            "others": []
+          }
+        }
+      },
+      "expect": true
+    },
+    {
+      "name": "Spotify canvas switched off for the song: Reset shows",
+      "input": {
+        "choice": {
+          "spotifyOff": true
+        }
+      },
+      "expect": true
+    },
+    {
+      "name": "a Use and a picked video: Reset shows",
+      "input": {
+        "choice": {
+          "use": "video",
+          "picked": "xyz"
+        }
+      },
+      "expect": true
+    }
+  ],
   "songMenu": [
     {
       "name": "a song with its loop showing: every row",

@@ -210,6 +210,7 @@ await run('settings', (c) => c.kind === 'settingsOrder' ? CS.parseOrder(c.input.
   : CS.pickVariant(c.input.variants, c.input.cap));
 // §15: the song's canvas menu
 await run('songMenu', (c) => CS.songMenu(c.input));
+await run('songReset', (c) => CS.hasChoice(c.input.choice));
 await run('pickPart', (c) => CS.pickPart(c.input.startMs, c.input.others, c.input.pickMs));
 await run('videoArtists', (c) => V.artists(c.input.artist));
 await run('videoChoices', (c) => V.videoChoices(c.input.pairing, c.input.found, c.input.rejected));
