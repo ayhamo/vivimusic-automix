@@ -73,5 +73,10 @@ check('a song without details: none, nothing asked', [P.statusOf('s3').state, P.
 storageListeners.forEach((f) => f({ addonsEnabled: { newValue: false } }, 'local'));
 check('turned off: off, forgotten', P.statusOf('s1').state, 'off');
 
+// protocol.md 8.1.3: the next song is opened only from 25 s before the transition
+check('read-ahead: 26 s before the mix-out: not yet; 25 s: now; past it: still', [P.openDue(174, 200), P.openDue(175, 200), P.openDue(199, 200)], [false, true, true]);
+check('read-ahead: a song shorter than 25 s: from its start', P.openDue(0, 20), true);
+check('read-ahead: no transition known: never', [P.openDue(100, NaN), P.openDue(100, 0), P.openDue(NaN, 200)], [false, false, false]);
+
 console.log(failed ? `${failed} failed` : 'all passed');
 process.exit(failed ? 1 : 0);

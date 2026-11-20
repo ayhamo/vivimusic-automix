@@ -9,7 +9,7 @@
  * Nothing happens while addons are off. The background keeps the links and
  * file URLs; this script holds tickets and what the page may show.
  *
- *   window.__viviAddonsPage = { statusOf(id), openFor(id), lookAhead(id), fetchFor(id), note(id, patch), isOn() }
+ *   window.__viviAddonsPage = { statusOf(id), openFor(id), lookAhead(id), fetchFor(id), note(id, patch), isOn(), openDue(posSec, transitionSec) }
  *     statusOf: { state: 'off'|'looking'|'found'|'none'|'opening'|'ready', addon?, row?, stream?, why?, tried? }
  */
 (() => {
@@ -264,6 +264,11 @@
     if (d.next && d.next !== nextId && d.next !== d.id) { nextId = d.next; lookAhead(d.next); }
   }
 
+  // protocol.md 8.1.3: the next song's /stream, probe and audio only from 25 s before the
+  // transition (the mix-out, or the song's end); its FIND runs as soon as it is known (onState)
+  const READ_AHEAD_SEC = 25;
+  const openDue = (posSec, transitionSec) => Number.isFinite(posSec) && Number.isFinite(transitionSec) && transitionSec > 0 && posSec >= transitionSec - READ_AHEAD_SEC;
+
   function statusOf(id) {
     if (!enabled) return { state: 'off' };
     const s = songs.get(id);
@@ -272,5 +277,5 @@
     return { state, addon, row, stream, why, tried, candidates, play };
   }
 
-  window.__viviAddonsPage = { statusOf, openFor, lookAhead, fetchFor, note, isOn: () => enabled, deckAlive: () => { deckAt = Date.now(); } };
+  window.__viviAddonsPage = { statusOf, openFor, lookAhead, fetchFor, note, isOn: () => enabled, openDue, deckAlive: () => { deckAt = Date.now(); } };
 })();

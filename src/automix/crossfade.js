@@ -2122,10 +2122,11 @@
       });
     }
     loopPrep.reload?.();   // a loop mix loaded before an addon copy was there
-    // the next song, ahead of the mix: fetched, fitted and decoded while this one plays
+    // the next song, ahead of the mix: opened, fetched, fitted and decoded from 25 s before the
+    // transition (protocol.md 8.1.3: the mix-out when one is planned, else the song's end)
     const nx = st.next;
     if (nx && nx !== st.id && (!prepared.has(nx) || retryable(prepared.get(nx))) && adeck?.id === st.id && !['starting', 'fetching', 'fitting'].includes(adeck.state)
-      && v.currentTime - st.off > 10 && window.__viviAutomix?.isEnabled?.()) {
+      && window.__viviAutomix?.isEnabled?.() && AP.openDue?.(v.currentTime - st.off, amx.id === st.id && amx.plan?.mixOutTrackTime > 0 ? amx.plan.mixOutTrackTime : st.dur)) {
       prepareAddon(g, nx, AP, 0).then((r) => {
         if (r.rec) log(`addons: the next song is ready from ${r.rec.name}: offset ${(r.rec.off * 1000).toFixed(1)} ms, level ${r.rec.gainDb >= 0 ? '+' : ''}${r.rec.gainDb.toFixed(2)} dB`);
         else log('addons: no addon audio for the next song:', r.none);      });
