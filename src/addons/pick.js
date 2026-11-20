@@ -102,10 +102,11 @@
   }
 
   // offset-map.md, Level: YouTube's own normalisation for an addon copy, from the player
-  // response's playerConfig.audioConfig.loudnessDb (never perceptualLoudnessDb): a cut of
-  // loudnessDb when it is positive, nothing otherwise (YouTube never boosts a quiet song)
-  function loudnessGainDb(audioConfig) {
-    const v = audioConfig?.loudnessDb;
+  // response's loudnessDb (playerConfig.audioConfig, or the playing audio format, which carries
+  // the same value; never perceptualLoudnessDb): a cut of loudnessDb when it is positive,
+  // nothing otherwise (YouTube never boosts a quiet song)
+  function loudnessGainDb(from) {
+    const v = from?.loudnessDb;
     return typeof v === 'number' && Number.isFinite(v) && v > 0 ? -v : 0;
   }
 
