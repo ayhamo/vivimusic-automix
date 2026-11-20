@@ -57,7 +57,7 @@ Result: `{ offsetSec, score, coarseScore, checkSec, checkScore }`, or `{ none: '
 
 The PC's boost below is not a `loudnessDb` boost: it is measured against YouTube's copy of the same song and brings the file to that copy's loudness, never above it.
 
-**[PC only]:** the measured gain below. The deck starts at YouTube's `loudnessDb` level (the element volume) and moves to the measured one, ramped, once it is measured. The PC has the whole file, so measuring costs no extra download.
+**[PC only]:** the measured gain below. The level is measured before the deck plays (the fit, the level and the decode are done before the take-over), so the deck starts at the measured gain; there is no earlier `loudnessDb` stage. YouTube's own `loudnessDb` cut is already in the element volume the deck plays at. The PC has the whole file, so measuring costs no extra download.
 
 - The deck plays the file at YouTube's playback level times a source gain, which brings the file to YouTube's level for that song. On PC YouTube's playback level is the element volume (the listener's volume times YouTube's normalisation).
 - `gainDb = youtubeLufs − addonLufs`, each the EBU R128 integrated loudness (ITU-R BS.1770-4) of the whole decoded song, measured the same way on both sides: the fit's mono 22 050 Hz signal, K-weighted, 400 ms blocks every 100 ms, absolute gate −70 LUFS, relative gate −10 LU. Mono on both sides keeps the difference right for a stereo pair even though the absolute value isn't BS.1770's channel sum. K-weighting at any rate uses libebur128's filter design, which gives the standard's 48 kHz coefficients exactly: a 997 Hz sine at −20 dBFS reads −23.01 LUFS at 48 kHz and −22.98 at 22 050 Hz.
