@@ -7404,5 +7404,318 @@
       },
       "expect": false
     }
+  ],
+  "songMenu": [
+    {
+      "name": "a song with its loop showing: every row",
+      "input": {
+        "canvasOn": true,
+        "useVideos": true,
+        "isSong": true,
+        "hasLoop": true,
+        "loopOff": false,
+        "loopShows": true
+      },
+      "expect": {
+        "canvasSwitch": true,
+        "pickVideo": true,
+        "pickPart": true,
+        "notThisVideo": true
+      }
+    },
+    {
+      "name": "a song with no loop yet: Pick another video only",
+      "input": {
+        "canvasOn": true,
+        "useVideos": true,
+        "isSong": true,
+        "hasLoop": false,
+        "loopOff": false,
+        "loopShows": false
+      },
+      "expect": {
+        "canvasSwitch": false,
+        "pickVideo": true,
+        "pickPart": false,
+        "notThisVideo": false
+      }
+    },
+    {
+      "name": "switched off for the song: the switch stays, nothing else (Prism)",
+      "input": {
+        "canvasOn": true,
+        "useVideos": true,
+        "isSong": true,
+        "hasLoop": true,
+        "loopOff": true,
+        "loopShows": false
+      },
+      "expect": {
+        "canvasSwitch": true,
+        "pickVideo": false,
+        "pickPart": false,
+        "notThisVideo": false
+      }
+    },
+    {
+      "name": "Canvas off: nothing",
+      "input": {
+        "canvasOn": false,
+        "useVideos": true,
+        "isSong": true,
+        "hasLoop": true,
+        "loopOff": false,
+        "loopShows": false
+      },
+      "expect": {
+        "canvasSwitch": false,
+        "pickVideo": false,
+        "pickPart": false,
+        "notThisVideo": false
+      }
+    },
+    {
+      "name": "music video source off: nothing",
+      "input": {
+        "canvasOn": true,
+        "useVideos": false,
+        "isSong": true,
+        "hasLoop": true,
+        "loopOff": false,
+        "loopShows": false
+      },
+      "expect": {
+        "canvasSwitch": false,
+        "pickVideo": false,
+        "pickPart": false,
+        "notThisVideo": false
+      }
+    },
+    {
+      "name": "not a song (a podcast episode): nothing",
+      "input": {
+        "canvasOn": true,
+        "useVideos": true,
+        "isSong": false,
+        "hasLoop": false,
+        "loopOff": false,
+        "loopShows": false
+      },
+      "expect": {
+        "canvasSwitch": false,
+        "pickVideo": false,
+        "pickPart": false,
+        "notThisVideo": false
+      }
+    },
+    {
+      "name": "a loop kept, another source showing (Use): no part or Not this video",
+      "input": {
+        "canvasOn": true,
+        "useVideos": true,
+        "isSong": true,
+        "hasLoop": true,
+        "loopOff": false,
+        "loopShows": false
+      },
+      "expect": {
+        "canvasSwitch": true,
+        "pickVideo": true,
+        "pickPart": false,
+        "notThisVideo": false
+      }
+    }
+  ],
+  "pickPart": [
+    {
+      "name": "a runner-up picked: the old part takes its place (Prism)",
+      "input": {
+        "startMs": 60000,
+        "others": [
+          20000,
+          90000,
+          120000
+        ],
+        "pickMs": 90000
+      },
+      "expect": {
+        "startMs": 90000,
+        "others": [
+          20000,
+          60000,
+          120000
+        ]
+      }
+    },
+    {
+      "name": "the part playing picked: nothing moves",
+      "input": {
+        "startMs": 60000,
+        "others": [
+          20000,
+          90000
+        ],
+        "pickMs": 60000
+      },
+      "expect": {
+        "startMs": 60000,
+        "others": [
+          20000,
+          90000
+        ]
+      }
+    },
+    {
+      "name": "a start not among the others: the old part goes first",
+      "input": {
+        "startMs": 60000,
+        "others": [
+          20000,
+          90000
+        ],
+        "pickMs": 150000
+      },
+      "expect": {
+        "startMs": 150000,
+        "others": [
+          60000,
+          20000,
+          90000
+        ]
+      }
+    },
+    {
+      "name": "no others",
+      "input": {
+        "startMs": 60000,
+        "others": [],
+        "pickMs": 30000
+      },
+      "expect": {
+        "startMs": 30000,
+        "others": [
+          60000
+        ]
+      }
+    }
+  ],
+  "videoChoices": [
+    {
+      "name": "the pairing first, then the search's order",
+      "input": {
+        "pairing": "b",
+        "found": [
+          "a",
+          "b",
+          "c"
+        ],
+        "rejected": []
+      },
+      "expect": [
+        "b",
+        "a",
+        "c"
+      ]
+    },
+    {
+      "name": "no pairing (signed out): the search's order",
+      "input": {
+        "pairing": null,
+        "found": [
+          "a",
+          "b",
+          "c"
+        ],
+        "rejected": []
+      },
+      "expect": [
+        "a",
+        "b",
+        "c"
+      ]
+    },
+    {
+      "name": "a pairing the search didn't find is not added (Prism)",
+      "input": {
+        "pairing": "z",
+        "found": [
+          "a",
+          "b"
+        ],
+        "rejected": []
+      },
+      "expect": [
+        "a",
+        "b"
+      ]
+    },
+    {
+      "name": "turned-away videos are left out",
+      "input": {
+        "pairing": null,
+        "found": [
+          "a",
+          "b",
+          "c"
+        ],
+        "rejected": [
+          "b"
+        ]
+      },
+      "expect": [
+        "a",
+        "c"
+      ]
+    },
+    {
+      "name": "at most 10, before turned-away ones are left out (Prism)",
+      "input": {
+        "pairing": null,
+        "found": [
+          "v00",
+          "v01",
+          "v02",
+          "v03",
+          "v04",
+          "v05",
+          "v06",
+          "v07",
+          "v08",
+          "v09",
+          "v10",
+          "v11"
+        ],
+        "rejected": [
+          "v00"
+        ]
+      },
+      "expect": [
+        "v01",
+        "v02",
+        "v03",
+        "v04",
+        "v05",
+        "v06",
+        "v07",
+        "v08",
+        "v09"
+      ]
+    },
+    {
+      "name": "repeats once",
+      "input": {
+        "pairing": null,
+        "found": [
+          "a",
+          "b",
+          "a"
+        ],
+        "rejected": []
+      },
+      "expect": [
+        "a",
+        "b"
+      ]
+    }
   ]
 }

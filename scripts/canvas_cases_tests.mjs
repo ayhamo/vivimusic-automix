@@ -207,6 +207,7 @@ await run('chorus', (c) => V.chorusMs(c.input.lines, c.input.durationMs));
 await run('settings', (c) => c.kind === 'settingsOrder' ? CS.parseOrder(c.input.stored)
   : c.kind === 'settingsEnabled' ? CS.parseEnabled(c.input.stored)
   : CS.pickVariant(c.input.variants, c.input.cap));
+for (const g of ['songMenu', 'pickPart', 'videoChoices']) skip(g, 'the song menu (§15) is not built on the PC yet');
 skip('badge', 'the shimmer is CSS only (plus.css:467-482); needs bandCentre(progress, width) and chromeWhite(alpha) if the PC adopts the chrome');
 
 console.log(`\ncanvas cases: ${ok} ok, ${diff} DIFF, ${skipped} skipped`);
