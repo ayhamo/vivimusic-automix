@@ -82,7 +82,28 @@
     return out;
   }
 
-  const api = { LEAD_MS, activeLines, offsetOf, sides };
+  /** §6.1: a gap is this long or more without a line (LYRICS_GAP_MIN_MS); §6.2: shown this far ahead (HIGHLIGHT_LOOK_AHEAD_MS). */
+  const GAP_MIN_MS = 7000, GAP_AHEAD_MS = 190;
+
+  /**
+   * The instrumental gaps (§6.1, Metrolist's buildLyricsListItems): an intro from 0 to the first line - 800 when that
+   * line starts at 7000 or later; between lines, from the latest end so far + 310 to the next start - 800, when they
+   * are 7000 or more apart. lines: [{ start, end }] in order. Answers [[start, end], ...] with each gap's line index
+   * after it ([start, end, before]).
+   */
+  function gaps(lines) {
+    const list = Array.isArray(lines) ? lines : [];
+    const out = [];
+    if (list.length && list[0].start >= GAP_MIN_MS) out.push([0, list[0].start - 800, 0]);
+    let lastEnd = null;
+    list.forEach((l, i) => {
+      if (lastEnd != null && l.start - lastEnd >= GAP_MIN_MS) out.push([lastEnd + 310, l.start - 800, i]);
+      lastEnd = Math.max(lastEnd ?? 0, l.end);
+    });
+    return out;
+  }
+
+  const api = { LEAD_MS, activeLines, offsetOf, sides, gaps, GAP_AHEAD_MS };
   globalThis.__viviLyricsRules = api;
   if (typeof module === 'object' && module.exports) module.exports = api;
 })();

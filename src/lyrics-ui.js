@@ -1303,6 +1303,7 @@
       }
       list.appendChild(lineEl);
     });
+    VP.addGaps(list, result); // vivi+ hook: instrumental gap marks (lyrics.md §6)
     startOnlineRoman(result, romanView);
 
     frag.appendChild(list);

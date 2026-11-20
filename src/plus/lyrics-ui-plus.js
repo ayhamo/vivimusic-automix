@@ -228,6 +228,7 @@
     for (const el of duetEls) if (!extra.includes(el) && el !== actives[0]) el.classList.remove('vivi-lyrics-active');
     for (const el of extra) el.classList.add('vivi-lyrics-active');
     duetEls = extra;
+    updateGaps(nowMs);
     return actives[0] || null;
   }
 
@@ -371,9 +372,48 @@
     if (a) lineEl.classList.add('vivi-lyrics-side-' + a);
   }
 
+  // ── lyrics.md §6: instrumental gaps. A mark sits before the line after each gap (and before the first line for an
+  // intro): three dots that fill with the gap's progress while the position + 190 ms is inside it, appearing 300 ms
+  // in and fading over 200 ms, leaving over 800 ms (BitChord's dots; Metrolist draws a ring). ──
+  const gapCss = document.createElement('style');
+  gapCss.textContent = '.vivi-lyrics-gap{display:block;padding:6px 0;line-height:0;opacity:0;transform:scale(.85);transition:opacity .8s ease,transform .8s ease;pointer-events:none}'
+    + '.vivi-lyrics-gap.vivi-lyrics-side-left{text-align:left}.vivi-lyrics-gap.vivi-lyrics-side-right{text-align:right}'
+    + '.vivi-lyrics-gap.on{opacity:1;transform:scale(1);transition:opacity .2s ease .3s,transform .2s ease .3s}'
+    + '.vivi-lyrics-gap i{display:inline-block;width:10px;height:10px;margin:0 4px;border-radius:50%;background:currentColor;opacity:.25;transition:opacity .15s}'
+    + '.vivi-lyrics-gap i.f{opacity:.95}';
+  (document.head || document.documentElement).append(gapCss);
+  let gapEls = [];
+  function addGaps(list, result) {
+    gapEls = [];
+    if (!RULES || !result || result.mode === 'plain' || !Array.isArray(result.lines)) return;
+    const lineEls = list.querySelectorAll('.vivi-lyrics-line');
+    for (const [start, end, before] of RULES.gaps(result.lines)) {
+      const el = document.createElement('div');
+      el.className = 'vivi-lyrics-gap';
+      el.dataset.start = String(start); el.dataset.end = String(end);
+      el.innerHTML = '<i></i><i></i><i></i>';
+      const next = lineEls[before];
+      const sideOf = next && [...next.classList].find((c) => c.startsWith('vivi-lyrics-side-'));
+      if (sideOf) el.classList.add(sideOf);   // with the line after it (a duet's side)
+      if (next) list.insertBefore(el, next); else list.append(el);
+      gapEls.push(el);
+    }
+  }
+  function updateGaps(nowMs) {
+    for (const el of gapEls) {
+      const s = Number(el.dataset.start), e = Number(el.dataset.end), at = nowMs + RULES.GAP_AHEAD_MS;
+      const on = at >= s && at < e;
+      el.classList.toggle('on', on);
+      if (on) {
+        const filled = Math.floor(((at - s) / Math.max(1, e - s)) * 3 + 1);
+        el.querySelectorAll('i').forEach((d, k) => d.classList.toggle('f', k < filled));
+      }
+    }
+  }
+
   plus.lyricsUi = {
     tabByPosition, onUserTabClick, makeRefreshIcon, makeRefetchTabButton, syncRefetchTabButton,
     fillPos, markRtl, songSec, holdTrack, takeDuration, fillDuration, recheckDuration, bind, activeLine,
-    globalOffset, songOffset, offsetChanged, extendOffsetPanel, followPaused, side,
+    globalOffset, songOffset, offsetChanged, extendOffsetPanel, followPaused, side, addGaps,
   };
 })();
