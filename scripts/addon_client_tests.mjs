@@ -248,6 +248,19 @@ const raceAddon = (name, { searchMs = 0, streamMs = 0, rows = [row('r1')] } = {}
   const g2 = await fresh().resolve(song, [top, second], { accept: (s) => P.floorVerdict(s, 160) });
   check('floor in the race: a fast lossy top addon loses to a lossless second one', g2.stream?.url, fileUrl('floorsecond', 'r1'));
 }
+{
+  // 8.1.7 "Upgrade quality": the song's search and /stream answers forgotten, others kept
+  const a = raceAddon('forgetme');
+  const c = fresh();
+  const other = { ...song, title: 'Other Song' };
+  const f1 = await c.find(song, [a]); await c.open(f1.found, song);
+  await c.find(other, [a]);
+  const s0 = hitsOf('forgetme', 'search').length, t0 = hitsOf('forgetme', 'stream').length;
+  const n = c.forget(song, f1.found);
+  const f2 = await c.find(song, [a]); await c.open(f2.found, song);
+  await c.find(other, [a]);
+  check('forget: the song asked again (search and /stream), another song still cached', [n >= 2, hitsOf('forgetme', 'search').length - s0, hitsOf('forgetme', 'stream').length - t0], [true, 1, 1]);
+}
 // ---- §4a stream limits, the look-ahead, the stream's own headers ----
 behaviour.limited = {
   search: (u, send) => send(200, { tracks: [row('a')] }),

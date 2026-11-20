@@ -24,6 +24,7 @@
  *     VIVI_ADDONS_ISRC     { videoId, isrc } -> { ok }: the ISRC the lyrics lookup learned (protocol.md §7, ISRC first)
  *     VIVI_ADDONS_OPEN     { ticket, ytKbps } -> { addon, row, stream, tried, cached? } or { none, tried }: the cache, else /stream + probe;
  *                                          a copy under the lossy floor (protocol.md 8.2.1) never wins
+ *     VIVI_ADDONS_REFRESH  { ticket }      -> { ok, cleared, files }: "Upgrade quality" (8.1.7): the song's cached answers and files go
  *     VIVI_ADDONS_UPGRADE  { ticket }      -> the better copy's OPEN answer, or { none }: the pass after a copy plays (8.2.1)
  *     VIVI_ADDONS_FETCH    { ticket }      -> { bytes (ArrayBuffer), mime } or { none }: the opened file (Firefox passes ArrayBuffers)
  *
@@ -214,6 +215,19 @@
       t.got = got; t.opened = Promise.resolve(got);
       return outward(got);
     }
+    // 8.1.7 "Upgrade quality": the song's search and /stream answers forgotten, and (the PC) its
+    // cached files, so the page's next FIND and OPEN ask the addons again
+    async function refresh(ticket) {
+      const t = tickets.get(ticket);
+      if (!t) return { none: 'ticket expired' };
+      const cleared = client.forget?.(t.song, t.found) || 0;
+      let dropped = 0;
+      for (const f of t.found) for (const row of f.rows) { const k = cacheKey(f.addon, row, t.opt); if (k && await files.drop(k).catch(() => false)) dropped++; }
+      const k = t.got && cacheKey(t.got.addon, t.got.row, t.opt);
+      if (k && await files.drop(k).catch(() => false)) dropped++;
+      tickets.delete(ticket);
+      return { ok: true, cleared, files: dropped };
+    }
     const cacheKey = (addon, row, opt) => files && addon?.id && row?.id ? files.keyOf(addon.id, row.id, addon.quality ?? opt?.tier) : null;
     async function cached(t, floor = () => true) {
       if (!files) return null;
@@ -294,11 +308,12 @@
         case 'VIVI_ADDONS_ISRC': return noteIsrc(msg.videoId, msg.isrc);
         case 'VIVI_ADDONS_OPEN': return open(String(msg.ticket || ''), Number(msg.ytKbps) || 0);
         case 'VIVI_ADDONS_UPGRADE': return upgrade(String(msg.ticket || ''));
+        case 'VIVI_ADDONS_REFRESH': return refresh(String(msg.ticket || ''));
         case 'VIVI_ADDONS_FETCH': return fetchFile(String(msg.ticket || ''));
         default: return undefined;
       }
     }
-    return { list, add, remove, move, toggle, settings, resolve, find, open, upgrade, fetchFile, noteIsrc, handle, ticketOf: (t) => tickets.get(t) };
+    return { list, add, remove, move, toggle, settings, resolve, find, open, upgrade, refresh, fetchFile, noteIsrc, handle, ticketOf: (t) => tickets.get(t) };
   }
 
   const api = { create, DEFAULTS, TIERS };
@@ -310,9 +325,9 @@
     const FC = globalThis.__viviAddonFileCache;
     const files = FC && globalThis.caches ? FC.create({ storage: chrome.storage.local, maxBytes: async () => (await chrome.storage.local.get({ addonsCacheMB: DEFAULTS.addonsCacheMB })).addonsCacheMB * 1e6 }) : null;
     const store = create({ storage: chrome.storage.local, files });
-    // content scripts (YouTube Music's tab) may only FIND, OPEN, UPGRADE and FETCH; the list and its
+    // content scripts (YouTube Music's tab) may only FIND, OPEN, UPGRADE, REFRESH and FETCH; the list and its
     // settings change only from the extension's own pages (the popup)
-    const PAGE_TYPES = new Set(['VIVI_ADDONS_FIND', 'VIVI_ADDONS_OPEN', 'VIVI_ADDONS_UPGRADE', 'VIVI_ADDONS_FETCH']);
+    const PAGE_TYPES = new Set(['VIVI_ADDONS_FIND', 'VIVI_ADDONS_OPEN', 'VIVI_ADDONS_UPGRADE', 'VIVI_ADDONS_REFRESH', 'VIVI_ADDONS_FETCH']);
     const ours = (sender) => typeof sender?.url === 'string' && sender.url.startsWith(chrome.runtime.getURL(''));
     chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       if (typeof msg?.type !== 'string' || !msg.type.startsWith('VIVI_ADDONS_')) return undefined;

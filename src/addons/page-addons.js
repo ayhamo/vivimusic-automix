@@ -9,7 +9,7 @@
  * Nothing happens while addons are off. The background keeps the links and
  * file URLs; this script holds tickets and what the page may show.
  *
- *   window.__viviAddonsPage = { statusOf(id), openFor(id), lookAhead(id), fetchFor(id), note(id, patch), isOn(), openDue(posSec, transitionSec), upgradeFor(id) }
+ *   window.__viviAddonsPage = { statusOf(id), openFor(id), lookAhead(id), fetchFor(id), note(id, patch), isOn(), openDue(posSec, transitionSec), upgradeFor(id), upgradeQuality(id) }
  *     statusOf: { state: 'off'|'looking'|'found'|'none'|'opening'|'ready', addon?, row?, stream?, why?, tried? }
  */
 (() => {
@@ -136,6 +136,30 @@
     return true;
   }
 
+  // 8.1.7 "Upgrade quality" (a click on the quality badge): the song's cached answers and files are
+  // dropped in the background, the song is forgotten here, and crossfade.js readies it afresh
+  // ('vivi-addons-refresh'): FIND, OPEN and the file again, and its deck takes over once ready
+  const refreshing = new Set();
+  async function upgradeQuality(id) {
+    if (!enabled || !id || refreshing.has(id)) return false;
+    refreshing.add(id);
+    try {
+      const s = songs.get(id);
+      const r = s?.ticket ? await ask({ type: 'VIVI_ADDONS_REFRESH', ticket: s.ticket }) : null;
+      songs.delete(id);
+      known.delete(id);
+      log(`${s?.meta?.artist || id} - ${s?.meta?.song || ''}: Upgrade quality: asking the addons again${r?.ok ? ` (${r.cleared} answers and ${r.files} cached files dropped)` : ''}`);
+      try { window.dispatchEvent(new CustomEvent('vivi-addons-refresh', { detail: { id } })); } catch { /* no window */ }
+      show();
+      return true;
+    } finally { refreshing.delete(id); }
+  }
+  const onBadgeClick = (e) => {
+    e.preventDefault(); e.stopPropagation();
+    if (e.currentTarget?.dataset?.kind !== 'upgrading') upgradeQuality(curId);
+  };
+  const CLICK_TIP = ' (click: Upgrade quality, ask your addons again)';
+
   // FETCH: the opened file's bytes (the background fetches it: host permission, file URL)
   async function fetchFor(id) {
     const s = songs.get(id);
@@ -234,10 +258,10 @@
     let a = document.getElementById(ART_BADGE_ID);
     const wrap = document.querySelector('ytmusic-player-bar .thumbnail-image-wrapper');
     if (!q || !wrap) { if (a) a.hidden = true; return; }
-    if (!a) { a = document.createElement('span'); a.id = ART_BADGE_ID; a.className = 'vivi-addon-art-badge'; a.append(newSvg()); }
+    if (!a) { a = document.createElement('span'); a.id = ART_BADGE_ID; a.className = 'vivi-addon-art-badge'; a.append(newSvg()); a.addEventListener('click', onBadgeClick); }
     if (a.parentElement !== wrap) wrap.append(a);
     glyph(a, q);
-    const tip = q.label + ': ' + q.title;
+    const tip = q.label + ': ' + q.title + (q.kind === 'upgrading' ? '' : CLICK_TIP);
     if (a.title !== tip) a.title = tip;
     a.hidden = false;
   }
@@ -251,6 +275,7 @@
       b = document.createElement('span'); b.id = BADGE_ID; b.className = 'vivi-addon-badge';
       const label = document.createElement('span'); label.className = 'vivi-addon-badge-label';
       b.append(newSvg(), label);
+      b.addEventListener('click', onBadgeClick);
     }
     if (b.parentElement !== panel) panel.append(b);
     if (getComputedStyle(panel).position === 'static') panel.style.position = 'relative';
@@ -262,7 +287,8 @@
     glyph(b, q);
     const label = b.lastElementChild;
     if (label.textContent !== q.label) label.textContent = q.label;
-    if (b.title !== q.title) b.title = q.title;
+    const tip = q.title + (q.kind === 'upgrading' ? '' : CLICK_TIP);
+    if (b.title !== tip) b.title = tip;
     b.hidden = false;
   }
   function badge() {
@@ -293,5 +319,5 @@
     return { state, addon, row, stream, why, tried, candidates, play };
   }
 
-  window.__viviAddonsPage = { statusOf, openFor, lookAhead, fetchFor, note, isOn: () => enabled, openDue, upgradeFor, deckAlive: () => { deckAt = Date.now(); } };
+  window.__viviAddonsPage = { statusOf, openFor, lookAhead, fetchFor, note, isOn: () => enabled, openDue, upgradeFor, upgradeQuality, deckAlive: () => { deckAt = Date.now(); } };
 })();

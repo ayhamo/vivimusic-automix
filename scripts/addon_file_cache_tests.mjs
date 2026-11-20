@@ -149,6 +149,14 @@ const cacheWith = (maxBytes, st = fakeStorage(), c = fakeCache()) => ({ st, c, F
   f = await S.handle({ type: 'VIVI_ADDONS_FIND', song: { ...song, title: 'Weak' } });
   const ow = await S.handle({ type: 'VIVI_ADDONS_OPEN', ticket: f.ticket, ytKbps: 160 });
   check('a cached copy under the floor is passed over; the race runs', [ow.cached, ow.row.id], [undefined, 'idA-2']);
+  // 8.1.7 "Upgrade quality": the song's answers forgotten in the client, its cached files dropped, the ticket gone
+  const forgot = [];
+  client.forget = (song, found) => { forgot.push([song.title, found.map((x) => x.addon.id)]); return 3; };
+  await S.handle({ type: 'VIVI_ADDONS_FETCH', ticket: f.ticket });
+  await new Promise((r) => setTimeout(r, 10));
+  const before = (await files.stats()).files;
+  const rf = await S.handle({ type: 'VIVI_ADDONS_REFRESH', ticket: f.ticket });
+  check("REFRESH: answers forgotten, the song's cached files dropped, the ticket gone", [rf, forgot, before - (await files.stats()).files, S.ticketOf(f.ticket), await S.handle({ type: 'VIVI_ADDONS_REFRESH', ticket: f.ticket })], [{ ok: true, cleared: 3, files: 2 }, [['Weak', ['idA', 'idB']]], 2, undefined, { none: 'ticket expired' }]);
 }
 
 console.log(failed ? `\n${failed} failed` : '\nall passed');

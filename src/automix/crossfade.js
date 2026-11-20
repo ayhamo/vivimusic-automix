@@ -2066,6 +2066,16 @@
   // the addon deck takes over from that deck at the blend's end. On any trouble
   // it hands the sound back to YouTube at the same spot.
   let adeck = null;   // { id, state } for the song the addon deck last ran for
+  // "Upgrade quality" (page-addons.js): the song's copy is readied afresh; the playing deck keeps
+  // playing until the new one takes over (playAddon), and a mix's next song is prepared again
+  try {
+    window.addEventListener('vivi-addons-refresh', (e) => {
+      const id = e.detail?.id;
+      if (!id) return;
+      prepared.delete(id);
+      if (adeck?.id === id && !live) adeck = null;
+    });
+  } catch { /* no window */ }
   const prepared = new Map();   // song id -> { promise, rec?, none? }: the playing song's, the next one's, the last one's
   const addonEvents = [];       // what the addon path did, on the audio clock (tests)
   const addonEvent = (ev, x = {}) => { addonEvents.push({ ...x, ev, t: graph()?.ctx.currentTime ?? null }); if (addonEvents.length > 60) addonEvents.shift(); };

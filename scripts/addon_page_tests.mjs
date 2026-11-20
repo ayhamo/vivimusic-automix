@@ -37,6 +37,7 @@ const chrome = {
       sent.push(msg);
       setTimeout(() => {
         if (msg.type === 'VIVI_ADDONS_FIND') cb(msg.song.title === 'Vaina Loca' || msg.song.title === 'Poker Face' ? { ticket: 't-' + msg.song.title, candidates: [{ addon: 'nullbeat.example', rows: 1 }], tried: [] } : { none: 'no addon has it', tried: [] });
+        else if (msg.type === 'VIVI_ADDONS_REFRESH') cb({ ok: true, cleared: 2, files: 1 });
         else if (msg.type === 'VIVI_ADDONS_OPEN') cb({ addon: { name: 'NullBeat', host: 'nullbeat.example' }, row: { id: 'r-' + msg.ticket }, stream: { codec: 'flac', sampleRate: 44100, bitDepth: 16 }, tried: [] });
       }, 1);
     },
@@ -70,6 +71,15 @@ check('openFor again: no second OPEN', sent.length, 4);
 state('s3', '');
 for (let i = 0; i < 20; i++) await tick();
 check('a song without details: none, nothing asked', [P.statusOf('s3').state, P.statusOf('s3').why, sent.length], ['none', 'no song details', 4]);
+// 8.1.7 "Upgrade quality", and YouTube's bitrate going with OPEN (the lossy floor, 8.2.1)
+deliver({ ch: 'vivi-xfade', dir: 'out', type: 'ytAudio', id: 's1', itag: 251, kbps: 150, codec: 'opus' });
+const refreshed = [];
+win.dispatchEvent = (e) => refreshed.push(e.detail.id);
+ctx.CustomEvent = class { constructor(type, o) { this.type = type; this.detail = o?.detail; } };
+const up = await P.upgradeQuality('s1');
+check('upgradeQuality: REFRESH with the ticket, the song forgotten, crossfade told', [up, sent.at(-1), P.statusOf('s1').state, refreshed], [true, { type: 'VIVI_ADDONS_REFRESH', ticket: 't-Poker Face' }, 'none', ['s1']]);
+const again = await P.openFor('s1');
+check("then FIND and OPEN again, with YouTube's bitrate", [again.state, types().slice(-2), sent.at(-1).ytKbps], ['ready', ['VIVI_ADDONS_FIND:Poker Face', 'VIVI_ADDONS_OPEN:t-Poker Face'], 150]);
 storageListeners.forEach((f) => f({ addonsEnabled: { newValue: false } }, 'local'));
 check('turned off: off, forgotten', P.statusOf('s1').state, 'off');
 

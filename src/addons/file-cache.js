@@ -13,6 +13,7 @@
  *   has(key)                -> the entry's meta, or null (the index only, no file read)
  *   get(key)                -> { bytes, meta } or null; marks it played
  *   put(key, bytes, meta)   -> true when kept
+ *   drop(key)               forgets one file
  *   stats()                 -> { files, bytes }
  *   clear()
  *
@@ -89,6 +90,17 @@
       });
     }
 
+    function drop(key) {
+      return inTurn(async () => {
+        const ix = await index();
+        if (!ix[key]) return false;
+        delete ix[key];
+        await (await files()).delete(urlOf(key));
+        await save(ix);
+        return true;
+      });
+    }
+
     async function stats() {
       const ix = await index();
       return { files: Object.keys(ix).length, bytes: Object.values(ix).reduce((n, e) => n + (e.size || 0), 0) };
@@ -102,7 +114,7 @@
       });
     }
 
-    return { keyOf, has, get, put, trim, stats, clear };
+    return { keyOf, has, get, put, drop, trim, stats, clear };
   }
 
   const api = { create, INDEX };

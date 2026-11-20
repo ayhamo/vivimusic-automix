@@ -449,8 +449,21 @@
       return race(addons.map((a) => async (tr) => { const f = await findOne(a, target, opt, tr); return f && openOne(f.addon, f.rows, target, opt, tr); }), []);
     }
 
+    // protocol.md 8.1.7, "Upgrade quality": a song's search answers (empty ones too) and the /stream
+    // answers of its rows are forgotten, so the next ask goes to the addons again
+    function forget(target, found = []) {
+      const marks = [target?.title && 'title=' + encodeURIComponent(text(target.title)), target?.artist && 'artist=' + encodeURIComponent(text(target.artist))].filter(Boolean);
+      const rows = new Set(found.flatMap((f) => (f.rows || []).map((r) => '/stream/' + encodeURIComponent(r.id) + '?')));
+      let n = 0;
+      for (const k of [...cache.keys()]) {
+        const drop = (k.startsWith('s|') && marks.length && marks.every((m) => k.includes(m))) || (k.startsWith('t|') && [...rows].some((r) => k.includes(r)));
+        if (drop) { cache.delete(k); n++; }
+      }
+      return n;
+    }
+
     const health = () => Object.fromEntries([...healthOf].map(([b, h]) => [redact(b), { ...h }]));
-    return { discover, manifest, search, stream, streamWait, probe, find, open, resolve, health, paramsFor, readStream };
+    return { discover, manifest, search, stream, streamWait, probe, find, open, resolve, forget, health, paramsFor, readStream };
   }
 
   const api = { create, baseOf, sameAddon, paramsFor, readManifest, redact, AddonError, scrub };
