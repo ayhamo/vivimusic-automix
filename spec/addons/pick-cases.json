@@ -1707,5 +1707,32 @@
   { "name": "no loudnessDb: nothing", "audioConfig": {}, "expectDb": 0 },
   { "name": "only perceptualLoudnessDb: not used, nothing", "audioConfig": { "perceptualLoudnessDb": 3.1 }, "expectDb": 0 },
   { "name": "both: loudnessDb, never perceptualLoudnessDb", "audioConfig": { "loudnessDb": 2, "perceptualLoudnessDb": -9.5 }, "expectDb": -2 }
+ ],
+ "qualityRank": [
+  { "name": "FLAC 16/44.1: lossless", "stream": { "codec": "flac", "bitDepth": 16, "sampleRate": 44100}, "expect": 1},
+  { "name": "FLAC 24/96: Hi-Res", "stream": { "codec": "flac", "bitDepth": 24, "sampleRate": 96000}, "expect": 2},
+  { "name": "FLAC 16/96: Hi-Res (over 48 kHz)", "stream": { "codec": "flac", "bitDepth": 16, "sampleRate": 96000}, "expect": 2},
+  { "name": "ALAC 24/48: Hi-Res (over 16-bit)", "stream": { "codec": "alac", "bitDepth": 24, "sampleRate": 48000}, "expect": 2},
+  { "name": "lossless tier, no codec: lossless", "stream": { "tier": "LOSSLESS" }, "expect": 1},
+  { "name": "lossless tier with a lossy codec: lossy", "stream": { "tier": "LOSSLESS", "codec": "aac", "bitrate": 320}, "expect": 0},
+  { "name": "MP3 320: lossy", "stream": { "codec": "mp3", "bitrate": 320}, "expect": 0}
+ ],
+ "floorVerdict": [
+  { "name": "lossless: always", "stream": { "codec": "flac", "bitDepth": 16, "sampleRate": 44100}, "ytKbps": 160, "expect": true},
+  { "name": "320 kbps over YouTube's 160: 160 over, kept", "stream": { "codec": "mp3", "bitrate": 320}, "ytKbps": 160, "expect": true},
+  { "name": "256 kbps over YouTube's 160: exactly 96 over, kept", "stream": { "codec": "aac", "bitrate": 256}, "ytKbps": 160, "expect": true},
+  { "name": "255 kbps over YouTube's 160: refused", "stream": { "codec": "aac", "bitrate": 255}, "ytKbps": 160, "expect": "lossy 255 kbps, not 96 kbps over YouTube's 160" },
+  { "name": "320 kbps over Premium's 256: refused", "stream": { "codec": "mp3", "bitrate": 320}, "ytKbps": 256, "expect": "lossy 320 kbps, not 96 kbps over YouTube's 256" },
+  { "name": "YouTube's bitrate unknown: 160 assumed", "stream": { "codec": "mp3", "bitrate": 320}, "ytKbps": 0, "expect": true},
+  { "name": "lossy, no bitrate: refused", "stream": { "codec": "opus" }, "ytKbps": 160, "expect": "lossy, bitrate unknown" }
+ ],
+ "upgradeWanted": [
+  { "name": "a lossy copy, Best asked: the addons again, lossless or better", "stream": { "codec": "mp3", "bitrate": 320}, "tier": "LOSSLESS", "cached": false, "expect": { "aboveOnly": false, "minRank": 1}},
+  { "name": "a lossy copy, High asked: no pass", "stream": { "codec": "mp3", "bitrate": 320}, "tier": "HIGH", "cached": false, "expect": null},
+  { "name": "a fresh 16-bit copy, Best asked: no pass (only lossy is followed)", "stream": { "codec": "flac", "bitDepth": 16, "sampleRate": 44100}, "tier": "LOSSLESS", "cached": false, "expect": null},
+  { "name": "a cached 16-bit copy, Best asked: the addons above it, Hi-Res", "stream": { "codec": "flac", "bitDepth": 16, "sampleRate": 44100}, "tier": "LOSSLESS", "cached": true, "expect": { "aboveOnly": true, "minRank": 2}},
+  { "name": "a cached 16-bit copy, CD asked: no pass", "stream": { "codec": "flac", "bitDepth": 16, "sampleRate": 44100}, "tier": "CD", "cached": true, "expect": null},
+  { "name": "a cached lossy copy, CD asked: the addons above it, lossless", "stream": { "codec": "aac", "bitrate": 320}, "tier": "CD", "cached": true, "expect": { "aboveOnly": true, "minRank": 1}},
+  { "name": "a cached Hi-Res copy, Best asked: no pass", "stream": { "codec": "flac", "bitDepth": 24, "sampleRate": 96000}, "tier": "LOSSLESS", "cached": true, "expect": null}
  ]
 }

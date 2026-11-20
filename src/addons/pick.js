@@ -110,7 +110,35 @@
     return typeof v === 'number' && Number.isFinite(v) && v > 0 ? -v : 0;
   }
 
-  const api = { rowOf, rowsToOpen, probeVerdict, tierOf, isAtmos, isrcOf, loudnessGainDb };
+  // protocol.md 8.2.1: an opened stream's quality, 0 lossy, 1 lossless up to 16-bit/48 kHz,
+  // 2 Hi-Res (over 16-bit or over 48 kHz); a lossless tier with a lossy codec named is lossy
+  const LOSSLESS_CODEC = /flac|alac|wav|pcm|aiff?/i, LOSSY_CODEC = /mp3|mpeg|aac|mp4a|opus|vorbis|ogg/i;
+  function qualityRank(st) {
+    const c = text(st?.codec);
+    const lossless = LOSSLESS_CODEC.test(c) || (st?.tier === 'LOSSLESS' && !LOSSY_CODEC.test(c));
+    if (!lossless) return 0;
+    return (num(st?.bitDepth) > 16 || num(st?.sampleRate) > 48000) ? 2 : 1;
+  }
+  // the lossy floor: lossless always; lossy at 96 kbps or more over what YouTube plays now
+  // (160 kbps, the usual Opus 251, when that isn't known) -> true, or why not
+  const FLOOR_KBPS = 96, YT_KBPS_USUAL = 160;
+  function floorVerdict(st, ytKbps) {
+    if (qualityRank(st) >= 1) return true;
+    const yt = num(ytKbps) > 0 ? num(ytKbps) : YT_KBPS_USUAL, b = num(st?.bitrate);
+    if (!b) return 'lossy, bitrate unknown';
+    return b >= yt + FLOOR_KBPS ? true : `lossy ${b} kbps, not ${FLOOR_KBPS} kbps over YouTube's ${yt}`;
+  }
+  // the pass after a copy plays: { aboveOnly, minRank } or null. A lossy copy: the addons asked
+  // again for a lossless row (when the tier asked is lossless). A cached copy below the tier asked
+  // (lossy for CD; under Hi-Res for Best and Hi-Res): only the addons ranked above it, for better.
+  function upgradeWanted(st, tier, cached) {
+    const r = qualityRank(st), want = tier === 'LOSSLESS' || tier === 'HIRES' ? 2 : tier === 'CD' ? 1 : 0;
+    if (r >= want) return null;
+    if (cached) return { aboveOnly: true, minRank: r + 1 };
+    return r === 0 ? { aboveOnly: false, minRank: 1 } : null;
+  }
+
+  const api = { rowOf, rowsToOpen, probeVerdict, tierOf, isAtmos, isrcOf, loudnessGainDb, qualityRank, floorVerdict, upgradeWanted };
   globalThis.__viviAddonPick = api;
   if (typeof module === 'object' && module.exports) module.exports = api;
 })();

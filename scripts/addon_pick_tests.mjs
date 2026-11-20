@@ -36,6 +36,9 @@ for (const c of cases.readStream) {
   check('readStream: ' + c.name, Object.fromEntries(Object.keys(c.expect).map((k) => [k, s[k]])), c.expect);
 }
 for (const c of cases.loudnessGain) check('loudnessGain: ' + c.name, P.loudnessGainDb(c.audioConfig), c.expectDb);
+for (const c of cases.qualityRank) check('qualityRank: ' + c.name, P.qualityRank(c.stream), c.expect);
+for (const c of cases.floorVerdict) check('floor: ' + c.name, P.floorVerdict(c.stream, c.ytKbps), c.expect);
+for (const c of cases.upgradeWanted) check('upgrade: ' + c.name, P.upgradeWanted(c.stream, c.tier, c.cached), c.expect);
 for (const [u, want] of cases.baseOf) check(`baseOf "${u}"`, C.baseOf(u), want);
 for (const [a, b, want] of cases.sameAddon) check(`sameAddon ${a} ~ ${b}`, C.sameAddon(a, b), want);
 

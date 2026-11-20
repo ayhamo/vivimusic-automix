@@ -2297,6 +2297,14 @@
     say('playing', { offsetSec: rec.off, gainDb: rec.lvl.gainDb, wantDb: rec.lvl.wantDb, capped: rec.lvl.capped, score: rec.fit.score, checkScore: rec.fit.checkScore,
       takeoverMs, mixTake: !!takeAt, decodedMB: Math.round(decodedMB), fileMB: Math.round((rec.fileBytes || 0) / 1e5) / 10, took: rec.took });
     addonEvent('deck', { id, takeAt, startPos, off: rec.off, k: rec.k });
+    // protocol.md 8.2.1: a lossy copy, or a cached one below the tier asked, gets one pass for a
+    // better copy; one found is readied by the next tick and its deck takes over from this one
+    AP.upgradeFor?.(id).then((better) => {
+      if (!better || adeck !== run || st?.id !== id || live) return;
+      log('addons: a better copy was found; it takes over once it is fetched and fitted');
+      prepared.delete(id);
+      adeck = null;
+    }).catch(() => {});
     d.follow({
       clock: () => (st && st.id === id && !st.ad && graph() === g ? { pos: v.currentTime - st.off, playing: !v.paused && !v.seeking && v.readyState >= 3 } : null),
       level: () => (v.muted ? 0 : v.volume) * rec.k,   // the element's volume times the file's correction

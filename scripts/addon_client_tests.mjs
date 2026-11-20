@@ -233,6 +233,21 @@ const raceAddon = (name, { searchMs = 0, streamMs = 0, rows = [row('r1')] } = {}
   const got = await c.resolve(song, [full, other]);
   check('race: an addon at its limit makes no /stream call, the other one plays', [hitsOf('racefull', 'stream').length - n0, got.stream?.url, got.tried[0].why.startsWith('stream limit')], [0, fileUrl('raceother', 'r1'), true]);
 }
+{
+  // 8.2.1 in the race: a lossy answer under the floor doesn't win; the next row, or another addon, does
+  const P = require('../src/addons/pick.js');
+  behaviour.floorlossy = {
+    search: (u, send) => send(200, { tracks: [row('mp3'), row('flac')] }),
+    stream: (u, send, id) => send(200, id === 'mp3' ? { url: fileUrl('floorlossy', id), codec: 'mp3', bitrate: 192000 } : { url: fileUrl('floorlossy', id), codec: 'flac', format: 'flac' }),
+  };
+  const got = await fresh().resolve(song, [{ base: base('floorlossy') }], { accept: (s) => P.floorVerdict(s, 160) });
+  check('floor: a 192 kbps row refused, the FLAC row after it opens', [got.row?.id, got.tried.map((t) => [t.row, t.why])], ['flac', [['mp3', "lossy 192 kbps, not 96 kbps over YouTube's 160"]]]);
+  const top = raceAddon('floortop', { rows: [row('t1')] });
+  behaviour.floortop.stream = (u, send, id) => send(200, { url: fileUrl('floortop', id), codec: 'aac', bitrate: 128000 });
+  const second = raceAddon('floorsecond', { streamMs: 40 });
+  const g2 = await fresh().resolve(song, [top, second], { accept: (s) => P.floorVerdict(s, 160) });
+  check('floor in the race: a fast lossy top addon loses to a lossless second one', g2.stream?.url, fileUrl('floorsecond', 'r1'));
+}
 // ---- §4a stream limits, the look-ahead, the stream's own headers ----
 behaviour.limited = {
   search: (u, send) => send(200, { tracks: [row('a')] }),

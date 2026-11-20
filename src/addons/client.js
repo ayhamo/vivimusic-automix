@@ -389,7 +389,7 @@
       return race(found.map(({ addon, rows }) => (tr) => openOne(addon, rows, target, opt, tr)), tried);
     }
     // one addon's rows, in order, until one opens and passes the probe -> { addon, row, stream } or null
-    async function openOne(addon, rows, target, { slackSec = 5 } = {}, tried) {
+    async function openOne(addon, rows, target, { slackSec = 5, accept = null } = {}, tried) {
       const t0 = now();
       try {
         const man = await manifest(addon.base);
@@ -397,6 +397,9 @@
           const s = await stream(addon, row, man).catch((e) => (e.kind === 'miss' ? { miss: e.message } : Promise.reject(e)));
           if (s.miss) { tried.push({ addon: addon.host, row: row.id, why: s.miss }); continue; }
           if (s.transport !== 'file') { tried.push({ addon: addon.host, row: row.id, why: s.transport + ' (not played yet)' }); continue; }
+          // the caller's own bar (the lossy floor, the upgrade pass: protocol.md 8.2.1): true, or why not
+          const want = accept ? accept(s) : true;
+          if (want !== true) { tried.push({ addon: addon.host, row: row.id, why: want || 'not wanted' }); continue; }
           const p = await probe(s.url, { ...row, tier: s.tier ?? row.tier, kbps: s.bitrate ?? row.kbps }, target.durationSec, slackSec, s.headers);
           if (!p.ok) { tried.push({ addon: addon.host, row: row.id, why: p.why }); continue; }
           note(addon.base, true, 'ok', now() - t0);

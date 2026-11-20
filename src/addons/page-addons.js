@@ -9,7 +9,7 @@
  * Nothing happens while addons are off. The background keeps the links and
  * file URLs; this script holds tickets and what the page may show.
  *
- *   window.__viviAddonsPage = { statusOf(id), openFor(id), lookAhead(id), fetchFor(id), note(id, patch), isOn(), openDue(posSec, transitionSec) }
+ *   window.__viviAddonsPage = { statusOf(id), openFor(id), lookAhead(id), fetchFor(id), note(id, patch), isOn(), openDue(posSec, transitionSec), upgradeFor(id) }
  *     statusOf: { state: 'off'|'looking'|'found'|'none'|'opening'|'ready', addon?, row?, stream?, why?, tried? }
  */
 (() => {
@@ -101,15 +101,17 @@
     s.state = 'opening';
     s.open = (async () => {
       const t0 = Date.now();
-      let r = await ask({ type: 'VIVI_ADDONS_OPEN', ticket: s.ticket });
+      // YouTube's bitrate now, for the lossy floor (protocol.md 8.2.1; the last seen, for the next song)
+      const ytKbps = ytAudio?.kbps || 0;
+      let r = await ask({ type: 'VIVI_ADDONS_OPEN', ticket: s.ticket, ytKbps });
       // Firefox suspends an idle background after ~30 s, and its tickets go with it:
       // the search again (no /stream call, so no limit spent), then the OPEN once more
       if (r.none === 'ticket expired') {
         s.find = null;
         const again = await lookAhead(id, fallbackSec);
-        if (again?.ticket) r = await ask({ type: 'VIVI_ADDONS_OPEN', ticket: again.ticket });
+        if (again?.ticket) r = await ask({ type: 'VIVI_ADDONS_OPEN', ticket: again.ticket, ytKbps });
       }
-      if (r.addon) Object.assign(s, { state: 'ready', addon: r.addon, row: r.row, stream: r.stream, tried: r.tried, why: null });
+      if (r.addon) Object.assign(s, { state: 'ready', addon: r.addon, row: r.row, stream: r.stream, tried: r.tried, why: null, cached: !!r.cached });
       else Object.assign(s, { state: 'found', why: r.none, tried: r.tried });   // a limit or a miss: may be opened again later
       const st = r.stream;
       show();
@@ -118,6 +120,20 @@
       return s;
     })();
     return s.open;
+  }
+
+  // 8.2.1, once the song's copy plays: a lossy copy, or a cached one below the tier asked, is
+  // followed by one pass for a better copy -> true when one was found (it is then the song's)
+  async function upgradeFor(id) {
+    const s = songs.get(id);
+    if (!enabled || s?.state !== 'ready' || !s.ticket || s.upgrade) return false;
+    s.upgrade = true;   // once per song
+    const r = await ask({ type: 'VIVI_ADDONS_UPGRADE', ticket: s.ticket });
+    if (!r?.addon) { if (r?.none && r.none !== 'no pass needed') log(`${s.meta?.artist} - ${s.meta?.song}: no better copy (${r.none})`, r.tried?.length ? r.tried : ''); return false; }
+    Object.assign(s, { addon: r.addon, row: r.row, stream: r.stream, tried: r.tried, cached: false, play: null });
+    show();
+    log(`${s.meta?.artist} - ${s.meta?.song}: a better copy: ${r.addon.name} (${r.addon.host}) row ${r.row.id}, ${r.stream.codec || '?'}${r.stream.sampleRate ? ' ' + r.stream.sampleRate / 1000 + ' kHz' : ''}${r.stream.bitDepth ? '/' + r.stream.bitDepth : ''}`);
+    return true;
   }
 
   // FETCH: the opened file's bytes (the background fetches it: host permission, file URL)
@@ -277,5 +293,5 @@
     return { state, addon, row, stream, why, tried, candidates, play };
   }
 
-  window.__viviAddonsPage = { statusOf, openFor, lookAhead, fetchFor, note, isOn: () => enabled, openDue, deckAlive: () => { deckAt = Date.now(); } };
+  window.__viviAddonsPage = { statusOf, openFor, lookAhead, fetchFor, note, isOn: () => enabled, openDue, upgradeFor, deckAlive: () => { deckAt = Date.now(); } };
 })();

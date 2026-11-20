@@ -108,5 +108,48 @@ const cacheWith = (maxBytes, st = fakeStorage(), c = fakeCache()) => ({ st, c, F
   check('size 0: OPEN again, nothing read or kept', [opens, off.o.cached, (await files.stats()).files], [3, undefined, 0]);
 }
 
+// ---- 8.2.1: the floor in OPEN and the pass after a copy plays (UPGRADE) ----
+{
+  const st = fakeStorage({ addonsEnabled: true, addonsTier: 'LOSSLESS', addonsList: [{ id: 'idA', base: 'https://a.example/SECRET-A', name: 'A', host: 'a.example' }, { id: 'idB', base: 'https://b.example/SECRET-B', name: 'B', host: 'b.example' }] });
+  const c = fakeCache();
+  const files = FC.create({ open: () => c, storage: st, maxBytes: async () => 512e6, now: () => ++T });
+  const calls = [];
+  let answer = null;
+  const client = {
+    health: () => ({}),
+    find: async (song, addons) => ({ found: addons.map((a) => ({ addon: { ...a, name: a.id, host: a.id + '.example' }, rows: [{ id: a.id + '-1' }, { id: a.id + '-2' }] })), tried: [] }),
+    open: async (found, song, opt) => { calls.push({ found: found.map((f) => [f.addon.id, f.rows.map((r) => r.id)]), accept: opt.accept }); return answer(found); },
+  };
+  const S = A.create({ storage: st, client, fetch: async () => ({ ok: true, status: 200, headers: { get: () => null }, arrayBuffer: async () => bytes(100) }), files });
+  const song = { title: 'Up', artist: 'X', durationSec: 200 };
+  const ans = (f, row, stream) => ({ addon: { base: f.addon.base, name: f.addon.name, host: f.addon.host, id: f.addon.id }, row: { id: row }, stream: { transport: 'file', url: 'https://cdn/SECRET', ...stream }, tried: [] });
+  // a lossy copy from B (A had nothing that passed): the pass asks every addon, B's other row too
+  answer = (found) => ans(found.at(-1), 'idB-1', { codec: 'mp3', bitrate: 320 });
+  let f = await S.handle({ type: 'VIVI_ADDONS_FIND', song });
+  const o = await S.handle({ type: 'VIVI_ADDONS_OPEN', ticket: f.ticket, ytKbps: 160 });
+  check("OPEN: the floor goes into the race with YouTube's bitrate", [o.stream.codec, calls[0].accept({ codec: 'mp3', bitrate: 200 }), calls[0].accept({ codec: 'flac' })], ['mp3', "lossy 200 kbps, not 96 kbps over YouTube's 160", true]);
+  answer = (found) => ans(found[0], 'idA-2', { codec: 'flac', bitDepth: 16, sampleRate: 44100 });
+  const up = await S.handle({ type: 'VIVI_ADDONS_UPGRADE', ticket: f.ticket });
+  check('UPGRADE after a lossy copy: every addon, less the row that plays; lossless or better only', [calls[1].found, calls[1].accept({ codec: 'mp3', bitrate: 320 }), calls[1].accept({ codec: 'flac' }), up.row.id, up.stream.codec], [[['idA', ['idA-1', 'idA-2']], ['idB', ['idB-2']]], 'not better', true, 'idA-2', 'flac']);
+  check("UPGRADE: the better copy is the ticket's now (FETCH gets it)", S.ticketOf(f.ticket).got.row.id, 'idA-2');
+  check('UPGRADE again on a lossless copy: no pass', await S.handle({ type: 'VIVI_ADDONS_UPGRADE', ticket: f.ticket }), { none: 'no pass needed' });
+  // a cached 16-bit copy of B, Best asked: only A (ranked above) is asked, for Hi-Res
+  await files.put(files.keyOf('idB', 'idB-1', 'LOSSLESS'), bytes(100), { mime: 'audio/flac', stream: { codec: 'flac', bitDepth: 16, sampleRate: 44100, transport: 'file' } });
+  const n = calls.length;
+  f = await S.handle({ type: 'VIVI_ADDONS_FIND', song: { ...song, title: 'Cached' } });
+  const oc = await S.handle({ type: 'VIVI_ADDONS_OPEN', ticket: f.ticket, ytKbps: 160 });
+  check('a cached 16-bit copy wins OPEN with no /stream call', [oc.cached, calls.length - n], [true, 0]);
+  answer = () => ({ none: 'no addon has it', tried: [{ addon: 'idA.example', why: 'not better' }] });
+  const uc = await S.handle({ type: 'VIVI_ADDONS_UPGRADE', ticket: f.ticket });
+  check('UPGRADE after it: only the addon ranked above, Hi-Res only; nothing better: it stays', [calls.at(-1).found, calls.at(-1).accept({ codec: 'flac', bitDepth: 16, sampleRate: 44100 }), calls.at(-1).accept({ codec: 'flac', bitDepth: 24, sampleRate: 48000 }), uc.none, S.ticketOf(f.ticket).got.row.id], [[['idA', ['idA-1', 'idA-2']]], 'not better', true, 'no addon has it', 'idB-1']);
+  // a cached lossy copy under the floor is not played from the cache
+  await files.clear();
+  await files.put(files.keyOf('idA', 'idA-1', 'LOSSLESS'), bytes(100), { mime: 'audio/mpeg', stream: { codec: 'mp3', bitrate: 192, transport: 'file' } });
+  answer = (found) => ans(found[0], 'idA-2', { codec: 'flac' });
+  f = await S.handle({ type: 'VIVI_ADDONS_FIND', song: { ...song, title: 'Weak' } });
+  const ow = await S.handle({ type: 'VIVI_ADDONS_OPEN', ticket: f.ticket, ytKbps: 160 });
+  check('a cached copy under the floor is passed over; the race runs', [ow.cached, ow.row.id], [undefined, 'idA-2']);
+}
+
 console.log(failed ? `\n${failed} failed` : '\nall passed');
 process.exit(failed ? 1 : 0);
