@@ -411,6 +411,21 @@
     }
   }
 
+  // ── lyrics.md §8: text size (10 to 40) and line spacing (1.0 to 2.5 times); 0 keeps the style's own ──
+  const sizeCss = document.createElement('style');
+  sizeCss.id = 'vivi-lyrics-size';
+  (document.head || document.documentElement).append(sizeCss);
+  function applySize(size, spacing) {
+    const px = Number(size), lh = Number(spacing);
+    sizeCss.textContent = (px >= 10 && px <= 40 ? `#vivi-lyrics-panel .vivi-lyrics-line{font-size:${px}px!important}` : '')
+      + (lh >= 1 && lh <= 2.5 ? `#vivi-lyrics-panel .vivi-lyrics-line{line-height:${lh}!important}` : '');
+  }
+  try {
+    const read = () => chrome.storage.local.get({ lyricsTextSize: 0, lyricsLineSpacing: 0 }).then((s) => applySize(s.lyricsTextSize, s.lyricsLineSpacing)).catch(() => {});
+    read();
+    chrome.storage.onChanged.addListener((ch, area) => { if (area === 'local' && (ch.lyricsTextSize || ch.lyricsLineSpacing)) read(); });
+  } catch { /* the style's sizes */ }
+
   plus.lyricsUi = {
     tabByPosition, onUserTabClick, makeRefreshIcon, makeRefetchTabButton, syncRefetchTabButton,
     fillPos, markRtl, songSec, holdTrack, takeDuration, fillDuration, recheckDuration, bind, activeLine,

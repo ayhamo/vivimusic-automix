@@ -38,6 +38,11 @@ async function ensureSpotifyHeaderRule() {
     console.warn('[vivi] Spotify header rule failed', e);
   }
 }
+// lyrics.md §7: lyrics show on music videos as on songs. Applied once; upstream's older "off" migration is marked done
+// with it, so it never turns them off again. The popup's switch stays.
+chrome.storage.local.get({ vivi_video_lyrics_on_2026_11: false }).then((s) => {
+  if (!s.vivi_video_lyrics_on_2026_11) chrome.storage.local.set({ lyricsShowForVideos: true, vivi_video_lyrics_default_off: true, vivi_video_lyrics_on_2026_11: true });
+}).catch(() => {});
 chrome.runtime.onInstalled?.addListener(() => { ensureSpotifyHeaderRule(); });
 chrome.runtime.onStartup?.addListener(() => { ensureSpotifyHeaderRule(); });
 ensureSpotifyHeaderRule();

@@ -198,6 +198,30 @@
       </select>
     </div>
     <p class="theme-sub">How much the lines before and after the sung one are blurred (Apple Music style).</p>
+    <div class="row" style="margin-top:8px;">
+      <span class="row-label">Text size</span>
+      <span style="display:flex;align-items:center;gap:6px;"><input type="range" id="lyricsTextSizeRange" min="10" max="40" step="1" style="width:110px;"/><span id="lyricsTextSizeVal" style="min-width:52px;text-align:right;font-size:12px;"></span></span>
+    </div>
+    <div class="row" style="margin-top:6px;">
+      <span class="row-label">Line spacing</span>
+      <span style="display:flex;align-items:center;gap:6px;"><input type="range" id="lyricsLineSpacingRange" min="1" max="2.5" step="0.1" style="width:110px;"/><span id="lyricsLineSpacingVal" style="min-width:52px;text-align:right;font-size:12px;"></span></span>
+    </div>
+    <p class="theme-sub">Size and spacing of the lyrics lines. Double-click a slider to go back to the style's own.</p>
+    <div class="row" style="margin-top:8px;">
+      <span class="row-label">Follow the lyrics</span>
+      <label class="switch small"><input type="checkbox" id="lyricsAutoScrollToggle" checked/><span class="slider"></span></label>
+    </div>
+    <p class="theme-sub">Keeps the sung line in view. Scrolling the lyrics yourself stops it until you press Follow lyrics or click a line.</p>
+    <div class="row" style="margin-top:8px;">
+      <span class="row-label">Singers on their sides</span>
+      <label class="switch small"><input type="checkbox" id="lyricsDuetSidesToggle" checked/><span class="slider"></span></label>
+    </div>
+    <p class="theme-sub">In a duet, each singer's lines sit on their own side (when the lyrics name the singers).</p>
+    <div class="row" style="margin-top:8px;">
+      <span class="row-label">Lyrics by real timing</span>
+      <label class="switch small"><input type="checkbox" id="lyricsRealTimingToggle"/><span class="slider"></span></label>
+    </div>
+    <p class="theme-sub">Off: each line lights up a little before it is sung, so it's in place when the voice comes. On: exactly on time.</p>
 `, rowOrNote('lyricsAnimSelect'), 'afterend');
 
   // Lyrics: extra providers
@@ -615,6 +639,31 @@
     chrome.storage.local.set({ canvasBlurPx: px });
     relay({ canvasBlurPx: px });
   });
+
+  // lyrics.md §2.6, §4, §5, §8: the lyrics panel reads these from storage itself
+  {
+    const size = document.getElementById('lyricsTextSizeRange'), sizeVal = document.getElementById('lyricsTextSizeVal');
+    const sp = document.getElementById('lyricsLineSpacingRange'), spVal = document.getElementById('lyricsLineSpacingVal');
+    const showSize = (v) => { size.value = String(v || 36); sizeVal.textContent = v ? v + ' px' : 'Style'; };
+    const showSp = (v) => { sp.value = String(v || 1.3); spVal.textContent = v ? Number(v).toFixed(1) + '×' : 'Style'; };
+    chrome.storage.local.get({ lyricsTextSize: 0, lyricsLineSpacing: 0, lyricsAutoScroll: true, lyricsDuetSides: true, lyricsRealTiming: false }, (s) => {
+      showSize(s.lyricsTextSize); showSp(s.lyricsLineSpacing);
+      document.getElementById('lyricsAutoScrollToggle').checked = s.lyricsAutoScroll !== false;
+      document.getElementById('lyricsDuetSidesToggle').checked = s.lyricsDuetSides !== false;
+      document.getElementById('lyricsRealTimingToggle').checked = s.lyricsRealTiming === true;
+    });
+    size.addEventListener('input', () => { const v = Number(size.value); showSize(v); chrome.storage.local.set({ lyricsTextSize: v }); });
+    size.addEventListener('dblclick', () => { showSize(0); chrome.storage.local.set({ lyricsTextSize: 0 }); });
+    sp.addEventListener('input', () => { const v = Math.round(Number(sp.value) * 10) / 10; showSp(v); chrome.storage.local.set({ lyricsLineSpacing: v }); });
+    sp.addEventListener('dblclick', () => { showSp(0); chrome.storage.local.set({ lyricsLineSpacing: 0 }); });
+    for (const [id, key] of [['lyricsAutoScrollToggle', 'lyricsAutoScroll'], ['lyricsDuetSidesToggle', 'lyricsDuetSides'], ['lyricsRealTimingToggle', 'lyricsRealTiming']]) {
+      const box = document.getElementById(id);
+      box.addEventListener('change', () => chrome.storage.local.set({ [key]: box.checked }));
+    }
+    // §7: lyrics on music videos are on now; the old note advised keeping them off
+    const vNote = rowOrNote('videoLyricsToggle');
+    if (vNote?.matches('p.theme-sub')) vNote.textContent = 'Shows lyrics on music videos too (official videos, live takes, uploads), as on songs. Turn off to show the dancer there instead.';
+  }
 
   const lyricsLineBlurSelect = document.getElementById('lyricsLineBlurSelect');
   chrome.storage.local.get({ lyricsLineBlur: 'low' }, (s) => { lyricsLineBlurSelect.value = s.lyricsLineBlur; });
