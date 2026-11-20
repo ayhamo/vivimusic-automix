@@ -178,6 +178,26 @@ await run('judge', (c) => {
 
 skip('display', 'video-canvas.js zoomBars() is inside its IIFE and there is no tall-clip test or clip fade; needs pure tallClip(w, h), letterboxZoom(px, w, h), clipFade(hero, bottom)');
 skip('backdrop', 'the PC has neither backdrop (no Metrolist bleed, no BitChord mesh); needs blurRadiusAt(row), bleedRows(width, artHeight), coverZoom(...), stripRows(h), meshLift(rgb)');
+// §5 rules 7-11: the title gate, and the find order on a fake network (Prism's ClipFinderTest FakeNet)
+await run('titleGate', (c) => V.titleSays(c.input.songTitle, c.input.videoTitle));
+await run('clipFind', async (c) => {
+  const { song, first, videos, others } = c.input;
+  let otherSearches = 0;
+  const net = {
+    findVideo: async () => first,
+    otherVideos: async () => { otherSearches++; return others; },
+    tryVideo: async (id, own) => {
+      const v = videos[id];
+      if (!own && v.type !== 'MUSIC_VIDEO_TYPE_OMV') return { why: 'NOT_OFFICIAL' };
+      if (!own && V.titleSays(song.title, v.title)) return { why: 'TITLE' };
+      if (v.status !== 'OK') return { why: 'RESTRICTED' };
+      if (v.still) return { why: 'STILL' };
+      return { ok: true, id };
+    },
+  };
+  const r = await V.findOn(net, song);
+  return { videoId: r.ok ? r.id : null, why: r.ok ? null : r.why, otherSearches };
+});
 // the chorus from synced lyrics (§6 rule 11)
 await run('chorus', (c) => V.chorusMs(c.input.lines, c.input.durationMs));
 // the stored source order and sources on, and Apple's variant pick (src/plus/canvas-settings.js)

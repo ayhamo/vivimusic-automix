@@ -6834,5 +6834,425 @@
       },
       "expect": 20000
     }
+  ],
+  "titleGate": [
+    {
+      "name": "a word in the song's own title doesn't count",
+      "input": {
+        "songTitle": "Blue Amber (Live at Nissan Stadium)",
+        "videoTitle": "back number - Blue Amber (Live at Nissan Stadium)"
+      },
+      "expect": false
+    },
+    {
+      "name": "'cover' in the song's title",
+      "input": {
+        "songTitle": "Cover Me",
+        "videoTitle": "Cover Me (Official Video)"
+      },
+      "expect": false
+    },
+    {
+      "name": "a live take of a studio song",
+      "input": {
+        "songTitle": "Blue Amber",
+        "videoTitle": "back number - Blue Amber (Live at Nissan Stadium)"
+      },
+      "expect": true
+    },
+    {
+      "name": "'live' not inside 'alive'",
+      "input": {
+        "songTitle": "Alive",
+        "videoTitle": "Artist - Alive (Official Video)"
+      },
+      "expect": false
+    },
+    {
+      "name": "'stage' not inside 'backstage'",
+      "input": {
+        "songTitle": "Backstage",
+        "videoTitle": "Artist - Backstage (Official Video)"
+      },
+      "expect": false
+    },
+    {
+      "name": "a visualizer is allowed",
+      "input": {
+        "songTitle": "Song",
+        "videoTitle": "Artist - Song (Official Visualizer)"
+      },
+      "expect": false
+    },
+    {
+      "name": "an audio upload",
+      "input": {
+        "songTitle": "Song",
+        "videoTitle": "Artist - Song (Official Audio)"
+      },
+      "expect": true
+    },
+    {
+      "name": "a lyric video",
+      "input": {
+        "songTitle": "Song",
+        "videoTitle": "Artist - Song [Official Lyric Video]"
+      },
+      "expect": true
+    },
+    {
+      "name": "en vivo",
+      "input": {
+        "songTitle": "Canción",
+        "videoTitle": "Artista - Canción (En Vivo)"
+      },
+      "expect": true
+    },
+    {
+      "name": "ao vivo",
+      "input": {
+        "songTitle": "Canção",
+        "videoTitle": "Artista - Canção (Ao Vivo)"
+      },
+      "expect": true
+    },
+    {
+      "name": "letra",
+      "input": {
+        "songTitle": "Canción",
+        "videoTitle": "Artista - Canción (Letra)"
+      },
+      "expect": true
+    },
+    {
+      "name": "'full song' without 'video'",
+      "input": {
+        "songTitle": "Darlingey",
+        "videoTitle": "Darlingey Full Song || Mirchi"
+      },
+      "expect": true
+    },
+    {
+      "name": "'full video song' is the video",
+      "input": {
+        "songTitle": "Seeti Maar",
+        "videoTitle": "Seeti Maar Full Video Song | Allu Arjun"
+      },
+      "expect": false
+    },
+    {
+      "name": "a Korean fancam",
+      "input": {
+        "songTitle": "RUDE!",
+        "videoTitle": "Hearts2Hearts RUDE! 직캠"
+      },
+      "expect": true
+    },
+    {
+      "name": "a Korean stage",
+      "input": {
+        "songTitle": "RUDE!",
+        "videoTitle": "Hearts2Hearts - RUDE! 무대"
+      },
+      "expect": true
+    },
+    {
+      "name": "an MV",
+      "input": {
+        "songTitle": "RUDE!",
+        "videoTitle": "Hearts2Hearts 'RUDE!' MV"
+      },
+      "expect": false
+    },
+    {
+      "name": "Prism's Pleaser lyric video",
+      "input": {
+        "songTitle": "Pleaser",
+        "videoTitle": "Wallows - Pleaser (Lyric Video)"
+      },
+      "expect": true
+    }
+  ],
+  "clipFind": [
+    {
+      "name": "a lyric video found first: the music video one search away",
+      "input": {
+        "song": {
+          "title": "Pleaser"
+        },
+        "first": "lyric",
+        "videos": {
+          "lyric": {
+            "type": "MUSIC_VIDEO_TYPE_OMV",
+            "title": "Wallows - Pleaser (Lyric Video)",
+            "status": "OK",
+            "still": false
+          },
+          "real": {
+            "type": "MUSIC_VIDEO_TYPE_OMV",
+            "title": "Wallows - Pleaser (Official Video)",
+            "status": "OK",
+            "still": false
+          }
+        },
+        "others": [
+          "real"
+        ]
+      },
+      "expect": {
+        "videoId": "real",
+        "why": null,
+        "otherSearches": 1
+      }
+    },
+    {
+      "name": "an official lyric video and nothing better: that one",
+      "input": {
+        "song": {
+          "title": "Pleaser"
+        },
+        "first": "lyric",
+        "videos": {
+          "lyric": {
+            "type": "MUSIC_VIDEO_TYPE_OMV",
+            "title": "Wallows - Pleaser (Lyric Video)",
+            "status": "OK",
+            "still": false
+          }
+        },
+        "others": []
+      },
+      "expect": {
+        "videoId": "lyric",
+        "why": null,
+        "otherSearches": 1
+      }
+    },
+    {
+      "name": "the second search finds only refused ones: the first as it is",
+      "input": {
+        "song": {
+          "title": "Pleaser"
+        },
+        "first": "lyric",
+        "videos": {
+          "lyric": {
+            "type": "MUSIC_VIDEO_TYPE_OMV",
+            "title": "Wallows - Pleaser (Lyric Video)",
+            "status": "OK",
+            "still": false
+          },
+          "audio": {
+            "type": "MUSIC_VIDEO_TYPE_OMV",
+            "title": "Pleaser (Official Audio)",
+            "status": "OK",
+            "still": false
+          }
+        },
+        "others": [
+          "lyric",
+          "audio"
+        ]
+      },
+      "expect": {
+        "videoId": "lyric",
+        "why": null,
+        "otherSearches": 1
+      }
+    },
+    {
+      "name": "a still lyric video is still a still",
+      "input": {
+        "song": {
+          "title": "Pleaser"
+        },
+        "first": "lyric",
+        "videos": {
+          "lyric": {
+            "type": "MUSIC_VIDEO_TYPE_OMV",
+            "title": "Wallows - Pleaser (Lyric Video)",
+            "status": "OK",
+            "still": true
+          }
+        },
+        "others": []
+      },
+      "expect": {
+        "videoId": null,
+        "why": "STILL",
+        "otherSearches": 1
+      }
+    },
+    {
+      "name": "a live take and nothing better: the live take",
+      "input": {
+        "song": {
+          "title": "Pleaser"
+        },
+        "first": "v",
+        "videos": {
+          "v": {
+            "type": "MUSIC_VIDEO_TYPE_OMV",
+            "title": "Wallows - Pleaser (Live at Coachella)",
+            "status": "OK",
+            "still": false
+          }
+        },
+        "others": []
+      },
+      "expect": {
+        "videoId": "v",
+        "why": null,
+        "otherSearches": 1
+      }
+    },
+    {
+      "name": "not marked official and nothing better: still the song's video",
+      "input": {
+        "song": {
+          "title": "Pleaser"
+        },
+        "first": "v",
+        "videos": {
+          "v": {
+            "type": "MUSIC_VIDEO_TYPE_UGC",
+            "title": "Wallows - Pleaser (Official Video)",
+            "status": "OK",
+            "still": false
+          }
+        },
+        "others": []
+      },
+      "expect": {
+        "videoId": "v",
+        "why": null,
+        "otherSearches": 1
+      }
+    },
+    {
+      "name": "a live take found first, the music video in the second search",
+      "input": {
+        "song": {
+          "title": "Pleaser"
+        },
+        "first": "live",
+        "videos": {
+          "live": {
+            "type": "MUSIC_VIDEO_TYPE_OMV",
+            "title": "Pleaser (Live)",
+            "status": "OK",
+            "still": false
+          },
+          "real": {
+            "type": "MUSIC_VIDEO_TYPE_OMV",
+            "title": "Wallows - Pleaser (Official Video)",
+            "status": "OK",
+            "still": false
+          }
+        },
+        "others": [
+          "real"
+        ]
+      },
+      "expect": {
+        "videoId": "real",
+        "why": null,
+        "otherSearches": 1
+      }
+    },
+    {
+      "name": "a good first video is not searched past",
+      "input": {
+        "song": {
+          "title": "Pleaser"
+        },
+        "first": "v1",
+        "videos": {
+          "v1": {
+            "type": "MUSIC_VIDEO_TYPE_OMV",
+            "title": "Wallows - Pleaser (Official Video)",
+            "status": "OK",
+            "still": false
+          },
+          "v2": {
+            "type": "MUSIC_VIDEO_TYPE_OMV",
+            "title": "Wallows - Pleaser (Official Video)",
+            "status": "OK",
+            "still": false
+          }
+        },
+        "others": [
+          "v2"
+        ]
+      },
+      "expect": {
+        "videoId": "v1",
+        "why": null,
+        "otherSearches": 0
+      }
+    },
+    {
+      "name": "no video found",
+      "input": {
+        "song": {
+          "title": "Pleaser"
+        },
+        "first": null,
+        "videos": {},
+        "others": []
+      },
+      "expect": {
+        "videoId": null,
+        "why": "NO_VIDEO",
+        "otherSearches": 0
+      }
+    },
+    {
+      "name": "not a song: no search",
+      "input": {
+        "song": {
+          "title": "Pleaser",
+          "notASong": true
+        },
+        "first": "v",
+        "videos": {
+          "v": {
+            "type": "MUSIC_VIDEO_TYPE_OMV",
+            "title": "Wallows - Pleaser (Official Video)",
+            "status": "OK",
+            "still": false
+          }
+        },
+        "others": []
+      },
+      "expect": {
+        "videoId": null,
+        "why": "NOT_A_SONG",
+        "otherSearches": 0
+      }
+    },
+    {
+      "name": "a live take that can't be played: none",
+      "input": {
+        "song": {
+          "title": "Pleaser"
+        },
+        "first": "v",
+        "videos": {
+          "v": {
+            "type": "MUSIC_VIDEO_TYPE_OMV",
+            "title": "Pleaser (Live)",
+            "status": "LOGIN_REQUIRED",
+            "still": false
+          }
+        },
+        "others": []
+      },
+      "expect": {
+        "videoId": null,
+        "why": "RESTRICTED",
+        "otherSearches": 1
+      }
+    }
   ]
 }

@@ -262,6 +262,46 @@
     return null;
   }
 
+  // ═════════════════════════════ the gate (Prism's ClipGate, ClipFinder.findOn; canvas.md §5 rules 7-11) ═════════════════════════════
+
+  const GATE_WORDS = ['audio', 'karaoke', 'chords', 'performance', 'live', 'stage', 'cover', 'fancam', 'fan cam',
+    'recording', 'jukebox', 'bgm', 'en vivo', 'ao vivo', 'en directo'].map(wordRe);
+  const LYRIC_WORDS = ['lyric', 'lyrics', 'lyrical', 'letra', 'letras', 'paroles', 'testo'].map(wordRe);
+  const FULL_SONG = wordRe('full song'), VIDEO_WORD = wordRe('video');
+  /** Words in scripts without spaces between words: anywhere in the title. */
+  const GATE_SCRIPT = ['직캠', '무대', '가사', '라이브', '推しカメラ', '歌詞', 'ライブ', '歌ってみた', '歌词', '现场', '翻唱'];
+
+  /** Whether a video's title says it is not the music video itself (a word in the song's own title doesn't count). */
+  function titleSays(songTitle, videoTitle) {
+    const song = String(songTitle || '').toLowerCase(), video = String(videoTitle || '').toLowerCase();
+    const counts = (r) => r.test(video) && !r.test(song);
+    if (GATE_WORDS.some(counts) || LYRIC_WORDS.some(counts)) return true;
+    if (FULL_SONG.test(video) && !VIDEO_WORD.test(video) && !FULL_SONG.test(song)) return true;
+    return GATE_SCRIPT.some((w) => video.includes(w) && !song.includes(w));
+  }
+
+  /**
+   * The video for a song, Prism's ClipFinder.findOn without the listener's picks: not a song -> none; the search's
+   * video through the gate; refused for its title or type -> a second search, up to 2 of its videos; none passed ->
+   * the first one as it is. net: { findVideo() -> v | null, otherVideos(notIds) -> [v], tryVideo(v, own) -> {ok} | {why} },
+   * v = [id, title] (or an id). Answers { ok:true, ... } or { why, ... }, plus otherSearches.
+   */
+  async function findOn(net, song) {
+    const idOf = (v) => (Array.isArray(v) ? v[0] : v);
+    if (song && song.notASong) return { why: 'NOT_A_SONG', none: true, otherSearches: 0 };
+    const first = await net.findVideo();
+    if (!first) return { why: 'NO_VIDEO', none: true, otherSearches: 0 };
+    const tried = await net.tryVideo(first, false);
+    if (tried.ok || (tried.why !== 'TITLE' && tried.why !== 'NOT_OFFICIAL')) return { ...tried, otherSearches: 0 };
+    let others = [];
+    try { others = await net.otherVideos([idOf(first)]); } catch { others = []; }
+    for (const o of others.slice(0, 2)) {
+      const next = await net.tryVideo(o, false);
+      if (next.ok) return { ...next, otherSearches: 1 };
+    }
+    return { ...(await net.tryVideo(first, true)), otherSearches: 1 };
+  }
+
   /**
    * The chorus from time-synced lyrics (Prism's BestPart.chorusMs, canvas.md §6 rule 11): the first line
    * of the most repeated lyric (from 5 s, not in the last 30 s), pulled back over up to 4 lines before it
@@ -902,7 +942,7 @@
   const core = {
     CLIP_SEC, W, H, NEVER, OTHER_TAKE,
     norm, artists, officialChannel, titleCore, matches, searchResults, pickFormat,
-    heatmapOf, partStart, chorusMs, noFrames, pick,
+    heatmapOf, partStart, chorusMs, noFrames, pick, titleSays, findOn,
     grid, bars, area, diff, still, windows, choose, runnersUp, judge, cropX, change, cuts, flashing, end: loopEnd, cropRect,
     storyboardPlan, parseSidx, sidxRange, readBoxes, parseInit, parseSamples, selectSamples, buildClip,
   };
@@ -1195,33 +1235,64 @@
     }
   }
 
-  /** The song's loop (VideoCanvas.clip): { bytes, meta } or { none:true } (no usable video) or null (not this time). */
-  async function clip(song) {
-    const want = song.want || 480;
-    const t0 = performance.now();
-    const video = await findVideo(song.title, song.artist, song.durationSec);
-    if (!video) return { none: true, why: 'no music video by the artist' };
-    const player = await visionPlayer(video[0]);
+  /** The video's type as YouTube Music says it (the WEB_REMIX player answer), or null when not answered. */
+  async function videoType(videoId) {
+    try {
+      const v = visitor();
+      const j = await innertube('player', {
+        videoId,
+        context: { client: { clientName: 'WEB_REMIX', clientVersion: cfg('INNERTUBE_CLIENT_VERSION') || '1.20251101.01.00', hl: 'en', gl: 'US', ...(v ? { visitorData: v } : {}) } },
+      });
+      return (j && j.videoDetails && j.videoDetails.musicVideoType) || null;
+    } catch (e) {
+      log(videoId, 'type not read:', (e && e.message) || e);
+      return null;
+    }
+  }
+
+  /** The second search (§5 rule 10): `title artist official video`, without [not] and titles that say (titleSays). */
+  async function otherVideos(song, not) {
+    const names = artists(song.artist);
+    if (!song.title || !names.length) return [];
+    const v = visitor();
+    const q = song.title + ' ' + names[0] + ' official video';
+    const j = await innertube('search', {
+      query: q, params: VIDEOS,
+      context: { client: { clientName: 'WEB_REMIX', clientVersion: cfg('INNERTUBE_CLIENT_VERSION') || '1.20251101.01.00', hl: 'en', gl: 'US', ...(v ? { visitorData: v } : {}) } },
+    });
+    const found = searchResults(j).filter((x) => !not.includes(x[0]) && !titleSays(song.title, x[1]));
+    const r = pick(song.title, names, song.durationSec, found);
+    log('another video for', `'${song.title}':`, r ? r[0] + ` '${r[1]}'` : 'none of', found.slice(0, 5).map((x) => `'${x[1]}' ${x[0]}`).join('; '));
+    return r ? [[r[0], r[1]]] : [];
+  }
+
+  /**
+   * One video through the gate (§5 rule 8, Prism's tryVideo): official type, title, playable, a stream, then the
+   * storyboard's first look (a still upload is refused). [own]: the song's own video with no better one found, so
+   * its type and title are not held against it (rule 11). { ok:true, ... } or { why, text, none }.
+   */
+  async function tryVideo(song, video, own) {
+    const id = video[0];
+    if (!own) {
+      const type = await videoType(id);
+      if (type !== 'MUSIC_VIDEO_TYPE_OMV') { log(id, `'${video[1]}'`, 'is not an official music video (' + (type || 'no type') + ')'); return { why: 'NOT_OFFICIAL', text: 'not an official music video', none: true }; }
+    }
+    const player = await visionPlayer(id);
+    const title = (player && player.videoDetails && player.videoDetails.title) || video[1] || '';
+    if (!own && titleSays(song.title, title)) { log(id, `'${title}'`, 'says it is not the music video itself'); return { why: 'TITLE', text: 'its title says it is not the video', none: true }; }
     const status = (player && player.playabilityStatus && player.playabilityStatus.status) || '';
     if (status !== 'OK') {
-      log(video[0], 'not playable (' + status + ')');
-      return { none: false, why: 'video not playable (' + status + ')' };
+      log(id, 'not playable (' + status + ')');
+      return { why: 'RESTRICTED', text: 'video not playable (' + status + ')', none: false };
     }
     const sd = player.streamingData;
-    const f = pickFormat(sd, want);
+    const f = pickFormat(sd, song.want || 480);
     if (!f) {
-      log(video[0], 'has no H.264 DASH stream');
-      return { none: true, why: 'no H.264 stream' };
+      log(id, 'has no H.264 DASH stream');
+      return { why: 'NO_STREAM', text: 'no H.264 stream', none: true };
     }
     const dur = Number(player.videoDetails && player.videoDetails.lengthSeconds) || 0;
-    if (song.full) {
-      // Full video (§13 rule 7): the whole music video, muted, looped; no part picked
-      const c = await fetchCut(f, 0, dur + 1);
-      const out = buildClip(c.u, c.init, c.picked);
-      log(video[0], `'${video[1]}'`, 'full video', f.height + 'p itag ' + f.itag + ',', Math.round(out.bytes.length / 1048576), 'MB, ready', Math.round(performance.now() - t0), 'ms after the lookup');
-      return { bytes: out.bytes, meta: { videoId: video[0], videoTitle: video[1], width: Number(f.width) || c.init.width, height: Number(f.height) || c.init.height, startSec: 0, lenSec: Math.round(out.lenSec * 1000) / 1000, full: true } };
-    }
-    const heat = await heatmap(video[0]);
+    const heat = await heatmap(id);
     const peak = heat == null ? null : partStart(heat, dur);
     let b = [0, 0, 0, 0], crop = 0.5, wins = null, judged = false;
     let length = Math.round(dur * 1000);
@@ -1236,8 +1307,8 @@
         const j = judge(sb.frames, sb.interval, length, peak == null ? null : Math.round(peak * 1000), chorus);
         if (chorus != null && peak == null) log('chorus from the lyrics at', f1(chorus / 1000), 's');
         if (!j) {
-          log(video[0], 'is a still picture (' + sb.frames.length + ' preview frames, no window that moves)');
-          return { none: true, why: 'still picture' };
+          log(id, 'is a still picture (' + sb.frames.length + ' preview frames, no window that moves)');
+          return { why: 'STILL', text: 'still picture', none: true };
         }
         ({ bars: b, cropX: crop, windows: wins, length } = j);
         start = j.startMs / 1000;
@@ -1248,6 +1319,30 @@
       }
     } catch (e) {
       log('storyboard not read:', (e && e.message) || e);
+    }
+    return { ok: true, video: [id, title], sd, f, dur, b, crop, wins, judged, length, start, why };
+  }
+
+  /** The song's loop (VideoCanvas.clip): { bytes, meta } or { none:true } (no usable video) or null (not this time). */
+  async function clip(song) {
+    const t0 = performance.now();
+    const found = await findOn({
+      findVideo: () => findVideo(song.title, song.artist, song.durationSec),
+      otherVideos: (not) => otherVideos(song, not),
+      tryVideo: (v, own) => tryVideo(song, v, own),
+    }, song);
+    if (!found.ok) {
+      const text = found.text || { NO_VIDEO: 'no music video by the artist', NOT_A_SONG: 'not a song (a podcast, an upload or live)' }[found.why] || found.why;
+      return { none: found.none !== false, why: text };
+    }
+    const { video, sd, f, dur, b, crop, wins, judged } = found;
+    let { start, why } = found;
+    if (song.full) {
+      // Full video (§13 rule 7): the whole music video, muted, looped; no part picked
+      const c = await fetchCut(f, 0, dur + 1);
+      const out = buildClip(c.u, c.init, c.picked);
+      log(video[0], `'${video[1]}'`, 'full video', f.height + 'p itag ' + f.itag + ',', Math.round(out.bytes.length / 1048576), 'MB, ready', Math.round(performance.now() - t0), 'ms after the lookup');
+      return { bytes: out.bytes, meta: { videoId: video[0], videoTitle: video[1], width: Number(f.width) || c.init.width, height: Number(f.height) || c.init.height, startSec: 0, lenSec: Math.round(out.lenSec * 1000) / 1000, full: true } };
     }
     start = Math.max(0, Math.min(start, dur - CLIP_SEC));
     log(video[0], `'${video[1]}'`, f.height + 'p itag ' + f.itag + ', part at', f1(start), 's of', Math.trunc(dur), 's (' + why + '), found in', Math.round(performance.now() - t0), 'ms');
@@ -1466,6 +1561,17 @@
     if (chorusOf.size > 50) chorusOf.delete(chorusOf.keys().next().value);
   }
 
+  // §5 rule 7: a podcast episode, an upload or a live stream is not a song (read while the player has it; else unknown)
+  function notASongNow(id) {
+    try {
+      const p = document.getElementById('movie_player');
+      const r = p && p.getPlayerResponse && p.getPlayerResponse();
+      const v = r && r.videoDetails;
+      if (!v || v.videoId !== id) return false;
+      return /PODCAST_EPISODE|PRIVATELY_OWNED_TRACK/.test(String(v.musicVideoType || '')) || v.isLive === true;
+    } catch { return false; }
+  }
+
   let findSeq = 0;
   async function find(d) {
     const my = ++findSeq;
@@ -1473,7 +1579,7 @@
     const vid = String(d.id || '');
     if (!vid || !d.title) return { reqId: d.reqId, ok: false, why: 'no song id or title' };
     const id = cacheId(vid);   // the cache's id for this song at this quality and mode
-    const song = { id: vid, ck: id, title: String(d.title), artist: String(d.artist || ''), album: d.album || '', durationSec: Number(d.durationSec) || playingLength(vid) };
+    const song = { id: vid, ck: id, title: String(d.title), artist: String(d.artist || ''), album: d.album || '', durationSec: Number(d.durationSec) || playingLength(vid), notASong: notASongNow(vid) };
     const m = mem.get(id);
     if (m) {
       mem.delete(id); mem.set(id, m);
