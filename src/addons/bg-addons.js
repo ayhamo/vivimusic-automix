@@ -20,6 +20,7 @@
  *     VIVI_ADDONS_SETTINGS { enabled?, tier?, slackSec? }
  *     VIVI_ADDONS_RESOLVE  { song }        -> client.resolve's answer, the addon's URL left out
  *     VIVI_ADDONS_FIND     { song }        -> { ticket, candidates, tried } search only (the look-ahead)
+ *     VIVI_ADDONS_ISRC     { videoId, isrc } -> { ok }: the ISRC the lyrics lookup learned (protocol.md §7, ISRC first)
  *     VIVI_ADDONS_OPEN     { ticket }      -> { addon, row, stream, tried } or { none, tried }: /stream + probe
  *     VIVI_ADDONS_FETCH    { ticket }      -> { bytes (ArrayBuffer), mime } or { none }: the opened file (Firefox passes ArrayBuffers)
  *
@@ -28,6 +29,7 @@
 (() => {
   'use strict';
   const C = globalThis.__viviAddonClient || (typeof require === 'function' ? require('./client.js') : null);
+  const Pick = globalThis.__viviAddonPick || (typeof require === 'function' ? require('./pick.js') : null);
 
   const TIERS = ['LOSSLESS', 'HIRES', 'CD', 'HIGH', 'LOW'];   // (LOSSLESS: the addon's best)
   const DEFAULTS = { addonsEnabled: false, addonsList: [], addonsTier: 'LOSSLESS', addonsSlackSec: 5 };
@@ -107,6 +109,7 @@
 
     // the page asks for the song it is about to play; nothing when addons are off
     async function resolve(song) {
+      song = withIsrc(song);
       const s = await get();
       const on = s.addonsList.filter((a) => a.enabled !== false);
       if (!s.addonsEnabled || !on.length) return { none: 'addons off' };
@@ -141,7 +144,21 @@
       tickets.set(id, t);
       return id;
     };
+    // The song's ISRC, learned by the lyrics lookup (lrc.red, BiniLyrics) per video id: YouTube
+    // Music gives none, and none is asked for just for this (protocol.md §7, ISRC first).
+    const songIsrc = new Map(), ISRC_SONGS = 200;
+    function noteIsrc(videoId, isrc) {
+      const id = String(videoId || ''), v = Pick.isrcOf(isrc);
+      if (!id || !v) return { ok: false };
+      songIsrc.delete(id);
+      songIsrc.set(id, v);
+      while (songIsrc.size > ISRC_SONGS) songIsrc.delete(songIsrc.keys().next().value);
+      return { ok: true };
+    }
+    const withIsrc = (song) => (song?.isrc || !songIsrc.has(song?.videoId) ? song : { ...song, isrc: songIsrc.get(song.videoId) });
+
     async function find(song) {
+      song = withIsrc(song);
       const s = await get();
       const on = s.addonsList.filter((a) => a.enabled !== false);
       if (!s.addonsEnabled || !on.length) return { none: 'addons off' };
@@ -155,6 +172,14 @@
     async function open(ticket) {
       const t = tickets.get(ticket);
       if (!t) return { none: 'ticket expired' };
+      // the ISRC came in after the search (the lyrics lookup ran later): search again with it
+      // (the search answers are cached, so no addon is asked twice and no /stream is spent)
+      const known = withIsrc(t.song);
+      if (!t.opened && known !== t.song) {
+        t.song = known;
+        const again = await client.find(known, t.found.map((f) => ({ base: f.addon.base })), t.opt).catch(() => null);
+        if (again?.found?.length) { t.found = again.found; t.tried = again.tried; }
+      }
       if (!t.opened) t.opened = client.open(t.found, t.song, t.opt, [...t.tried]).catch((e) => ({ none: C.scrub(e?.message || e), tried: [] }));
       const got = await t.opened;
       if (!got.addon) t.opened = null;   // nothing (a limit, say): may be asked again later
@@ -216,12 +241,13 @@
         case 'VIVI_ADDONS_SETTINGS': return settings(msg);
         case 'VIVI_ADDONS_RESOLVE': return resolve(msg.song || {});
         case 'VIVI_ADDONS_FIND': return find(msg.song || {});
+        case 'VIVI_ADDONS_ISRC': return noteIsrc(msg.videoId, msg.isrc);
         case 'VIVI_ADDONS_OPEN': return open(String(msg.ticket || ''));
         case 'VIVI_ADDONS_FETCH': return fetchFile(String(msg.ticket || ''));
         default: return undefined;
       }
     }
-    return { list, add, remove, move, toggle, settings, resolve, find, open, fetchFile, handle, ticketOf: (t) => tickets.get(t) };
+    return { list, add, remove, move, toggle, settings, resolve, find, open, fetchFile, noteIsrc, handle, ticketOf: (t) => tickets.get(t) };
   }
 
   const api = { create, DEFAULTS, TIERS };

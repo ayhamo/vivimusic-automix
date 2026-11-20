@@ -80,7 +80,7 @@
       }
       if (!m?.song) { Object.assign(s, { state: 'none', why: 'no song details' }); return s; }
       s.meta = m;
-      const song = { title: m.song, artist: m.artist, album: m.album || null, durationSec: m.duration || fallbackSec || null };
+      const song = { videoId: id, title: m.song, artist: m.artist, album: m.album || null, durationSec: m.duration || fallbackSec || null };
       const r = await ask({ type: 'VIVI_ADDONS_FIND', song });
       if (r.ticket) Object.assign(s, { state: 'found', ticket: r.ticket, candidates: r.candidates, tried: r.tried });
       else Object.assign(s, { state: 'none', why: r.none, tried: r.tried });

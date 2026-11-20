@@ -67,7 +67,7 @@ Cache the manifest 10 min and re-read its policy fields before each search and s
 | `format`, `audioQuality` | Text the tier is read from: FLAC/ALAC/WAV/hi-res/16- or 24-bit → LOSSLESS; low/128/96/64 → LOW; 320/MP3/AAC/Opus → HIGH. |
 | `audioMode`, `audioModes[]`, `atmos`, `isAtmos`, `isAtmosOnly` | Atmos when `atmos`, `isAtmos` or `isAtmosOnly` (NullBeat's flags) is true or the text matches `atmos|dolby|eac3[_-]?joc|ec-?3`. We skip Atmos rows **(ours)**: a different mix from YouTube's stereo track breaks the alignment, and Firefox can't decode E-AC-3. |
 | `explicit` | Optional; used by matching when present. |
-| `isrc` | Optional, not BitChord. When both sides have one, an equal ISRC is the match **(ours, from Mornye)**. |
+| `isrc` | Optional, not BitChord. When both sides have one, an equal ISRC is the match **(ours, from Mornye)**; see §7, ISRC first. |
 | `streamURL` | Optional fallback when `/stream` fails. |
 
 ## 3a. Dolby Atmos on the phone (ours)
@@ -113,6 +113,8 @@ Transport: from the URL's path extension and the answer's format fields only (`f
 
 Codec, first that applies: stated codec; container (flac/wav/mp3/aiff); MIME subtype; `flac` if the text says lossless; the URL's extension when it is an audio one (flac, mp3, m4a, aac, ogg, oga, opus, wav, aif, aiff, alac).
 
+HLS and DASH: played on the phone and BitChord, skipped on the PC (§8.1.5).
+
 On a 404, a blank `url` or an `error`: use the row's `streamURL`, else the next source.
 
 ## 4a. Stream limits (BitChord fork)
@@ -121,7 +123,7 @@ TorBox-backed addons allow about 5 `/stream` calls a minute and 60 uncached an h
 
 A 429 on `/stream` is not retried. The client learns from it: from then on the per-minute count is the number that got through before it (at least 1), and no `/stream` call goes to that addon until `Retry-After` (default 60 s) has passed.
 
-So `/stream` is never spent on speculation: the look-ahead for the next song is search only (8), and `/stream` is called just before the song is needed.
+So `/stream` is never spent on speculation: the look-ahead for the next song is search only (8), and `/stream` is called just before the song is needed: from 25 s before the transition (§8.1.3).
 
 ## 5. Status codes
 
@@ -136,7 +138,7 @@ So `/stream` is never spent on speculation: the look-ahead for the next song is 
 
 ## 6. Caching
 
-Identical calls in flight share one request (optional for a client whose cache already covers repeats). Manifest 10 min, search 10 min (key `query|params`, so title and artist are part of it), stream URL 5 min. Empty `tracks` are cached; failures, 404s included, are not. At most 128 entries.
+Identical calls in flight share one request (optional for a client whose cache already covers repeats). Manifest 10 min, search 10 min (key `query|params`, so title and artist are part of it), stream URL 5 min. Empty `tracks` are cached; failures, 404s included, are not. At most 128 entries. "Upgrade quality" clears a song's search and `/stream` entries, empty ones included (§8.1.7). The audio itself goes to the persistent addon cache (§8.1.6).
 
 ## 7. Matching a YouTube Music song to addon rows
 
@@ -157,6 +159,12 @@ Score of a row (null = refused):
 - Album equal after normalising: +35. Explicit flags both known: equal +20, unequal refused. A shared context word: +20. Base 100.
 - Ranking: if any accepted row shares an artist, rows without one are dropped. Sort by score; ties keep the addon's order.
 
+ISRC first **(ours, from Mornye; in every match since 2026-11-20)**:
+- **The song's ISRC.** YouTube Music's answers (player, next, browse) carry no ISRC. A client uses the ISRC it already learned for that song from its lyrics lookup: a recording match (BiniLyrics identify) or an ISRC-filed lyrics document (lrc.red). It keeps them in memory, per video id, for at least the last 100 songs. It sends no extra request just to get an ISRC.
+- **When ISRC-first applies.** In every match made for a song: the race at the song's start, the upgrade pass, a replay and a download. It applies when both the song and the row have an ISRC. Both are normalised to 12 characters, upper case, separators dropped. Rows whose ISRC equals the song's are opened first, in the addon's order. An ISRC match still answers to the length rule, so a wrong-edit lyrics match can't open a file of another length.
+- **No ISRC.** If either side has none, the rule is skipped and the title/artist/length matcher decides as before. The race at the song's very start can run before the lyrics lookup has finished; it then matches without an ISRC, and the upgrade pass that follows has it.
+- PC: the lyrics lookup hands the ISRC of an accepted lrc.red document (and a BiniLyrics hit's `isrc`, when its answer has one) to the background by video id (`VIVI_ADDONS_ISRC`, the last 200 songs, `src/addons/bg-addons.js`). The look-ahead's search (FIND) uses it when it is known; when it was learned after FIND and before OPEN, OPEN searches again with it (the search answers are cached 10 min, so no addon is asked twice and no `/stream` is spent). The PC has no upgrade pass after OPEN.
+
 Then, before playing a row **(ours)**:
 - Length within the user's slack (default 5 s, 0–10) of the YouTube song for playback, ±2 s for downloads. Rows within 3 s are preferred.
 - Preview check: refuse a row ≤ 35 s when the song is > 45 s (Mornye), and probe the stream with `Range: bytes=0-0` (4 s timeout). From `Content-Range` or `Content-Length`, max length = bytes·8 / (floor·1000), floor = 200 kbps for lossless, else min(stated kbps, 64). Refuse when that is shorter than the song minus the slack. An unmeasurable file is not refused.
@@ -166,14 +174,51 @@ These rules, and the tier, kbps, probe, parameter, stream-answer and base-URL re
 
 ## 8. Playback
 
-- Look-ahead (both apps): as soon as the next song is known, search the addons for it (FIND: manifest, search, pick; no `/stream`). Call `/stream` and the probe (OPEN) for the playing song when it starts, and for the next song only when the mix or the deck needs it. On PC the background keeps the addon links and the file URLs and gives the page a ticket (`src/addons/bg-addons.js`, `src/addons/page-addons.js`).
-- Extension (PC: YouTube-first with a deck switch only; decided 2026-11-17). There is no Direct mode: swapping the `<video>`'s source would break YouTube's player (it plays through MediaSource; seek, next and history depend on it). Instead:
+BitChord's addon model is the rule (decided 2026-11-20, the user), with the phone's measured additions. Each rule says who follows it: **[all]** (the phone, BitChord, the PC), **[phone only]** (with BitChord where it says so), **[PC only]**. The PC doesn't stream for now (decided 2026-11-20): it keeps its whole-file deck (below) and takes every rule that doesn't need streaming. It is measured (time from song start to deck take-over, peak memory) and streaming is revisited if the take-over is typically over about 10 s.
+
+### 8.1 Getting the audio
+
+1. **[phone only], and BitChord: progressive streaming.** The file is read in 1 MB ranges through the disk cache (rule 6), 8 MB ahead of the play position; playback starts once 500 ms is buffered.
+2. **[PC only]: the whole file.** The background fetches the opened row's file (at most 300 MB, 120 s) and hands the page its bytes; the page decodes it all (Web Audio) for the deck, the full fit and the measured level.
+3. **[all] Read-ahead: only near the transition.** The next song's addon is searched as soon as it is known (FIND: manifest, search, pick; no `/stream`, §4a). Its `/stream`, probe and audio are fetched only from 25 s before the transition (the mix-out, or the song's end), never earlier. The playing song's are fetched when it starts.
+4. **[all] Race the addons.** The ranked addons are asked in parallel, each with its own rows in its own order (§7); the first acceptable answer wins, and when two are ready together the higher-ranked addon wins. (BitChord: under 1 s against 13.6 s one at a time.)
+5. **[all] HLS and DASH** rows are played (the phone and BitChord through their players' HLS and DASH support). **PC:** skipped until the deck has a demuxer for them; a skipped row is not a failure.
+6. **[all] A persistent addon cache** of audio across plays, with a size setting (default 512 MB), least recently played dropped first. A replay reads it, with no `/stream` call. **PC:** the background keeps the fetched files in it (Cache API), keyed by addon, row and quality, never by the file URL (it holds a token).
+7. **[all] "Upgrade quality"** (a per-song action) clears that song's cached search and `/stream` answers (§6), and its empty answers too, then asks again.
+8. **[phone only] Network quality.** Two settings, Wi-Fi and mobile data, both default Lossless. A tier below Lossless means addons are off on that network (YouTube's audio plays). **PC:** none; a browser can't tell mobile data (Firefox has no `navigator.connection`).
+
+### 8.2 Choosing what plays
+
+1. **[all] A lossy floor.** An addon copy replaces YouTube's only when it is lossless (or Atmos, phone only), or lossy at 96 kbps or more over what YouTube plays now. A lossy copy that plays is followed by a lossless pass: the addons are asked again for a lossless row, and a lossless copy found replaces it the same way.
+2. **[all] ISRC first** (§7) in every match: the race at the song's start, the upgrade pass, a replay and a download.
+3. **[all] The window check** (`offset-map.md`) before any copy replaces YouTube's: no match, the song stays on YouTube; a match, its offset is applied. A full fit counts (the PC).
+4. **[all] Level:** `offset-map.md`, Level (the phone and BitChord: YouTube's `loudnessDb`, nothing measured; the PC: measured, starting from `loudnessDb`).
+
+### 8.3 The swap
+
+1. **[phone only], and BitChord: the audition.** At the current position, the client warms 1 MB of the copy, then buffers 12 s and at least 1 MB, and checks the decoder's MIME against the stream's. The 12 s are the window the check reads. Then it swaps at the same position, plus the offset, with a short cover crossfade; then it watches the copy's length for 10 s: a copy whose length breaks the slack (§7) hands back to YouTube.
+2. **[phone only] Mix decks** come from YouTube's copy; after a mix, the hand-over to the streaming addon player is 250 ms.
+3. **[PC only]: the deck.** Below.
+
+### 8.4 The addon list
+
+1. **[all]** Each addon: on/off, reorder, its manifest name and its health. Never its link or token (§1).
+2. **[all]** A quality picker per addon, from its manifest's `quality` setting (§2), shown when it lists 2 or more options.
+3. **[phone only] Downloads:** Wi-Fi only by default (a setting); the search asks at the tier that will be streamed.
+
+### 8.5 By design
+
+A browser User-Agent (§1), Atmos off by default (§3a), and the music-video length slack (§7) stay.
+
+### 8.6 The PC as built
+
+- **[PC only]** YouTube-first with a deck switch only (decided 2026-11-17). There is no Direct mode: swapping the `<video>`'s source would break YouTube's player (it plays through MediaSource; seek, next and history depend on it). Instead:
   1. YouTube starts the song as always.
-  2. The picked row's file is fetched (FETCH: by the background script, which holds the host permission and the file URL; at most 300 MB, 120 s) and handed to the page as bytes.
-  3. Its timeline is fitted to YouTube's own audio (`offset-map.md`). A row that doesn't fit (another edit or master) is refused and the next row or addon is tried.
+  2. The picked row's file is fetched (FETCH: by the background script, which holds the host permission and the file URL; at most 300 MB, 120 s) and handed to the page as bytes (8.1.2).
+  3. Its timeline is fitted to YouTube's own audio (`offset-map.md`, Full fit, which counts as the window check). A row that doesn't fit (another edit or master) is refused and the next row or addon is tried.
   4. The stream deck (Phase 2) plays the file on YouTube's clock, YouTube muted underneath, and takes over with a short crossfade. Its level is YouTube's element volume times the source gain (`offset-map.md`, Level).
   5. On any failure mid-song the deck hands back to YouTube, which is at the same spot.
-  Progressive files only for now; HLS and DASH rows are skipped. The fit reads YouTube's audio of the song from Automix's download, so on PC addons need Crossfade and Automix on (`src/crossfade.js` addonTick).
+  Progressive files only for now; HLS and DASH rows are skipped (8.1.5). The fit reads YouTube's audio of the song from Automix's download, so on PC addons need Crossfade and Automix on (`src/crossfade.js` addonTick).
 - The PC deck (`src/addons/buffer-deck.js`): the whole file, decoded at the audio context's rate (on PC the output device's rate; `decodeAudioData` resamples a 44.1 or 96 kHz file there, the one resample on the way out), played by buffer sources. Every start is on a whole output frame and a whole file sample, so the output is the file's own samples (measured: −152 dB residual against the decoded file).
   - Its place comes from YouTube's output: a tap records what YouTube plays on exact frames, and its last 0.25 s is matched against the file (±0.35 s around YouTube's time). YouTube's time (plus the lead learnt from the last match) is a last resort only: after a seek the lead changes (measured 144 → 31 ms), so the time alone can be 0.1 s off.
   - After a pause, a seek or a stall, the sound goes back to YouTube, the deck waits for 0.4 s of YouTube's new sound in the tap and tries the match up to 4 times, 0.25 s apart, then crosses back (50 ms). Nothing is silent meanwhile.
@@ -184,14 +229,10 @@ These rules, and the tier, kbps, probe, parameter, stream-answer and base-URL re
   - the take-over hands the new song from the incoming deck to the addon deck at the schedule's song position.
   - Filters that are part of the graph at rest (the player's and the tail's high- and low-pass) rest at 0 Hz and Nyquist, which pass the samples through unchanged, and the mix's filter curves end there. 20 Hz / 20 kHz still filtered every song (measured −15 to −30 dB residuals).
   - The loop decks and a glide stretch time, so what they play is the file's sound, not its samples.
-- Phone (as built, phone commit 5f16dfe): its own media3 player plays the addon file, with YouTube's player muted underneath as the clock. Resolve and fit happen during the previous song (the look-ahead above, then OPEN and the fit before the hand-over).
-  - Clock: the media3 player locks to YouTube's position through `StepClock` (file position = YouTube's time + `offsetSec`); when it drifts or YouTube seeks, it re-locks silently.
-  - Start: a prepared song starts on the addon file from 0. A song started cold (nothing prepared) plays on YouTube first while the file is resolved, fitted and silently locked (measured about 3.6–4.3 s after opening), then upgrades mid-song with the crossfade in.
-  - Hand-over: a 200 ms crossfade in from YouTube to the addon file; a 30 ms crossfade out back to YouTube (on a failure or a hand-back).
-  - Level: YouTube's normalisation gain times the source gain (`offset-map.md`, Level), applied as the player's volume. ExoPlayer's volume is at most 1, so on the phone the level is capped at 0 dB: it only cuts, never boosts (PC can boost up to +6 dB, true peak kept at or under −1 dBTP).
-- PC stays deck-only (above).
+- Not built on the PC yet (2026-11-20), in this order: the race (8.1.4), the persistent cache (8.1.6), the audio fetched only from 25 s before the transition (8.1.3; today OPEN and FETCH run when the mix or the deck needs the file), the lossy floor and the lossless pass (8.2.1), "Upgrade quality" (8.1.7), the quality picker (8.4.2), the deck starting at `loudnessDb` (offset-map.md, Level), and the timing measurement (8 intro).
+- The phone's player as built before 2026-11-20 (phone commit 5f16dfe: the whole file fetched and fitted during the previous song, StepClock, a 200 ms crossfade in and 30 ms out, the gain capped at 0 dB) is replaced by 8.1-8.3.
 - Quality badge (both apps), always by what is actually decoded and played:
   - an addon copy playing: "Hi-Res Lossless" (over 16-bit or over 48 kHz), "Lossless", or "High Quality" for a lossy copy at 256 kbps or more;
   - while a copy is being found or fitted for the playing song: "Upgrading Quality";
   - otherwise YouTube's own audio, by the format its player decodes now (PC: the itag from stats for nerds, its bitrate from the player response): "High Quality" at 256 kbps or more (Premium's Opus itag 774, AAC 141); no badge for the usual ~130–160 kbps (Opus 251, AAC 140).
-- Downloads (phone only): only addons with `allowDownloads` not false; a lossy row must be over 256 kbps.
+- Downloads (phone only): only addons with `allowDownloads` not false; a lossy row must be over 256 kbps; Wi-Fi only by default (8.4.3).

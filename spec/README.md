@@ -64,6 +64,13 @@ platform must meet.
 Where they differ, the original is the rule. Rules marked "phone only" are platform-bound.
 `node scripts/canvas_cases_tests.mjs` runs every case the extension has a function for.
 
+## Lyrics fixtures
+
+`lyrics/lyrics.md` holds the lyrics rules (timing, offsets, scroll, duets, gaps, layout, sources),
+each marked for a full lyrics view, the phone's one-line strip, or both. The original is Metrolist
+unless a rule names BitChord. `node scripts/lyrics_cases_tests.mjs` checks `lyrics-cases.json`
+against a port of Metrolist's functions kept in the script.
+
 ## CI
 
 `.github/workflows/spec-tests.yml` runs every suite above on every push, except the real-song
@@ -86,6 +93,8 @@ node scripts/addon_matcher_fixtures.mjs --matcher src/addons/track-matcher.js
 Our rules on top of the matcher (ISRC first, Atmos rows, previews, length slack, the range probe, at most 3 rows; protocol.md §7) are in `src/addons/pick.js`. Their cases, and the client's readings (tierOf, kbps, probeVerdict, paramsFor, readStream, baseOf, sameAddon), are data in `pick-cases.json`: `node scripts/addon_pick_tests.mjs` reads it, and so does the phone's JVM test.
 
 The offset fit and the level (`offset-map.md`, `src/addons/offset-fit.js`): `node scripts/addon_offset_fixtures.mjs` builds synthetic songs from the PRNG and generator spelled out in `offset-map.md` (about 10 s).
+
+The window check on real songs: `window-cases.json` holds the phone's 51 measured windows on 9 songs as numbers (the audio isn't kept). `node scripts/addon_window_cases.mjs` runs them on local copies in `.cache/addons/` (git-ignored, never in CI) and skips a song without them; the cases' notes say how to rebuild the copies (`scripts/addon_window_fetch.mjs` asks the user's addons, so it runs only with the user's word).
 
 The client (`src/addons/client.js`: discovery, request shape, caching, statuses, health, resolve) is tested against a local mock server by `node scripts/addon_client_tests.mjs`. The PC's addon list and its popup messages (`src/addons/bg-addons.js`; links stay in the background, the popup sees name and host) by `node scripts/addon_store_tests.mjs`. The page side of the look-ahead (`src/addons/page-addons.js`) by `node scripts/addon_page_tests.mjs`.
 

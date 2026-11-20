@@ -22,7 +22,7 @@ function fakeStorage() {
     set: async (patch) => { Object.assign(data, JSON.parse(JSON.stringify(patch))); },
   };
 }
-const resolveCalls = [], findCalls = [], openCalls = [];
+const resolveCalls = [], findCalls = [], openCalls = [], findSongs = [];
 let openAnswer = (found) => ({ addon: found[0].addon, row: { id: 'r1', title: 'x', durationSec: 200, raw: { secret: 1 } }, stream: { url: 'https://cdn.example/SECRET-FILE.flac', headers: { a: 'SECRET-H' }, codec: 'flac', tier: 'LOSSLESS', transport: 'file' }, tried: [] });
 const client = {
   discover: async (url) => {
@@ -31,7 +31,7 @@ const client = {
     return { base, manifest: { name: /nosearch/.test(url) ? 'Catalog' : 'Addon ' + new URL(base).host.split('.')[0], resources: /nosearch/.test(url) ? ['catalog'] : ['search', 'stream'] } };
   },
   health: () => ({ 'b.example': { fails: 0, coolUntil: 0, last: 'ok', ms: 1200 } }),
-  find: async (song, addons, opt) => { findCalls.push({ addons, opt }); return song.title === 'none' ? { found: [], tried: [{ addon: 'b.example', why: 'no match', refused: [{ id: 'q', why: 'length' }] }] } : { found: [{ addon: { base: addons[0].base, name: 'Addon b', host: 'b.example' }, rows: [{ id: 'r1' }, { id: 'r2' }] }], tried: [] }; },
+  find: async (song, addons, opt) => { findCalls.push({ addons, opt }); findSongs.push(song); return song.title === 'none' ? { found: [], tried: [{ addon: 'b.example', why: 'no match', refused: [{ id: 'q', why: 'length' }] }] } : { found: [{ addon: { base: addons[0].base, name: 'Addon b', host: 'b.example' }, rows: [{ id: 'r1' }, { id: 'r2' }] }], tried: [] }; },
   open: async (found, song, opt, tried) => { openCalls.push(found); return openAnswer(found); },
   resolve: async (song, addons, opt) => { resolveCalls.push({ addons, opt }); return { addon: { base: addons[0].base, name: 'Addon b', host: 'b.example' }, row: { id: 'r' }, stream: { url: 'https://cdn/x.flac' }, tried: [] }; },
 };
@@ -106,6 +106,25 @@ fileAnswer = { status: 200, type: 'audio/flac', size: 10, declared: 400e6 };
 check('fetch: a file over 300 MB is refused before reading', await msg({ type: 'VIVI_ADDONS_FETCH', ticket: f.ticket }), { none: 'the file is too big (400 MB)' });
 fileAnswer = { status: 403, type: 'text/html', size: 10 };
 check('fetch: an error status', await msg({ type: 'VIVI_ADDONS_FETCH', ticket: f.ticket }), { none: 'the file answered 403' });
+// ISRC first (protocol.md §7): the ISRC the lyrics lookup learned, by video id
+check('isrc: a bad ISRC is not kept', await msg({ type: 'VIVI_ADDONS_ISRC', videoId: 'v1', isrc: 'nope' }), { ok: false });
+check('isrc: kept, normalised', await msg({ type: 'VIVI_ADDONS_ISRC', videoId: 'v1', isrc: 'us-ug1-19-00001' }), { ok: true });
+await msg({ type: 'VIVI_ADDONS_FIND', song: { videoId: 'v1', title: 'x' } });
+check('isrc: FIND searches with the song ISRC', findSongs.at(-1).isrc, 'USUG11900001');
+await msg({ type: 'VIVI_ADDONS_FIND', song: { videoId: 'v2', title: 'x' } });
+check('isrc: another song has none', findSongs.at(-1).isrc, undefined);
+const late = await msg({ type: 'VIVI_ADDONS_FIND', song: { videoId: 'v3', title: 'x' } });
+await msg({ type: 'VIVI_ADDONS_ISRC', videoId: 'v3', isrc: 'GBUM71029604' });
+const nFind = findSongs.length;
+await msg({ type: 'VIVI_ADDONS_OPEN', ticket: late.ticket });
+check('isrc: learned after FIND, OPEN searches again with it', [findSongs.length - nFind, findSongs.at(-1).isrc, S.ticketOf(late.ticket).song.isrc], [1, 'GBUM71029604', 'GBUM71029604']);
+await msg({ type: 'VIVI_ADDONS_OPEN', ticket: late.ticket });
+check('isrc: an opened ticket is not searched again', findSongs.length - nFind, 1);
+for (let i = 0; i < 205; i++) S.noteIsrc('k' + i, 'USUG1190' + String(1000 + i));
+await msg({ type: 'VIVI_ADDONS_FIND', song: { videoId: 'k0', title: 'x' } });
+const oldest = findSongs.at(-1).isrc;
+await msg({ type: 'VIVI_ADDONS_FIND', song: { videoId: 'k204', title: 'x' } });
+check('isrc: the last 200 songs are kept', [oldest, findSongs.at(-1).isrc], [undefined, 'USUG11901204']);
 check('other message types are not ours', await S.handle({ type: 'VIVI_LISTENBRAINZ_STATUS' }), undefined);
 
 console.log(failed ? `${failed} failed` : 'all passed');

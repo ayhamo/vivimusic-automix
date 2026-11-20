@@ -1,8 +1,10 @@
 # Offset map and level: an addon file against YouTube's audio
 
-An addon's file of a song is the same recording as YouTube's, but rarely the same file. It can start with more or less silence, and it is mastered at its own level. Before it plays, it is fitted to YouTube's audio. All song times in the apps (the player's position, the analysis, automix plans) are YouTube's. An addon file is read through this map.
+An addon's file of a song is the same recording as YouTube's, but rarely the same file. It can start with more or less silence, and it is mastered at its own level. Before it plays, it is checked against YouTube's audio and placed on YouTube's timeline. All song times in the apps (the player's position, the analysis, automix plans) are YouTube's. An addon file is read through this map.
 
-Reference code: `src/addons/offset-fit.js`. Fixtures: `scripts/addon_offset_fixtures.mjs`.
+Reference code: `src/addons/offset-fit.js` (`fitWindow`, `fit`). Fixtures: `scripts/addon_offset_fixtures.mjs` (synthetic, CI) and `window-cases.json` (real songs, measured; `scripts/addon_window_cases.mjs`, local).
+
+Each rule says who must follow it: **[all]** (the phone, BitChord and the PC), **[phone only]**, **[PC only]**. Decided 2026-11-20 (the user): the window check binds all three.
 
 ## Map
 
@@ -10,11 +12,29 @@ Reference code: `src/addons/offset-fit.js`. Fixtures: `scripts/addon_offset_fixt
 
 `offsetSec` is positive when the addon file has more lead-in than YouTube's. Times past the addon file's end clamp to its end. Before its start (a negative `addonTime`) they are silence.
 
-## Input
+## Window check [all]
 
-Both sides: the decoded song, downmixed to mono (the mean of its channels), at 22 050 Hz (`FIT_RATE`). Each side is decoded by the same path that will play it, so any decoder delay (AAC priming, MP3 encoder delay, Opus pre-skip) is removed, or left in, the same way in the fit as in playback. On PC that is Web Audio's `decodeAudioData` for both (the deck plays that buffer), resampled to 22 050 Hz by an `OfflineAudioContext`. A port must not fit on one decoder's output and play another's.
+Before an addon copy replaces YouTube's, a window of the addon audio is fitted against YouTube's copy at the same spot. No match: the song stays on YouTube. A match: the offset it measured is applied (Map). A swap at the same position without it would be wrong twice over (the phone, 9 songs, 2026-11-20): Poker Face's lossless copy is 117.2 ms off YouTube's, so the swap would jump by that much, and 2 of the 9 copies (Escapism, the Stereo Love smashup) are other recordings or edits.
 
-## Fit
+1. **Window.** 12 s of the addon audio, read from addon time `p` = YouTube's position when the audition starts (before the offset is known, the same position). It is what the audition decodes anyway (protocol.md §8).
+2. **Template.** The window less 1 s at each end: addon time `[p + 1, p + 11)`. Its 10 ms envelope (Fit, step 1) is slid over YouTube's copy, so every sample compared is known whatever the offset. (Sliding YouTube's span under the window instead leaves part of the span outside the window once the offset passes about a second, and the coarse stage then locks onto the wrong beat: a synthetic −2.3 s shift was refused that way.)
+3. **Coarse.** Lags of ±15 s in 10 ms steps, Pearson over the windows inside both, as in Fit step 3. The best must score 0.8 or more, else no match.
+4. **Fine.** The template's waveform at 4 kHz, band-limited to 1 kHz, against YouTube's around the coarse lag, ±20 ms, refined parabolically, as in Fit step 4. 0.8 or more, else no match.
+5. **Result.** `offsetSec` (Map's sign), with both scores; or no match with the scores reached.
+6. **A full fit counts.** A client that has the whole addon file before it plays (the PC, Full fit below) passes the window check by its full fit, which checks more: the start span, the end span and the length.
+7. **Length.** The window check doesn't see the file's end. The length rule (protocol.md §7, the slack) applies to the row and the stream's stated length, and after the swap the length watch (protocol.md §8) catches a file that ends early.
+
+Cases: `window-cases.json` (the phone's 51 windows on 9 songs, as numbers: 37 matches within 0.01 ms of the full fit, every window of the 2 wrong copies refused, Poker Face at −117.2 ms in all 7 windows). Synthetic: shifts of +0.7, −2.3, −0.117, +11 and −9 s at 15 s and 75 s within 1 ms; another song on the same beat grid refused.
+
+## Input [all]
+
+Both sides: the decoded audio, downmixed to mono (the mean of its channels), at 22 050 Hz (`FIT_RATE`). Each side is decoded by the same path that will play it, so any decoder delay (AAC priming, MP3 encoder delay, Opus pre-skip) is removed, or left in, the same way in the fit as in playback. On PC that is Web Audio's `decodeAudioData` for both (the deck plays that buffer), resampled to 22 050 Hz by an `OfflineAudioContext`. On the phone, the window is decoded by the decoder the streaming player uses. A port must not fit on one decoder's output and play another's.
+
+YouTube's side is the client's copy of YouTube's audio of the song (PC: Automix's download; the phone and BitChord: their own). A client without YouTube's audio for the song can't run the check, and so plays YouTube's copy.
+
+## Full fit [PC only]
+
+The PC fetches and decodes the whole addon file before the deck takes over (protocol.md §8), so it fits the whole song:
 
 Coarse first, then fine: the coarse stage finds the offset to 10 ms over ±15 s cheaply; only ±20 ms around it is searched at 4 kHz.
 
@@ -29,17 +49,22 @@ Result: `{ offsetSec, score, coarseScore, checkSec, checkScore }`, or `{ none: '
 
 ## Level
 
-The deck plays the file at YouTube's playback level times a source gain, which brings the file to YouTube's level for that song. On PC YouTube's playback level is the element volume (the listener's volume times YouTube's normalisation). On the phone it is YouTube's normalisation gain applied as a sample gain, not the element volume.
+**[phone only], and BitChord:** YouTube's `loudnessDb` for the song, on whichever copy plays: the addon copy gets the same normalisation YouTube's player gives its own copy (a cut of `loudnessDb` dB when it is positive, nothing when it isn't). No measured gain, no boost. On the phone it is a sample gain, not the element volume.
 
+**[PC only]:** the measured gain below. The deck starts at YouTube's `loudnessDb` level (the element volume) and moves to the measured one, ramped, once it is measured. The PC has the whole file, so measuring costs no extra download.
+
+- The deck plays the file at YouTube's playback level times a source gain, which brings the file to YouTube's level for that song. On PC YouTube's playback level is the element volume (the listener's volume times YouTube's normalisation).
 - `gainDb = youtubeLufs − addonLufs`, each the EBU R128 integrated loudness (ITU-R BS.1770-4) of the whole decoded song, measured the same way on both sides: the fit's mono 22 050 Hz signal, K-weighted, 400 ms blocks every 100 ms, absolute gate −70 LUFS, relative gate −10 LU. Mono on both sides keeps the difference right for a stereo pair even though the absolute value isn't BS.1770's channel sum. K-weighting at any rate uses libebur128's filter design, which gives the standard's 48 kHz coefficients exactly: a 997 Hz sine at −20 dBFS reads −23.01 LUFS at 48 kHz and −22.98 at 22 050 Hz.
 - This is not the automix analysis' `loudnessCurve`: that is a mono K-weighted curve of 100 ms blocks, used for the blend's level match, not an R128 integrated figure.
 - At most +6 dB of boost. Cuts are unlimited.
-- Never clips. The true peak is measured only when boosting, on each channel of the file at the rate it plays (on PC the audio context's, decoded again at that rate), 4× oversampled (Hann-windowed sinc, 8 input samples each side), and only around samples within 3.5 dB of the level where the boost would reach −1 dBTP (an oversampled peak sits at most about 3 dB over its samples). The boost is lowered until that peak stays at or under −1 dBTP.
+- Never clips. The true peak is measured only when boosting, on each channel of the file at the rate it plays (the audio context's, decoded again at that rate), 4× oversampled (Hann-windowed sinc, 8 input samples each side), and only around samples within 3.5 dB of the level where the boost would reach −1 dBTP (an oversampled peak sits at most about 3 dB over its samples). The boost is lowered until that peak stays at or under −1 dBTP.
 - Ramped, never stepped: the deck reaches the gain over its take-over fade, and any later change over at least 0.5 s.
 
 ## Fixtures
 
-`scripts/addon_offset_fixtures.mjs` builds synthetic songs and checks the fit and the level:
+`scripts/addon_offset_fixtures.mjs` builds synthetic songs and checks the window check, the full fit and the level:
+
+- the window check: the same audio shifted by +0.7, −2.3, −0.1172, +11 and −9 s, a 12 s window at 15 s and at 75 s: each offset within 1 ms, both scores 0.8 or more; a window of another song on the same beat grid: no match;
 
 - the same audio shifted by +0.7 s, −2.3 s and +11 s: each offset within 1 ms;
 - YouTube's copy opening with 1.5 s of silence, the addon's with 0.4 s: −1.1 s within 1 ms;

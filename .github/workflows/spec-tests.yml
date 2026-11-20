@@ -45,5 +45,7 @@ jobs:
           node scripts/video_canvas_tests.mjs
           node scripts/canvas_spotify_tests.mjs
           node scripts/canvas_cases_tests.mjs
+      - name: Lyrics
+        run: node scripts/lyrics_cases_tests.mjs
       - name: Analysis, synthetic songs on the real analyser
         run: node scripts/analysis_cases.mjs

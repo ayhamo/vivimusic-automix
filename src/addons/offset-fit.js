@@ -147,6 +147,25 @@
     return { offsetSec: f.offsetSec, score: f.score, coarseScore: c.score, checkSec, checkScore: cf.score };
   }
 
+  // The window check (offset-map.md, Window check): an addon window of `win` (mono, FIT_RATE) read
+  // from addon time `posSec`, against YouTube's copy around the same spot. The window, less 1 s each
+  // side, is the template, slid over YouTube's copy (every sample of it known, whatever the offset):
+  // coarse ±15 s, then fine ±20 ms. `offsetSec` as in fit(): addon time = YouTube time + offsetSec.
+  function fitWindow(yt, win, posSec) {
+    const winSec = win.length / FIT_RATE, a0 = Math.round(posSec * FIT_RATE);
+    const ad = new Float32Array(a0 + win.length);
+    ad.set(win, a0);
+    const span = winSec - 2, start = posSec + 1;
+    if (span <= 0) return { none: 'no match', coarseScore: null, score: null };
+    // coarse() and fine() slide their second signal under the first: here YouTube's under the
+    // window's, so they return YouTube time - addon time, the negative of offsetSec
+    const c = coarse(logEnv(rmsWindows(ad, FIT_RATE)), logEnv(rmsWindows(yt, FIT_RATE)), start, span, 0, COARSE_LAG_SEC);
+    if (!c || c.score < MIN_SCORE) return { none: 'no match', coarseScore: c?.score ?? null, score: null };
+    const f = fine(ad, yt, start, span, c.offsetSec);
+    if (!f || f.score < MIN_SCORE) return { none: 'no match', coarseScore: c.score, score: f?.score ?? null };
+    return { offsetSec: -f.offsetSec + 0, coarseScore: c.score, score: f.score };
+  }
+
   // ── level: BS.1770-4 K-weighting at any rate (libebur128's design: it reproduces the
   // standard's 48 kHz coefficients exactly) ──
   function kWeight(x, rate) {
@@ -230,7 +249,7 @@
     return { gainDb: gain, wantDb: want, capped, truePeakDb: tp };
   }
 
-  const api = { fit, resample, rmsWindows, integratedLufs, truePeakDb, sourceGainDb, kWeight, FIT_RATE, MAX_BOOST_DB, CEILING_DBTP };
+  const api = { fit, fitWindow, coarse, fine, logEnv, resample, rmsWindows, integratedLufs, truePeakDb, sourceGainDb, kWeight, FIT_RATE, MAX_BOOST_DB, CEILING_DBTP };
   // on window like the other modules: in a Firefox content script globalThis is the sandbox, not window
   if (typeof window === 'object') window.__viviOffsetFit = api; else globalThis.__viviOffsetFit = api;
   if (typeof module === 'object' && module.exports) module.exports = api;

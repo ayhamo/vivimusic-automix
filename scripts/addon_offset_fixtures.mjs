@@ -102,6 +102,19 @@ for (const off of [0.7, -2.3, 11]) {
   const r = F.fit(yt, ad);
   check('same loudness shape, other audio: the envelope agrees, the waveform does not: no match', r.none === 'no match' && r.score >= 0.8 && r.fineScore < 0.8, JSON.stringify(r));
 }
+// the window check (offset-map.md, Window check): a 12 s addon window at YouTube's position
+{
+  const win = (ad, pos) => ad.subarray(Math.round(pos * R), Math.round((pos + 12) * R));
+  for (const off of [0.7, -2.3, -0.1172, 11, -9]) {
+    const ad = off > 0 ? cat(silence(off), yt) : cut(yt, -off);
+    for (const pos of [15, 75]) {
+      const r = F.fitWindow(yt, win(ad, pos), pos);
+      check(`window at ${pos} s, shift ${off > 0 ? '+' : ''}${off} s: offset within 1 ms`, near(r.offsetSec, off, 0.001) && r.score >= 0.8 && r.coarseScore >= 0.8, JSON.stringify(r));
+    }
+  }
+  const other = F.fitWindow(yt, win(song(2, SEC), 45), 45);
+  check('window of another song on the same beat grid: no match', other.none === 'no match', JSON.stringify(other));
+}
 // silent YouTube audio
 {
   const r = F.fit(silence(SEC), yt);

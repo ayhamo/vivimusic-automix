@@ -1,0 +1,34 @@
+{
+ "notes": {
+  "_about": "Shared lyrics cases (spec/lyrics/lyrics.md). Every port reads this file. Times in ms. A line is {start, end}; agent ids as in TTML.",
+  "currentLine": "lyrics.md §2.4. Metrolist LyricsUtils.kt:111-121 (findCurrentLineIndex): line i is current while the next line's start is at or after position + 100; -1 before the first. Input: line starts and the position.",
+  "offset": "lyrics.md §3. Metrolist LyricsUtils.kt:94-107: offset = song + global; lyrics position = player position + offset; a seek by lyrics goes to max(0, lyric time - offset).",
+  "sides": "lyrics.md §5.2. Metrolist LyricsUtils.kt:160-235 (assignLineAlignments). agents: optional {id: 'person' | 'group' | 'other'}; a line's agent may be null. respect: the sides setting. Expect left, right or center per line.",
+  "gaps": "lyrics.md §6.1. Metrolist LyricsListIndexing.kt:28-53. Expect [start, end] per gap, in order."
+ },
+ "currentLine": [
+  { "name": "before the first line", "input": { "starts": [1000, 5000, 9000], "position": 500 }, "expect": -1 },
+  { "name": "100 ms before the second line: still the first", "input": { "starts": [1000, 5000, 9000], "position": 4900 }, "expect": 0 },
+  { "name": "99 ms before the second line: the second", "input": { "starts": [1000, 5000, 9000], "position": 4901 }, "expect": 1 },
+  { "name": "on the second line", "input": { "starts": [1000, 5000, 9000], "position": 6000 }, "expect": 1 },
+  { "name": "after the last line starts", "input": { "starts": [1000, 5000, 9000], "position": 20000 }, "expect": 2 }
+ ],
+ "offset": [
+  { "name": "song and global add up", "input": { "song": 300, "global": -100, "player": 10000 }, "expect": { "offset": 200, "lyrics": 10200, "seekTo": 10000 } },
+  { "name": "a positive offset shows lyrics earlier", "input": { "song": 500, "global": 0, "player": 1000 }, "expect": { "offset": 500, "lyrics": 1500, "seekTo": 1000 } },
+  { "name": "a seek by lyrics never goes below 0", "input": { "song": 500, "global": 0, "player": 0, "lyricTime": 200 }, "expect": { "offset": 500, "lyrics": 500, "seekTo": 0 } }
+ ],
+ "sides": [
+  { "name": "two singers alternate, a group is centred", "input": { "lines": ["v1", "v2", "v1", "v1000", "v2"], "respect": true }, "expect": ["left", "right", "left", "center", "right"] },
+  { "name": "the first singer 'other' starts on the right", "input": { "lines": ["v2000", "v2000", "v1"], "respect": true }, "expect": ["right", "right", "left"] },
+  { "name": "85% or more on the right: all swapped", "input": { "lines": ["o1", "o1", "o1"], "respect": true }, "expect": ["left", "left", "left"] },
+  { "name": "types from the agent list win over the id", "input": { "lines": ["a", "b", "c"], "agents": { "a": "person", "b": "group", "c": "person" }, "respect": true }, "expect": ["left", "center", "right"] },
+  { "name": "no singer: the view's alignment (centre)", "input": { "lines": [null, "v1", null], "respect": true }, "expect": ["center", "left", "center"] },
+  { "name": "sides off: centre, a group too", "input": { "lines": ["v1", "v2", "v1000"], "respect": false }, "expect": ["center", "center", "center"] }
+ ],
+ "gaps": [
+  { "name": "an intro and a gap between lines", "input": { "lines": [{ "start": 9000, "end": 12000 }, { "start": 13000, "end": 15000 }, { "start": 23000, "end": 26000 }] }, "expect": [[0, 8200], [15310, 22200]] },
+  { "name": "a first line at 6999: no intro; exactly 7000 between lines is a gap", "input": { "lines": [{ "start": 6999, "end": 8000 }, { "start": 15000, "end": 16000 }] }, "expect": [[8310, 14200]] },
+  { "name": "the latest end counts, not the last line's", "input": { "lines": [{ "start": 1000, "end": 9000 }, { "start": 2000, "end": 3000 }, { "start": 11000, "end": 12000 }] }, "expect": [] }
+ ]
+}

@@ -703,6 +703,88 @@
    }
   },
   {
+   "name": "no ISRC on the rows: the matcher decides",
+   "rows": [
+    {
+     "id": "other",
+     "title": "Save Your Tears",
+     "artist": "The Weeknd",
+     "duration": 200,
+     "album": "After Hours"
+    },
+    {
+     "id": "a",
+     "title": "Blinding Lights",
+     "artist": "The Weeknd",
+     "duration": 200,
+     "album": "After Hours"
+    }
+   ],
+   "target": {
+    "title": "Blinding Lights",
+    "artist": "The Weeknd",
+    "durationSec": 200,
+    "album": "After Hours",
+    "isrc": "USUG11900001"
+   },
+   "opt": {},
+   "expect": {
+    "open": [
+     "a"
+    ],
+    "refused": [
+     {
+      "id": "other",
+      "why": "not this song"
+     }
+    ]
+   }
+  },
+  {
+   "name": "two ISRC rows open first, in the addon's order",
+   "rows": [
+    {
+     "id": "title",
+     "title": "Blinding Lights",
+     "artist": "The Weeknd",
+     "duration": 200,
+     "album": "After Hours"
+    },
+    {
+     "id": "isrc1",
+     "title": "Blinding Lights (Remastered)",
+     "artist": "The Weeknd",
+     "duration": 201,
+     "album": "The Highlights",
+     "isrc": "USUG11900001"
+    },
+    {
+     "id": "isrc2",
+     "title": "Blinding Lights",
+     "artist": "The Weeknd",
+     "duration": 200,
+     "album": "After Hours",
+     "isrc": "USUG1-19-00001"
+    }
+   ],
+   "target": {
+    "title": "Blinding Lights",
+    "artist": "The Weeknd",
+    "durationSec": 200,
+    "album": "After Hours",
+    "isrc": "USUG11900001"
+   },
+   "opt": {},
+   "expect": {
+    "open": [
+     "isrc1",
+     "isrc2",
+     "title"
+    ],
+    "refused": []
+   }
+  },
+  {
    "name": "a different song is refused as such",
    "rows": [
     {

@@ -715,6 +715,7 @@
       return null;
     }
     parsed.provider = 'BiniLyrics';
+    noteIsrc(track, best.isrc);
     return parsed;
   }
 
@@ -723,6 +724,12 @@
   // downloads the raw TTML/LRC text; parsing happens here because it needs
   // DOMParser. Word-synced TTML is preferred; if it has no usable word
   // timing (or fails the duration sanity check) we fall back to its LRC.
+  // the ISRC of an accepted lyrics answer, for the addon matcher (spec/addons/protocol.md §7)
+  function noteIsrc(track, isrc) {
+    if (!track?.videoId || !isrc) return;
+    try { chrome.runtime.sendMessage({ type: 'VIVI_ADDONS_ISRC', videoId: track.videoId, isrc: String(isrc) })?.catch?.(() => {}); } catch {}
+  }
+
   async function fromLrcRed(track) {
     try {
       const response = await chrome.runtime.sendMessage({
@@ -734,23 +741,24 @@
 
       if (d.format === 'ttml') {
         const parsed = parseTTML(d.text);
-        if (parsed && isTimingPlausible(parsed, track)) { parsed.provider = 'lrc.red'; return parsed; }
+        if (parsed && isTimingPlausible(parsed, track)) { parsed.provider = 'lrc.red'; noteIsrc(track, d.isrc); return parsed; }
         if (parsed) log('lrc.red TTML rejected: timing does not match track duration');
       }
       const lrcText = d.format === 'lrc' ? d.text : d.lrc;
       if (lrcText) {
         const enhanced = parseEnhancedLRC(lrcText);
-        if (enhanced && isTimingPlausible(enhanced, track)) { enhanced.provider = 'lrc.red'; return enhanced; }
+        if (enhanced && isTimingPlausible(enhanced, track)) { enhanced.provider = 'lrc.red'; noteIsrc(track, d.isrc); return enhanced; }
         // Enhanced-LRC word tags (<00:12.34>) would otherwise end up in the text.
         const cleaned = lrcText.replace(/<\d{1,2}:\d{2}(?:\.\d{1,3})?>/g, '');
         const synced = parseLRC(cleaned);
         if (synced) {
           if (!isTimingPlausible(synced, track)) { log('lrc.red LRC rejected: timing mismatch'); return null; }
           synced.provider = 'lrc.red';
+          noteIsrc(track, d.isrc);
           return synced;
         }
         const plain = parsePlain(stripLrcMetaTags(cleaned));
-        if (plain) { plain.provider = 'lrc.red'; return plain; }
+        if (plain) { plain.provider = 'lrc.red'; noteIsrc(track, d.isrc); return plain; }
       }
       return null;
     } catch (e) {
