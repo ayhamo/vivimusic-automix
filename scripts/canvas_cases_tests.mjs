@@ -181,12 +181,13 @@ skip('backdrop', 'the PC has neither backdrop (no Metrolist bleed, no BitChord m
 // §5 rules 7-11: the title gate, and the find order on a fake network (Prism's ClipFinderTest FakeNet)
 await run('titleGate', (c) => V.titleSays(c.input.songTitle, c.input.videoTitle));
 await run('clipFind', async (c) => {
-  const { song, first, videos, others } = c.input;
+  const { song, first, videos, others, lyricFirst } = c.input;
   let otherSearches = 0;
   const net = {
-    findVideo: async () => first,
+    findVideo: async () => (lyricFirst ? Object.assign([first, ''], { lyric: true }) : first),
     otherVideos: async () => { otherSearches++; return others; },
-    tryVideo: async (id, own) => {
+    tryVideo: async (video, own) => {
+      const id = Array.isArray(video) ? video[0] : video;
       const v = videos[id];
       if (!own && v.type !== 'MUSIC_VIDEO_TYPE_OMV') return { why: 'NOT_OFFICIAL' };
       if (!own && V.titleSays(song.title, v.title)) return { why: 'TITLE' };
@@ -207,7 +208,10 @@ await run('chorus', (c) => V.chorusMs(c.input.lines, c.input.durationMs));
 await run('settings', (c) => c.kind === 'settingsOrder' ? CS.parseOrder(c.input.stored)
   : c.kind === 'settingsEnabled' ? CS.parseEnabled(c.input.stored)
   : CS.pickVariant(c.input.variants, c.input.cap));
-for (const g of ['songMenu', 'pickPart', 'videoChoices']) skip(g, 'the song menu (§15) is not built on the PC yet');
+// §15: the song's canvas menu
+await run('songMenu', (c) => CS.songMenu(c.input));
+await run('pickPart', (c) => CS.pickPart(c.input.startMs, c.input.others, c.input.pickMs));
+await run('videoChoices', (c) => V.videoChoices(c.input.pairing, c.input.found, c.input.rejected));
 skip('badge', 'the shimmer is CSS only (plus.css:467-482); needs bandCentre(progress, width) and chromeWhite(alpha) if the PC adopts the chrome');
 
 console.log(`\ncanvas cases: ${ok} ok, ${diff} DIFF, ${skipped} skipped`);

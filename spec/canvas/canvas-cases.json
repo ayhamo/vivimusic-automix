@@ -7253,6 +7253,162 @@
         "why": "RESTRICTED",
         "otherSearches": 1
       }
+    },
+    {
+      "name": "§15: the listener's picked video, as it is, before any search",
+      "input": {
+        "song": {
+          "title": "Pleaser",
+          "choice": {
+            "picked": "mine"
+          }
+        },
+        "first": "real",
+        "videos": {
+          "mine": {
+            "type": "MUSIC_VIDEO_TYPE_UGC",
+            "title": "Pleaser (live at the Forum)",
+            "status": "OK",
+            "still": false
+          },
+          "real": {
+            "type": "MUSIC_VIDEO_TYPE_OMV",
+            "title": "Wallows - Pleaser (Official Video)",
+            "status": "OK",
+            "still": false
+          }
+        },
+        "others": []
+      },
+      "expect": {
+        "videoId": "mine",
+        "why": null,
+        "otherSearches": 0
+      }
+    },
+    {
+      "name": "§15: a picked video that can't make a loop gives way to the search",
+      "input": {
+        "song": {
+          "title": "Pleaser",
+          "choice": {
+            "picked": "mine"
+          }
+        },
+        "first": "real",
+        "videos": {
+          "mine": {
+            "type": "MUSIC_VIDEO_TYPE_OMV",
+            "title": "Pleaser",
+            "status": "OK",
+            "still": true
+          },
+          "real": {
+            "type": "MUSIC_VIDEO_TYPE_OMV",
+            "title": "Wallows - Pleaser (Official Video)",
+            "status": "OK",
+            "still": false
+          }
+        },
+        "others": []
+      },
+      "expect": {
+        "videoId": "real",
+        "why": null,
+        "otherSearches": 0
+      }
+    },
+    {
+      "name": "§15: a pick being tried is only that video",
+      "input": {
+        "song": {
+          "title": "Pleaser",
+          "choice": {
+            "picked": "mine",
+            "only": true
+          }
+        },
+        "first": "real",
+        "videos": {
+          "mine": {
+            "type": "MUSIC_VIDEO_TYPE_OMV",
+            "title": "Pleaser",
+            "status": "OK",
+            "still": true
+          },
+          "real": {
+            "type": "MUSIC_VIDEO_TYPE_OMV",
+            "title": "Wallows - Pleaser (Official Video)",
+            "status": "OK",
+            "still": false
+          }
+        },
+        "others": []
+      },
+      "expect": {
+        "videoId": null,
+        "why": "STILL",
+        "otherSearches": 0
+      }
+    },
+    {
+      "name": "§15: a picked video turned away later is not asked",
+      "input": {
+        "song": {
+          "title": "Pleaser",
+          "choice": {
+            "picked": "mine",
+            "rejected": [
+              "mine"
+            ]
+          }
+        },
+        "first": "real",
+        "videos": {
+          "mine": {
+            "type": "MUSIC_VIDEO_TYPE_OMV",
+            "title": "Pleaser",
+            "status": "OK",
+            "still": false
+          },
+          "real": {
+            "type": "MUSIC_VIDEO_TYPE_OMV",
+            "title": "Wallows - Pleaser (Official Video)",
+            "status": "OK",
+            "still": false
+          }
+        },
+        "others": []
+      },
+      "expect": {
+        "videoId": "real",
+        "why": null,
+        "otherSearches": 0
+      }
+    },
+    {
+      "name": "§5 rule 12: no music video, the artist's lyric video as it is",
+      "input": {
+        "song": {
+          "title": "Pleaser"
+        },
+        "first": "lyric",
+        "lyricFirst": true,
+        "videos": {
+          "lyric": {
+            "type": "MUSIC_VIDEO_TYPE_UGC",
+            "title": "Wallows - Pleaser (Lyric Video)",
+            "status": "OK",
+            "still": false
+          }
+        },
+        "others": []
+      },
+      "expect": {
+        "videoId": "lyric",
+        "why": null,
+        "otherSearches": 0
+      }
     }
   ],
   "snap": [

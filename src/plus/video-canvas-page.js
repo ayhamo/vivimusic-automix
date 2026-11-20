@@ -13,6 +13,8 @@
  *        { op:'prefetch', reqId?, ids:[{ id, title, artist, album, durationSec }] }
  *        { op:'clear', reqId? }
  *        { op:'chorus', id, lines:[{ start, text }], durationSec? }   (the song's synced lyrics, for §6 rule 11)
+ *        { op:'videos', reqId, title, artist, rejected? } -> { reqId, ok, videos:[{ id, title, by }] }   (§15 rule 5)
+ *        (find also takes choice: { picked?, part?: { video, startMs, others }, rejected?, only? }, §15)
  *        { op:'bestpart', reqId, id, durationSec? } -> { reqId, ok, startMs|null, from }   (§14; when the lyrics come
  *        later, { type:'bestpart', id, startMs, from } is sent unasked)
  *        { op:'fetch', rid, ok, status, bytes, why }   (relay answer, see below)
@@ -107,7 +109,10 @@
     }
     return false;
   }
-  const never = (text, song) => has(NEVER, text, song) || (HZ.test(text) && !HZ.test(song));
+  const neverAny = (text, song) => has(NEVER, text, song) || (HZ.test(text) && !HZ.test(song));
+  /** §5 rule 12: the same, with the lyric words allowed (a lyric video by the artist, for a song with nothing else). */
+  const LYRIC_NEVER = new Set(['lyric', 'lyrics', 'letra', 'letras', 'paroles', 'testo']);
+  const neverLyricsOk = (text, song) => has(NEVER.filter((w) => !LYRIC_NEVER.has(w)), text, song) || (HZ.test(text) && !HZ.test(song));
 
   /** The title without brackets, "| ..." tails, feat. credits, video words and the artists' names. */
   function titleCore(title, names) {
@@ -145,7 +150,8 @@
    * source in brackets ("SiriusXM Session"), that recording by whoever posted it, within TIGHT_S, naming the artist.
    * A studio song takes nobody else's upload. A length of 0 is unknown.
    */
-  function pick(songTitle, artistList, durationSec, results) {
+  function pick(songTitle, artistList, durationSec, results, lyricsOk = false) {
+    const never = lyricsOk ? neverLyricsOk : neverAny;
     const names = artistList.map(norm).filter(Boolean);
     if (!norm(songTitle) || !names.length) return null;
     const song = String(songTitle).toLowerCase();
@@ -161,7 +167,7 @@
     const first = candidates.find((v) => (own(v) || byLabel(v[1], v[2], names)) && within(v, LOOSE_S)
       && !has(OTHER_TAKE, String(v[1]).toLowerCase(), song));
     if (first) return first;
-    if (!source.length) return null;
+    if (!source.length || lyricsOk) return null;
     return candidates.find((v) => {
       const words = String(v[1]).toLowerCase(), where = words + ' ' + String(v[2]).toLowerCase();
       return within(v, TIGHT_S) && dur > 0 && v[3] > 0 && names.some((n) => norm(words).includes(n))
@@ -264,6 +270,21 @@
     return null;
   }
 
+  // ═════════════════════════════ one song's canvas (Prism's song menu, canvas.md §15) ═════════════════════════════
+
+  /**
+   * The videos offered under Pick another video (§15 rule 5, Prism's musicVideoChoices and choices): the pairing first
+   * when the search found it, then the search's order, each once, at most 10; then none turned away.
+   */
+  function videoChoices(pairing, found, rejected, idOf = (x) => x) {
+    const list = Array.isArray(found) ? found : [];
+    const away = new Set(Array.isArray(rejected) ? rejected : []);
+    const seen = new Set();
+    const ordered = [...list.filter((x) => pairing != null && idOf(x) === pairing), ...list.filter((x) => pairing == null || idOf(x) !== pairing)]
+      .filter((x) => { const id = idOf(x); if (seen.has(id)) return false; seen.add(id); return true; });
+    return ordered.slice(0, 10).filter((x) => !away.has(idOf(x)));
+  }
+
   // ═════════════════════════════ the best part (Prism's BestParts, canvas.md §14) ═════════════════════════════
 
   /**
@@ -320,8 +341,16 @@
   async function findOn(net, song) {
     const idOf = (v) => (Array.isArray(v) ? v[0] : v);
     if (song && song.notASong) return { why: 'NOT_A_SONG', none: true, otherSearches: 0 };
+    // §15 rule 6: the video the listener picked, as it is, first (only it, when the pick is being tried)
+    const choice = (song && song.choice) || {};
+    const rejected = Array.isArray(choice.rejected) ? choice.rejected : [];
+    if (choice.picked && !rejected.includes(choice.picked)) {
+      const mine = await net.tryVideo([choice.picked, ''], true);
+      if (mine.ok || choice.only) return { ...mine, picked: true, otherSearches: 0 };
+    }
     const first = await net.findVideo();
     if (!first) return { why: 'NO_VIDEO', none: true, otherSearches: 0 };
+    if (first.lyric) return { ...(await net.tryVideo(first, true)), otherSearches: 0 };   // §5 rule 12
     const tried = await net.tryVideo(first, false);
     if (tried.ok || (tried.why !== 'TITLE' && tried.why !== 'NOT_OFFICIAL')) return { ...tried, otherSearches: 0 };
     let others = [];
@@ -973,7 +1002,7 @@
   const core = {
     CLIP_SEC, W, H, NEVER, OTHER_TAKE,
     norm, artists, officialChannel, titleCore, matches, searchResults, pickFormat,
-    heatmapOf, partStart, chorusMs, noFrames, pick, titleSays, findOn, snap, bestPartShows,
+    heatmapOf, partStart, chorusMs, noFrames, pick, titleSays, findOn, snap, bestPartShows, videoChoices, choiceTag,
     grid, bars, area, diff, still, windows, choose, runnersUp, judge, cropX, change, cuts, flashing, end: loopEnd, cropRect,
     storyboardPlan, parseSidx, sidxRange, readBoxes, parseInit, parseSamples, selectSamples, buildClip,
   };
@@ -1111,16 +1140,18 @@
    * videos in `next`, so it is found as Prism does: a video search, and the result pick() takes (the song's title,
    * posted by the artist or their label within 150 s of the song, or the very session the song names).
    */
-  async function findVideo(title, artist, durationSec) {
+  async function findVideo(title, artist, durationSec, not = []) {
     const names = artists(artist);
     if (!title || !String(title).trim() || !names.length) return null;
+    const all = [];
     for (const q of [title + ' ' + names[0], title + ' ' + names[0] + ' official video']) {
       const v = visitor();
       const j = await innertube('search', {
         query: q, params: VIDEOS,
         context: { client: { clientName: 'WEB_REMIX', clientVersion: cfg('INNERTUBE_CLIENT_VERSION') || '1.20251101.01.00', hl: 'en', gl: 'US', ...(v ? { visitorData: v } : {}) } },
       });
-      const found = searchResults(j);
+      const found = searchResults(j).filter((x) => !not.includes(x[0]));   // §15 rule 8: never a turned-away video
+      all.push(...found);
       const r = pick(title, names, durationSec, found);
       if (r) {
         log('found', r[0], `'${r[1]}' by ${r[2]} (${r[3]} s)`, 'for', `'${title}' / ${artist} (${durationSec || '?'} s)`, '(search', JSON.stringify(q) + ': the song\'s title, by the artist or their label or the session it names, no lyric/remix copy)');
@@ -1128,7 +1159,26 @@
       }
       log('none for', JSON.stringify(q), 'among', found.slice(0, 5).map((x) => `'${x[1]}' by ${x[2]} ${x[3]} s`).join('; ') || 'no results');
     }
+    // §5 rule 12: nothing else, so a lyric video by the artist, taken as it is
+    const lyric = pick(title, names, durationSec, all, true);
+    if (lyric) {
+      log('no music video; the lyric video', lyric[0], `'${lyric[1]}' by ${lyric[2]}`);
+      return Object.assign([lyric[0], lyric[1]], { lyric: true });
+    }
     return null;
+  }
+
+  /** §15 rule 5: the videos offered under Pick another video ({ id, title, by }), the search as found, none turned away. */
+  async function songVideos(title, artist, rejected) {
+    const names = artists(artist);
+    if (!title || !names.length) return [];
+    const v = visitor();
+    const j = await innertube('search', {
+      query: title + ' ' + names[0], params: VIDEOS,
+      context: { client: { clientName: 'WEB_REMIX', clientVersion: cfg('INNERTUBE_CLIENT_VERSION') || '1.20251101.01.00', hl: 'en', gl: 'US', ...(v ? { visitorData: v } : {}) } },
+    });
+    // signed out there is no pairing to put first (§5 rule 6)
+    return videoChoices(null, searchResults(j), rejected, (x) => x[0]).map((x) => ({ id: x[0], title: x[1], by: x[2] }));
   }
 
   /** "Most replayed" curves, 20 kept: an answer without a curve is remembered, a failed fetch is not. */
@@ -1291,7 +1341,8 @@
       query: q, params: VIDEOS,
       context: { client: { clientName: 'WEB_REMIX', clientVersion: cfg('INNERTUBE_CLIENT_VERSION') || '1.20251101.01.00', hl: 'en', gl: 'US', ...(v ? { visitorData: v } : {}) } },
     });
-    const found = searchResults(j).filter((x) => !not.includes(x[0]) && !titleSays(song.title, x[1]));
+    const away = (song.choice && song.choice.rejected) || [];
+    const found = searchResults(j).filter((x) => !not.includes(x[0]) && !away.includes(x[0]) && !titleSays(song.title, x[1]));
     const r = pick(song.title, names, song.durationSec, found);
     log('another video for', `'${song.title}':`, r ? r[0] + ` '${r[1]}'` : 'none of', found.slice(0, 5).map((x) => `'${x[1]}' ${x[0]}`).join('; '));
     return r ? [[r[0], r[1]]] : [];
@@ -1358,7 +1409,7 @@
   async function clip(song) {
     const t0 = performance.now();
     const found = await findOn({
-      findVideo: () => findVideo(song.title, song.artist, song.durationSec),
+      findVideo: () => findVideo(song.title, song.artist, song.durationSec, (song.choice && song.choice.rejected) || []),
       otherVideos: (not) => otherVideos(song, not),
       tryVideo: (v, own) => tryVideo(song, v, own),
     }, song);
@@ -1375,7 +1426,14 @@
       log(video[0], `'${video[1]}'`, 'full video', f.height + 'p itag ' + f.itag + ',', Math.round(out.bytes.length / 1048576), 'MB, ready', Math.round(performance.now() - t0), 'ms after the lookup');
       return { bytes: out.bytes, meta: { videoId: video[0], videoTitle: video[1], width: Number(f.width) || c.init.width, height: Number(f.height) || c.init.height, startSec: 0, lenSec: Math.round(out.lenSec * 1000) / 1000, full: true } };
     }
+    // §15 rule 4: the part the listener picked, while its video is the one found
+    const part = song.choice && song.choice.part;
+    if (part && part.video === video[0] && Number.isFinite(part.startMs)) { start = part.startMs / 1000; why = 'the listener\'s part'; }
     start = Math.max(0, Math.min(start, dur - CLIP_SEC));
+    // §15 rule 3: the part playing and up to 4 others
+    const startMs = Math.round(start * 1000);
+    const otherParts = part && part.video === video[0] && Array.isArray(part.others) ? part.others.slice(0, 4)
+      : wins == null ? [] : runnersUp(wins, startMs).slice(0, 4);
     log(video[0], `'${video[1]}'`, f.height + 'p itag ' + f.itag + ', part at', f1(start), 's of', Math.trunc(dur), 's (' + why + '), found in', Math.round(performance.now() - t0), 'ms');
 
     // Prism's second look, on real frames (a small copy of the same seconds): end on a cut, no flashing
@@ -1406,6 +1464,7 @@
     const meta = {
       videoId: video[0], videoTitle: video[1], width, height,
       startSec: Math.round(out.fromSec * 1000) / 1000, lenSec: Math.round(out.lenSec * 1000) / 1000,
+      partMs: startMs, parts: otherParts, picked: !!found.picked,
       ...(judged ? { crop: cropRect(crop, b, width, height), cropX: crop, bars: b } : {}),
     };
     log(Math.round(out.bytes.length / 1024), 'KB loop', f1(out.fromSec), '-', f1(out.fromSec + out.lenSec), 's (' + c.picked.length, 'frames,', Math.round(c.fetched / 1024), 'KB fetched) ready',
@@ -1428,6 +1487,15 @@
     if (d && d.mode != null) pref = { ...pref, full: d.mode === 'full' };
   }
   const cacheId = (id) => id + '|' + pref.want + (pref.full ? '|full' : '');
+  /** A song's choices as part of its cache id (§15 rule 9): '' for none, so the plain lookup keeps its entry. */
+  function choiceTag(c) {
+    if (!c) return '';
+    const parts = [c.picked || '', c.part && c.part.video ? c.part.video + '@' + c.part.startMs : '', (c.rejected || []).slice().sort().join(',')];
+    if (!parts.some(Boolean)) return '';
+    let h = 0;
+    for (const ch of parts.join('|')) h = (Math.imul(h, 31) + ch.charCodeAt(0)) | 0;
+    return '|c' + (h >>> 0).toString(36);
+  }
   const mem = new Map();          // song id -> { blobUrl, meta }
   let lastShown = '';
 
@@ -1559,7 +1627,7 @@
       job.started = true;
       try {
         const got = await clip(job.song);
-        if (got.meta || got.none) await save(job.song.ck, got);
+        if (got.meta || (got.none && !(job.song.choice && job.song.choice.only))) await save(job.song.ck, got);
         job.resolve(got);
       } catch (e) {
         log('failed for', `'${job.song.title}':`, (e && e.message) || e);
@@ -1626,8 +1694,9 @@
     setPref(d);
     const vid = String(d.id || '');
     if (!vid || !d.title) return { reqId: d.reqId, ok: false, why: 'no song id or title' };
-    const id = cacheId(vid);   // the cache's id for this song at this quality and mode
-    const song = { id: vid, ck: id, title: String(d.title), artist: String(d.artist || ''), album: d.album || '', durationSec: Number(d.durationSec) || playingLength(vid), notASong: notASongNow(vid) };
+    const choice = d.choice && typeof d.choice === 'object' ? d.choice : null;
+    const id = cacheId(vid) + choiceTag(choice);   // the cache's id for this song at this quality and mode, and its choices (§15 rule 9)
+    const song = { id: vid, ck: id, choice, title: String(d.title), artist: String(d.artist || ''), album: d.album || '', durationSec: Number(d.durationSec) || playingLength(vid), notASong: notASongNow(vid) };
     const m = mem.get(id);
     if (m) {
       mem.delete(id); mem.set(id, m);
@@ -1636,7 +1705,7 @@
       return answer(d.reqId, m, 'cache');
     }
     const saved = await lookup(id);
-    if (saved && saved.miss) {
+    if (saved && saved.miss && !(choice && choice.only)) {
       log('cache hit: no video for', `'${song.title}'`, '(saved', Math.round((Date.now() - saved.at) / 60000), 'min ago)');
       return { reqId: d.reqId, ok: false, none: true, why: 'no music video (saved miss: ' + (saved.why || 'none') + ')' };
     }
@@ -1700,6 +1769,7 @@
       // (songSec: the song's length, read while it plays that song; content.js passes it on to the Spotify match)
       else if (d.op === 'find') { const songSec = Number(d.durationSec) || playingLength(String(d.id || '')); say({ ...(await find(d)), songSec }); }
       else if (d.op === 'chorus') { setChorus(String(d.id || ''), d.lines, Number(d.durationSec) || playingLength(String(d.id || ''))); }
+      else if (d.op === 'videos') say({ reqId: d.reqId, ok: true, videos: await songVideos(String(d.title || ''), String(d.artist || ''), Array.isArray(d.rejected) ? d.rejected : []) });
       else if (d.op === 'bestpart') { bestAsked = String(d.id || ''); say({ reqId: d.reqId, ok: true, ...(await bestPartOf(bestAsked, d.durationSec, true)) }); }
       else if (d.op === 'length') say({ reqId: d.reqId, ok: true, songSec: playingLength(String(d.id || '')) });
       else if (d.op === 'prefetch') { prefetch(d.ids); say({ reqId: d.reqId, ok: true }); }

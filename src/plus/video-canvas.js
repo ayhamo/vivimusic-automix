@@ -43,6 +43,42 @@
 
   const none = new Set();   // songs with no music video (the page keeps the clips themselves)
 
+  // one song's canvas (canvas.md §15): the listener's choices per song, kept in storage.local viviCanvasChoices
+  // ({ loopOff, spotifyOff, appleOff, use, picked, part: { video, startMs, others }, rejected }), and what the
+  // last lookup of each song gave, for the menu (src/plus/canvas-menu.js)
+  const CHOICES = 'viviCanvasChoices';
+  let choices = {};
+  const answers = new Map();   // song id -> { ok, videoId, videoTitle, partMs, parts, picked }
+  chrome.storage.local.get({ [CHOICES]: {} }).then((s) => { choices = s[CHOICES] || {}; }).catch(() => {});
+  chrome.storage.onChanged.addListener((ch, area) => {
+    if (area !== 'local' || !ch[CHOICES]) return;
+    choices = ch[CHOICES].newValue || {};
+    none.clear();
+  });
+  const lookupChoice = (c) => (c && (c.picked || c.part || (c.rejected && c.rejected.length))
+    ? { picked: c.picked || null, part: c.part || null, rejected: c.rejected || [] } : null);
+  window.__viviCanvasSongs = {
+    choice: (id) => ({ ...(choices[id] || {}) }),
+    answer: (id) => answers.get(id) || null,
+    videoOn: () => enabled,
+    /** Saves [next] as the song's choices (an empty one is dropped), oldest first out past 2000 songs. */
+    save: async (id, next) => {
+      const all = { ...choices };
+      delete all[id];
+      const keep = Object.fromEntries(Object.entries(next || {}).filter(([, v]) => v != null && v !== false && !(Array.isArray(v) && !v.length)));
+      if (Object.keys(keep).length) all[id] = keep;
+      const keys = Object.keys(all);
+      if (keys.length > 2000) keys.slice(0, keys.length - 2000).forEach((k) => delete all[k]);
+      choices = all;
+      none.delete(id);
+      await chrome.storage.local.set({ [CHOICES]: all });
+    },
+    /** A picked video tried on its own (§15 rule 6): the page's answer, nothing saved when it fails. */
+    tryPick: (track, videoId) => ask({ op: 'find', id: track.videoId, title: track.song, artist: track.artist || '', album: track.album || '', quality, mode,
+      choice: { rejected: ((choices[track.videoId] || {}).rejected || []).filter((x) => x !== videoId), picked: videoId, part: null, only: true } }, 90000),
+    videos: (track) => ask({ op: 'videos', title: track.song, artist: track.artist || '', rejected: (choices[track.videoId] || {}).rejected || [] }, 20000),
+  };
+
   // on while 'video' is among the sources on (canvas.md §13, src/plus/canvas-settings.js); a change
   // to the sources, the order, the quality or the mode forgets the "no video" marks (rule 10)
   const CS = globalThis.__viviCanvasSettings;
@@ -96,13 +132,15 @@
   // which = 'spotify': only the song's length, for the Spotify match (the video comes later in the order)
   window.__viviVideoCanvas = async (track, which) => {
     if (!track?.videoId || !track.song) return null;
-    if (!enabled || which === 'spotify' || none.has(track.videoId)) {
+    if (!enabled || which === 'spotify' || none.has(track.videoId) || choices[track.videoId]?.loopOff) {
       // no lookup, but the Spotify match still gets the song's length (the player's, by id)
       const r = await ask({ op: 'length', id: track.videoId }, 2000);   // (a read, never a download)
       if (r?.songSec > 0) track.lengthSec = r.songSec;
       return null;
     }
-    const r = await ask({ op: 'find', id: track.videoId, title: track.song, artist: track.artist || '', album: track.album || '', quality, mode });
+    const r = await ask({ op: 'find', id: track.videoId, title: track.song, artist: track.artist || '', album: track.album || '', quality, mode, choice: lookupChoice(choices[track.videoId]) });
+    answers.set(track.videoId, r?.ok ? { ok: true, videoId: r.videoId, videoTitle: r.videoTitle, partMs: r.partMs, parts: r.parts || [], picked: !!r.picked } : { ok: false });
+    if (answers.size > 50) answers.delete(answers.keys().next().value);
     // the song's length by its id (the player's, not a <video> that may still hold the last song): for the Spotify match
     if (r?.songSec > 0) track.lengthSec = r.songSec;
     const url = r?.ok && isOwnBlob(r.blobUrl) ? r.blobUrl : null;

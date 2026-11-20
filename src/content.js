@@ -2998,6 +2998,7 @@
 
   VP.bind?.({ log, warn, getVideoEl, getCurrentTrack, isMainPlayerPageActive, trackKey: () => currentTrackKey, lastfm: () => lastfmSettings, lastfmStartedAt: () => lastfmStartedAt }); // vivi+ hook: internals for src/plus/content-plus.js, starts its timers
 
+  VP.reCheckCanvas = () => { const t = getCurrentTrack(); fadeOutCurrentOverlay(); ensureNativeArtworkVisible(); currentTrackKey = null; spotifyCanvasRequestKey = null; currentSpotifyCanvasUrl = null; if (t) handleTrackChange(t); }; // vivi+ hook: §15 song canvas menu
   async function handleTrackChange(track, { recover = false } = {}) {
     const key = `${track.artist}—${track.song}`;
     // recover = re-render the Canvas for the song that is already current,

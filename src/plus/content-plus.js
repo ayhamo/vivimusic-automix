@@ -243,9 +243,13 @@
   const CS = globalThis.__viviCanvasSettings;
   let canvasSet = CS ? CS.read({}) : { order: ['video', 'spotify', 'apple'], on: ['video', 'spotify', 'apple'] };
   P.sourceOn = (n) => canvasSet.on.includes(n);
-  P.canvasOrder = CS && ((attempts, canvasOn, appleOn) => canvasSet.order.map((n) => [
-    n, (n === 'apple' ? appleOn : canvasOn) && canvasSet.on.includes(n), attempts[n],
-  ]));
+  P.canvasOrder = CS && ((attempts, canvasOn, appleOn) => {
+    // one song's canvas (canvas.md §15): its Spotify / Animated cover switches and its Use come first
+    const song = window.__viviCanvasSongs?.choice(new URLSearchParams(location.search).get('v') || '') || {};
+    const off = { video: song.loopOff, spotify: song.spotifyOff, apple: song.appleOff };
+    const order = song.use && canvasSet.order.includes(song.use) ? [song.use, ...canvasSet.order.filter((n) => n !== song.use)] : canvasSet.order;
+    return order.map((n) => [n, (n === 'apple' ? appleOn : canvasOn) && canvasSet.on.includes(n) && !off[n], attempts[n]]);
+  });
 
   // Settings message: returns true when the Canvas must be re-checked.
   P.canvasSettings = (msg) => {

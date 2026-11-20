@@ -61,6 +61,27 @@
     return best >= 0 ? best : small;
   }
 
+  // ── one song's canvas (canvas.md §15): pure, for src/plus/canvas-menu.js ──
+
+  /**
+   * Which of the music video's rows the song's menu shows (canvas.md §15 rules 1, 3, 5, 8, Prism's CanvasControls). s: { canvasOn,
+   * useVideos, isSong, hasLoop, loopOff, loopShows }.
+   */
+  function songMenu(s) {
+    const videos = !!(s && s.canvasOn && s.useVideos && s.isSong);
+    const shows = !!(s && s.loopShows && !s.loopOff);
+    return { canvasSwitch: videos && !!(s.hasLoop || s.loopOff), pickVideo: videos && !s.loopOff, pickPart: shows, notThisVideo: shows };
+  }
+
+  /** A part picked (§15 rule 4, Prism's ClipRepository.pickPart): it plays, and the part it was takes its place among the others. */
+  function pickPart(startMs, others, pickMs) {
+    const list = Array.isArray(others) ? others : [];
+    if (pickMs === startMs) return { startMs, others: list.slice() };
+    const at = list.indexOf(pickMs);
+    const moved = at >= 0 ? list.map((x, i) => (i === at ? startMs : x)) : [startMs, ...list];
+    return { startMs: pickMs, others: [...new Set(moved.filter((x) => x !== pickMs))] };
+  }
+
   // the stored values, read with their defaults
   function read(stored = {}) {
     const g = (k) => (stored[k] ?? KEYS[k]);
@@ -73,7 +94,7 @@
     };
   }
 
-  const api = { SOURCES, KEYS, COVER_QUALITIES, VIDEO_QUALITIES, parseOrder, parseEnabled, storeEnabled, pickVariant, capOf, read };
+  const api = { SOURCES, KEYS, COVER_QUALITIES, VIDEO_QUALITIES, parseOrder, parseEnabled, storeEnabled, pickVariant, capOf, read, songMenu, pickPart };
   globalThis.__viviCanvasSettings = api;
   if (typeof module === 'object' && module.exports) module.exports = api;
 })();
