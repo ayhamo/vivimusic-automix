@@ -347,9 +347,33 @@
   // the scrollbar dragged with the mouse
   document.addEventListener('scroll', (e) => { if (down && inLyrics(e.target)) pause(); }, { capture: true, passive: true });
 
+  // ── lyrics.md §5.2: a duet's singers on their sides (setting lyricsDuetSides, on by default) ──
+  let duetSides = true, sidesFor = null, sidesOf = [];
+  try {
+    chrome.storage.local.get({ lyricsDuetSides: true }).then((s) => { duetSides = s.lyricsDuetSides !== false; }).catch(() => {});
+    chrome.storage.onChanged.addListener((ch, area) => { if (area === 'local' && ch.lyricsDuetSides) { duetSides = ch.lyricsDuetSides.newValue !== false; sidesFor = null; } });
+  } catch { /* sides stay on */ }
+  const sideCss = document.createElement('style');
+  sideCss.textContent = '.vivi-lyrics-line.vivi-lyrics-side-left{text-align:left!important;margin-right:auto;transform-origin:left center}'
+    + '.vivi-lyrics-line.vivi-lyrics-side-right{text-align:right!important;margin-left:auto;transform-origin:right center}'
+    + '.vivi-lyrics-line.vivi-lyrics-side-center{text-align:center!important;transform-origin:center}';
+  (document.head || document.documentElement).append(sideCss);
+  function side(lineEl, i, result) {
+    const lines = result && result.lines;
+    if (!RULES || !Array.isArray(lines) || !lines.some((l) => l && l.agent)) return;   // no singers named: the view's own alignment
+    if (sidesFor !== lines) {
+      const types = {};
+      for (const l of lines) if (l && l.agent && l.agentType) types[l.agent] = l.agentType;
+      sidesOf = RULES.sides(lines.map((l) => (l && l.agent) || null), types, duetSides);
+      sidesFor = lines;
+    }
+    const a = sidesOf[i];
+    if (a) lineEl.classList.add('vivi-lyrics-side-' + a);
+  }
+
   plus.lyricsUi = {
     tabByPosition, onUserTabClick, makeRefreshIcon, makeRefetchTabButton, syncRefetchTabButton,
     fillPos, markRtl, songSec, holdTrack, takeDuration, fillDuration, recheckDuration, bind, activeLine,
-    globalOffset, songOffset, offsetChanged, extendOffsetPanel, followPaused,
+    globalOffset, songOffset, offsetChanged, extendOffsetPanel, followPaused, side,
   };
 })();

@@ -266,5 +266,20 @@
     api.cleanArtistForLyrics = cleanArtistForLyrics;
   }
 
-  plus.lyrics = { extendKeys, cleanTrack, addProviders, fallback, bind, cleanTitleForLyrics, cleanArtistForLyrics };
+  /**
+   * A TTML line's singer (lyrics.md §5.1, Metrolist's BetterLyricsProvider): ttm:agent on the <p>, else inherited from
+   * its <div>; its type from head/metadata ttm:agent (person, group, other). {} when the line names none.
+   */
+  function agentOf(p, doc) {
+    try {
+      let id = p.getAttribute('ttm:agent');
+      for (let el = p.parentElement; !id && el; el = el.parentElement) if (el.tagName.toLowerCase() === 'div') id = el.getAttribute('ttm:agent');
+      if (!id) return {};
+      let type = null;
+      for (const a of doc.getElementsByTagName('ttm:agent')) if (a.getAttribute('xml:id') === id) { type = a.getAttribute('type') || null; break; }
+      return { agent: id, agentType: type };
+    } catch { return {}; }
+  }
+
+  plus.lyrics = { extendKeys, cleanTrack, addProviders, fallback, bind, cleanTitleForLyrics, cleanArtistForLyrics, agentOf };
 })();

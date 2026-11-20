@@ -54,7 +54,35 @@
     return { offset, lyrics, seekTo: Math.max(0, (lyricMs ?? lyrics) - offset) };
   }
 
-  const api = { LEAD_MS, activeLines, offsetOf };
+  /**
+   * The sides of a duet (§5.2, Metrolist's assignLineAlignments, the view's alignment centre): ids per line (null: no
+   * singer), types { id: 'person' | 'group' | 'other' } (else from the id: v1000 / g… a group, v2000 / o… other),
+   * respect: the sides setting. Answers 'left' | 'right' | 'center' per line.
+   */
+  function sides(ids, types = {}, respect = true) {
+    const out = [];
+    let left = true, last = null, right = 0, total = 0;
+    for (const id of ids) {
+      let a = 'center';
+      if (id != null) {
+        const t = types[id];
+        const type = t === 'group' ? 'group' : t === 'other' ? 'other' : t ? 'person'
+          : id === 'v1000' || id.startsWith('g') ? 'group' : id === 'v2000' || id.startsWith('o') ? 'other' : 'person';
+        if (type !== 'group' && respect) {
+          if (last == null) left = type !== 'other';
+          else if (id !== last) left = !left;
+          last = id;
+          a = left ? 'left' : 'right';
+        }
+      }
+      if (a !== 'center') { total++; if (a === 'right') right++; }
+      out.push(a);
+    }
+    if (respect && total > 0 && right / total >= 0.85) return out.map((a) => (a === 'left' ? 'right' : a === 'right' ? 'left' : a));
+    return out;
+  }
+
+  const api = { LEAD_MS, activeLines, offsetOf, sides };
   globalThis.__viviLyricsRules = api;
   if (typeof module === 'object' && module.exports) module.exports = api;
 })();

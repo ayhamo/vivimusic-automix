@@ -1294,6 +1294,7 @@
       lineEl.dataset.index = String(i);
 
       populateLine(lineEl, line, i, result, romanView);
+      VP.side(lineEl, i, result); // vivi+ hook: duet sides (lyrics.md §5)
       if (result.mode !== 'plain') {
         lineEl.dataset.start = String(line.start);
         lineEl.dataset.end = String(line.end);

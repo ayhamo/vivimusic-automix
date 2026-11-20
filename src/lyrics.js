@@ -330,7 +330,7 @@
         // Line-timed TTML: no timed spans, just the <p> text.
         const text = (p.textContent || '').replace(/\s+/g, ' ').trim();
         if (!text || lineStartAttr == null) return;
-        lines.push({ start: lineStartAttr, end: lineEndAttr ?? lineStartAttr + 5000, text });
+        lines.push({ start: lineStartAttr, end: lineEndAttr ?? lineStartAttr + 5000, text, ...window.__viviPlus?.lyrics?.agentOf?.(p, doc) }); // vivi+ hook: the singer (lyrics.md §5)
         return;
       }
       const words = buildWordsFromParts(usable);
@@ -344,6 +344,7 @@
         end,
         words,
         text: words.map((w) => w.text + (w.joined ? '' : ' ')).join('').trim(),
+        ...window.__viviPlus?.lyrics?.agentOf?.(p, doc), // vivi+ hook: the singer (lyrics.md §5)
       });
     });
     if (lines.length === 0) return null;

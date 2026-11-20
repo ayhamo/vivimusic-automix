@@ -89,8 +89,9 @@ for (const c of cases.sides) check('sides', c.name, sides(c.input.lines, c.input
 for (const c of cases.gaps) check('gaps', c.name, gaps(c.input.lines), c.expect);
 for (const c of cases.activeLines) check('activeLines', c.name, activeLines(c.input.lines, c.input.position, c.input.wordSynced, c.input.leadMs), c.expect);
 // the PC's own (src/plus/lyrics-rules.js)
+for (const c of cases.sides) check('sides (PC)', c.name, PC.sides(c.input.lines, c.input.agents, c.input.respect), c.expect);
 for (const c of cases.offset) check('offset (PC)', c.name, PC.offsetOf(c.input.song, c.input.global, c.input.player, c.input.lyricTime), c.expect);
 for (const c of cases.activeLines) check('activeLines (PC)', c.name, PC.activeLines(c.input.lines, c.input.position, { wordSynced: c.input.wordSynced, leadMs: c.input.leadMs }), c.expect);
-console.log('skip  the PC: no pure currentLine, sides or gaps functions yet (lyrics.md §12)');
+console.log('skip  the PC: no pure currentLine or gaps functions yet (lyrics.md §12)');
 console.log(`\nlyrics cases: ${ok} ok, ${failed} DIFF`);
 process.exit(failed ? 1 : 0);
