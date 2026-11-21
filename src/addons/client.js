@@ -386,20 +386,23 @@
     // Just before the song is needed: /stream and the probe, the addons raced (§8.1.4), each with
     // its own rows in its own order. -> { addon, row, stream, tried } or { none, tried }
     function open(found, target, opt = {}, tried = []) {
-      return race(found.map(({ addon, rows }) => (tr) => openOne(addon, rows, target, opt, tr)), tried);
+      return race(found.map(({ addon, rows }) => (tr, over) => openOne(addon, rows, target, opt, tr, over)), tried);
     }
     // one addon's rows, in order, until one opens and passes the probe -> { addon, row, stream } or null
-    async function openOne(addon, rows, target, { slackSec = 5, accept = null } = {}, tried) {
+    // over(): the race is decided (§8.1.4): no further /stream call or probe
+    async function openOne(addon, rows, target, { slackSec = 5, accept = null } = {}, tried, over = () => false) {
       const t0 = now();
       try {
         const man = await manifest(addon.base);
         for (const row of rows) {
+          if (over()) return null;
           const s = await stream(addon, row, man).catch((e) => (e.kind === 'miss' ? { miss: e.message } : Promise.reject(e)));
           if (s.miss) { tried.push({ addon: addon.host, row: row.id, why: s.miss }); continue; }
           if (s.transport !== 'file') { tried.push({ addon: addon.host, row: row.id, why: s.transport + ' (not played yet)' }); continue; }
           // the caller's own bar (the lossy floor, the upgrade pass: protocol.md 8.2.1): true, or why not
           const want = accept ? accept(s) : true;
           if (want !== true) { tried.push({ addon: addon.host, row: row.id, why: want || 'not wanted' }); continue; }
+          if (over()) return null;
           const p = await probe(s.url, { ...row, tier: s.tier ?? row.tier, kbps: s.bitrate ?? row.kbps }, target.durationSec, slackSec, s.headers);
           if (!p.ok) { tried.push({ addon: addon.host, row: row.id, why: p.why }); continue; }
           note(addon.base, true, 'ok', now() - t0);
@@ -414,7 +417,8 @@
     }
 
     // §8.1.4: every lane at once; the first playable answer wins, and of answers ready in the same
-    // turn the higher-ranked addon's. Lanes still running go on (their answers are cached, §6).
+    // turn the higher-ranked addon's. Then the losers stop: a lane still searching never sends its
+    // /stream (each /stream can add the song to the user's debrid account); one already sent runs out.
     // `tried` gets each lane's misses in rank order, as far as they have got.
     function race(lanes, tried) {
       const own = lanes.map(() => []), got = lanes.map(() => undefined);
@@ -429,7 +433,8 @@
           resolve(i < 0 ? { none: 'no addon has it', tried } : { ...got[i], tried });
         };
         if (!left) decide();
-        lanes.forEach((lane, i) => lane(own[i]).catch(() => null).then((r) => {
+        const over = () => settled;
+        lanes.forEach((lane, i) => lane(own[i], over).catch(() => null).then((r) => {
           got[i] = r || null; left--;
           if (r?.addon && !waiting) { waiting = true; sleep(0).then(decide); } else if (!left) decide();
         }));
@@ -446,7 +451,7 @@
     // The addons raced end to end (each its search, then its rows); the first playable answer,
     // the higher-ranked of those ready together (§8.1.4).
     function resolve(target, addons, opt = {}) {
-      return race(addons.map((a) => async (tr) => { const f = await findOne(a, target, opt, tr); return f && openOne(f.addon, f.rows, target, opt, tr); }), []);
+      return race(addons.map((a) => async (tr, over) => { const f = await findOne(a, target, opt, tr); return f && !over() ? openOne(f.addon, f.rows, target, opt, tr, over) : null; }), []);
     }
 
     // protocol.md 8.1.7, "Upgrade quality": a song's search answers (empty ones too) and the /stream

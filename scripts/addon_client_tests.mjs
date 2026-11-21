@@ -218,6 +218,16 @@ const raceAddon = (name, { searchMs = 0, streamMs = 0, rows = [row('r1')] } = {}
   check('race: find lists the addons in priority order, the first answering last', f.found.map((x) => x.addon.base), [base('raceordA'), base('raceordB')]);
 }
 {
+  // once one addon wins, a loser still searching never sends its /stream (it would add the song to the debrid account)
+  const slow = raceAddon('racelateA', { searchMs: 300 }), fast = raceAddon('racelateB');
+  let calls = 0;
+  const st = behaviour.racelateA.stream;
+  behaviour.racelateA.stream = (...a) => { calls++; return st(...a); };
+  const got = await fresh().resolve(song, [slow, fast]);
+  await new Promise((r) => setTimeout(r, 500));
+  check('race: the losers stop: no /stream from an addon still searching when one won', [got.stream?.url, calls], [fileUrl('racelateB', 'r1'), 0]);
+}
+{
   const none1 = raceAddon('racenoneA', { searchMs: 200, rows: [] }), none2 = raceAddon('racenoneB', { rows: [row('x', { title: 'Something Else', artist: 'Nobody' })] });
   const got = await fresh().resolve(song, [none1, none2]);
   check('race: no addon has it: every miss, in rank order', [got.none, got.tried.map((x) => x.why)], ['no addon has it', ['no match', 'no match']]);
