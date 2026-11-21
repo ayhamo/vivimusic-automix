@@ -36,6 +36,24 @@ for (const c of cases.readStream) {
   check('readStream: ' + c.name, Object.fromEntries(Object.keys(c.expect).map((k) => [k, s[k]])), c.expect);
 }
 for (const c of cases.loudnessGain) check('loudnessGain: ' + c.name, P.loudnessGainDb(c.audioConfig), c.expectDb);
+// offset-map.md, Level [phone only]: a reference of the phone's OffsetFit.windowGainDb, built from the group's _about
+function windowLevelDb(c) {
+  const N = 4000, kYt = 10 ** (c.ytDb / 20), kRel = 10 ** ((c.fileDb - c.ytDb) / 20);
+  const yt = Float64Array.from({ length: N }, (_, i) => kYt * (0.05 + 0.04 * Math.sin(i / 37)));
+  const file = Float64Array.from({ length: N }, (_, i) => {
+    const j = Math.round(i - c.offsetSec / 0.01);
+    return j < 0 || j >= N || i * 0.01 < (c.fileSilentSec || 0) ? 0 : yt[j] * kRel;
+  });
+  let a = 0, b = 0, n = 0;
+  for (let i = Math.max(0, Math.ceil(c.fromSec / 0.01)); i < Math.min(N, Math.floor(c.untilSec / 0.01)); i++) {
+    const j = Math.round(i - c.offsetSec / 0.01);
+    if (j < 0 || j >= N || yt[j] < 1e-3 || file[i] < 1e-3) continue;
+    a += yt[j] ** 2; b += file[i] ** 2; n++;
+  }
+  const g = n * 0.01 < 2 ? 0 : 10 * Math.log10(a / b);
+  return Math.round(Math.min(g, 6) * 1e4) / 1e4 + 0;
+}
+for (const c of cases.windowLevel.filter((x) => x.name)) check('windowLevel: ' + c.name, windowLevelDb(c.input), c.expectDb);
 for (const c of cases.qualityRank) check('qualityRank: ' + c.name, P.qualityRank(c.stream), c.expect);
 for (const c of cases.floorVerdict) check('floor: ' + c.name, P.floorVerdict(c.stream, c.ytKbps), c.expect);
 for (const c of cases.upgradeWanted) check('upgrade: ' + c.name, P.upgradeWanted(c.stream, c.tier, c.cached), c.expect);

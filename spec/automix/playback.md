@@ -30,3 +30,21 @@ must still have 0 cuts, and the platform logs it.
   count).
 
 Each platform reports its numbers against this table; a miss is a bug on that platform.
+
+## The queue during a mix [all]
+
+Rules for any app with Automix, not sound targets. Phone: Vivimusic 4370de0. The PC hasn't been
+checked against them yet.
+
+1. **Going back aborts the mix.** Once the queue has named the incoming song, the outgoing song named
+   again is the listener going back: the mix stops there. (Before the incoming song is named, the
+   outgoing song showing up isn't "another song" and the mix carries on.) On the phone a carried-on
+   mix's forced hand-over had seeked the outgoing song 23 s off, to the deck's place in the incoming
+   one.
+2. **A song left "done" is planned again.** A song whose mix began and then ended, or was cut short
+   (rule 1), is planned again when it plays again:
+   - from more than 5 s before its mix point (the take-over);
+   - with the same length, within 0.5 s, so YT's queue still naming it just after the mix moved on
+     isn't taken for that.
+
+   Otherwise it stayed "done", and the overview showed "Planning the mix…" for good.

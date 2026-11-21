@@ -49,7 +49,16 @@ Result: `{ offsetSec, score, coarseScore, checkSec, checkScore }`, or `{ none: '
 
 ## Level
 
-**[phone only], and BitChord:** YouTube's `loudnessDb` for the song, on whichever copy plays: the addon copy gets the same normalisation YouTube's player gives its own copy. No measured gain. On the phone it is a sample gain, not the element volume.
+**[phone only]:** measured on the window against YouTube's copy as it is heard. YT Music's player on the phone plays its own copy at volume 1.000, with no normalisation, so a cut by `loudnessDb` left the lossless file that much under YouTube's copy (the S21 FE, 2026-11-21: Esse Nao E Meu Fim stepped down 7.3 dB at the take-over, its `loudnessDb` 7.49). Phone: Vivimusic 22d27ea, `OffsetFit.windowGainDb`.
+
+- `gainDb = 10·log10(Σyt² / Σfile²)` over the 12 s fit window (the file's own seconds), on the two 10 ms RMS envelopes: file frame `i` is paired with YouTube's frame `j = round(i − offsetSec / 0.01)` (`fileTime = youtubeTime + offsetSec`, the fitted offset). A pair is left out when either frame is under 1e-3 (−60 dBFS), or `j` is outside YouTube's envelope.
+- Under 2 s of sound (fewer than 200 pairs counted) the gain is 0 dB.
+- Cuts are unlimited. Boosts are capped at +6 dB and play under the phone's limiter.
+- `loudnessDb` is logged beside the gain, never used. Measured on the device: five songs from −0.26 to +0.67 dB.
+- The BitChord and PC rules below don't apply to the phone.
+- **Cases:** `pick-cases.json`, group `windowLevel` (7; checked on the PC by a reference in `scripts/addon_pick_tests.mjs`).
+
+**BitChord:** YouTube's `loudnessDb` for the song, on whichever copy plays: the addon copy gets the same normalisation YouTube's player gives its own copy. No measured gain. (The phone used this rule until 22d27ea.)
 
 - **Cut only.** A gain of −`loudnessDb` dB when `loudnessDb` is positive, 0 dB when it is zero, negative or missing. A quiet song is never boosted, because YouTube's player doesn't boost it, and the aim is the level YouTube's own copy would play at. A cut can't clip, so no peak guard is needed. (BitChord applied −`loudnessDb` both ways, clamped, so a negative value boosted. It follows this rule now.)
 - **The value:** `loudnessDb`. In the JSON player response it is `playerConfig.audioConfig.loudnessDb`, and the same value is on each audio format (`streamingData.adaptiveFormats[].loudnessDb`). On the phone it is field 47 (a float) of the song's audio format in the protobuf player response (`streamingData` 4 → `adaptiveFormats` 3 → 47; 53 is `perceptualLoudnessDb`). Every audio format carries the same pair; the playback-config extension 55405814 holds only the perceptual value and the −14 target. Never `perceptualLoudnessDb`: with only that field the gain is 0 dB. Measured on the PC (2026-11-20, 3 songs' watch pages): the JSON audioConfig value equals every audio format's (`enablePerFormatLoudness` is true); one song differed by 0.004 dB, where audioConfig carried itag 140's 5.7441 and the Opus formats 5.74. Where a client has the playing format, its value is the one to use. `perceptualLoudnessDb` was `loudnessDb` − 14 (the `loudnessTargetLkfs`) on all three.

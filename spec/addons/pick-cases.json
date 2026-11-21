@@ -1708,6 +1708,16 @@
   { "name": "only perceptualLoudnessDb: not used, nothing", "audioConfig": { "perceptualLoudnessDb": 3.1 }, "expectDb": 0 },
   { "name": "both: loudnessDb, never perceptualLoudnessDb", "audioConfig": { "loudnessDb": 2, "perceptualLoudnessDb": -9.5 }, "expectDb": -2 }
  ],
+ "windowLevel": [
+  {"_about": "offset-map.md, Level [phone only]. Envelopes are built, not stored: 40 s of 10 ms frames, frame i of YouTube's copy = 10^(ytDb/20)·(0.05 + 0.04·sin(i/37)); the file's frame i is YouTube's frame round(i − offsetSec/0.01) times 10^((fileDb − ytDb)/20), 0 where that frame is outside YouTube's envelope or i·0.01 < fileSilentSec. expectDb is the gain played: the measured gain, 0 under 2 s of sound, at most +6."},
+  {"name": "the same master: 0 dB", "input": {"ytDb": 0, "fileDb": 0, "offsetSec": 0, "fromSec": 0, "untilSec": 12}, "expectDb": 0},
+  {"name": "the file 7.5 dB under YouTube's copy: the boost is capped at +6 dB", "input": {"ytDb": 0, "fileDb": -7.5, "offsetSec": 0, "fromSec": 0, "untilSec": 12}, "expectDb": 6},
+  {"name": "the file 3 dB over YouTube's copy: cut by 3 dB", "input": {"ytDb": 0, "fileDb": 3, "offsetSec": 0, "fromSec": 0, "untilSec": 12}, "expectDb": -3},
+  {"name": "the file 12 dB over: cuts are unlimited", "input": {"ytDb": 0, "fileDb": 12, "offsetSec": 0, "fromSec": 0, "untilSec": 12}, "expectDb": -12},
+  {"name": "the same seconds through the offset: the file 1.5 s later and 2 dB quieter, window 5-17 s", "input": {"ytDb": 0, "fileDb": -2, "offsetSec": 1.5, "fromSec": 5, "untilSec": 17}, "expectDb": 2},
+  {"name": "silent frames are left out: the file's first 6 s silent, 4 dB quieter", "input": {"ytDb": 0, "fileDb": -4, "fileSilentSec": 6, "offsetSec": 0, "fromSec": 0, "untilSec": 12}, "expectDb": 4},
+  {"name": "too little sound: 1 s of it in a 0-7 s window gives 0 dB", "input": {"ytDb": 0, "fileDb": -4, "fileSilentSec": 6, "offsetSec": 0, "fromSec": 0, "untilSec": 7}, "expectDb": 0}
+ ],
  "qualityRank": [
   { "name": "FLAC 16/44.1: lossless", "stream": { "codec": "flac", "bitDepth": 16, "sampleRate": 44100}, "expect": 1},
   { "name": "FLAC 24/96: Hi-Res", "stream": { "codec": "flac", "bitDepth": 24, "sampleRate": 96000}, "expect": 2},
