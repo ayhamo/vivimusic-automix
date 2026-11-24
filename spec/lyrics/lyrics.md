@@ -24,6 +24,7 @@ Cases: `lyrics-cases.json` (inputs and expected outputs, synthetic). `node scrip
 2. **[view, strip]** A seek: a reading more than 80 ms behind the clock, or more than 300 ms away from where the clock expected it (1500 ms while casting). The clock jumps to it and every line state is rebuilt. A reading 1 to 250 ms behind that isn't a seek is jitter: the clock keeps its value. `LyricsDeadlinePosition.kt:101-120`, `LyricsSmoothPosition.kt:299-312`.
 3. **[view, strip]** Paused or buffering: no running on, the readings as they come. The playback speed comes from the player (casting: 1.0). `LyricsDeadlinePosition.kt:80, 83, 130`.
 4. **[view, strip]** Hidden: the clock stops (no work while nothing is shown). `LyricsDeadlinePosition.kt:85-95`.
+5. **[view]** Drawn ahead of the sound. A frame reaches the screen about two refresh intervals after it is drawn, so playing lyrics (the line change and the word sweep) are drawn for the position plus 2 refresh intervals, kept to 8-40 ms (60 Hz: 33 ms), times the playback speed. Paused, loading, seeking or scrubbing: the exact position. A view without a refresh rate takes 60 Hz. It isn't one of §2's leads: "lyrics by real timing" keeps it. Mornye a422ffd1 (`lyricsDisplayLead`).
 
 ## 2. Early highlight
 
@@ -46,6 +47,8 @@ Cases: `currentLine`, `activeLines`.
 2. **[view, strip]** Sign: the lyrics position is the player's position plus the offset, so a positive offset shows the lyrics earlier. Seeking by lyrics goes the other way: the player is sent to the lyric's time minus the offset, never below 0. `LyricsUtils.kt:99-107`. (BitChord's offset has the opposite sign, `BCA/data/settings/AppSettings.kt:521`; a port reading BitChord's setting turns it around.)
 3. **[view, strip]** The editor: steps of 50 ms, a slider over ±3000 ms, a field for any value, and a reset to 0. `ML/ui/components/lyrics/LyricsOffsetEditor.kt:80-81, 119-122, 137, 272-281`.
 4. **[view, strip]** The song's offset is saved by video id (Metrolist: the song's row, `ML/db/entities/SongEntity.kt:49`), the global one as a setting. **(ours)** Both apply as they are changed, with no Save step.
+5. **[view, strip]** An LRC file's own offset. The last `[offset:N]` tag on a line of its own (N in ms, an optional sign) is added to every line and word time of that file, none below 0, when it is parsed. Metrolist's sign: a positive N shows the lyrics later. The listener's offsets (rule 1) come on top. `ML/api/lyrics/LrcTiming.kt`. Cases: `lrcOffset`.
+6. **[view, strip]** A file that carries its own translation or romanization lines (Metrolist's lyrics files: a `translatedlyrics` or `romanlyrics` section) pairs them with the main lines **before** the file's offset is applied, by the file's own timestamps. Exact timestamps first, each used once; then, for a main line whose time no auxiliary line has, the auxiliary line at the same position if no exact match took it. Metrolist 3ba42678a, 8b6c3e1a4 (`MlxParser.matchAuxiliaryLyrics`).
 
 Cases: `offset`.
 
@@ -69,12 +72,14 @@ Cases: `offset`.
 3. **[view]** Lines that overlap are active together (§2.2), each on its side.
 4. **[view]** Background vocals: smaller and dimmer, under their line (BitChord: 23 sp at alpha 0.72; open 250 ms before the first word, over 400 ms; close over 450 ms, `BC/PlayerLyrics.kt:257-280`).
 5. **[strip]** **(ours)** One line: the strip shows the line that started last; a background vocal never replaces the main line.
+6. **[view, strip]** Enhanced LRC writes a line's background vocal inline, at the line's end: `[bg: <mm:ss.xx>word <mm:ss.xx>word]`. Its words are background words of that line, with their own leading text (as rule 4 shows them). Metrolist 0bc6ec068 (`EnhancedLrcPrefixTest.inlineBackgroundKeepsItsOwnLeadingText`). Cases: `parse`.
 
 Cases: `sides`.
 
 ## 6. Instrumental gaps
 
 1. **[view, strip]** A gap is 7000 ms or more without a line (`LYRICS_GAP_MIN_MS`). The intro counts: when the first line starts at 7000 or later, a gap runs from 0 to the first line's start − 800. Between lines, a gap runs from the end of the lines so far (the latest end, not the last line's) + 310 to the next line's start − 800. `ML/ui/components/lyrics/LyricsListIndexing.kt:28-53`.
+   - A line's start here is the earlier of its tag and its first timed word's start (a word whose end is after its start), so a countdown ends when the voice comes in, not at a later line tag. Metrolist 5f58b4081 (`LyricsRetiming.kt` `timelineStartMs`).
 2. **[view, strip]** It is shown while the position plus 190 ms is inside it (`HIGHLIGHT_LOOK_AHEAD_MS`). `LyricsView.kt:1353-1357`, `LyricsRetiming.kt:19`.
 3. **[view]** What it shows: an indicator that fills with the gap's progress (Metrolist: a 36 dp wavy ring; BitChord: 3 dots). It appears 300 ms after the gap starts showing, fading in over 200 ms, and leaves over 800 ms (grows to 1.2 at 35%, then shrinks away). `ML/ui/components/lyrics/IntervalIndicator.kt:37-42, 65-94, 130-149`.
 4. **[strip]** **(ours)** The strip shows its own gap mark (the phone: a note) in place of a line over the same gaps.
@@ -111,6 +116,11 @@ Cases: `gaps`.
 3. **[view, strip]** Both come after the listener's ordered providers (Metrolist puts YouTube's sources last, `ML/model/Models.kt:510, 522, 595-598`). For a music video, SimpMusic is asked as well.
 4. **[view, strip]** Choosing between answers: the listener's own lyrics first; synced over unsynced; then the provider order; then the finer timing (word over line). With "prefer word-synced" on (default off), the finer timing comes first. `ML/repository/LyricsRepository.kt:99-117, 411-459`.
 5. **[view, strip]** An accepted answer's ISRC (lrc.red's document, a BiniLyrics hit) is kept for the addon matcher. `spec/addons/protocol.md` §7, ISRC first.
+6. **[view, strip]** **YouTube Music's own lyrics**, line-synced. The song's Lyrics tab: the `MPLY…` browse id from `next`, then `browse` with it asked as the Android Music client (`ANDROID_MUSIC` 7.21.50, client id 21), anonymously: only the mobile clients get `timedLyricsData`, one `{ lyricLine, cueRange: { startTimeMilliseconds, endTimeMilliseconds } }` per line; the web client gets the untimed description shelf. A line without text or start is dropped. Asked with YouTube's sources, before the captions (rule 2). BitChord eba87458 (`YouTubeLyrics.kt` `timedLyrics`). Checked 2026-11-24: Poker Face, 53 timed lines to the Android client, none to the web one.
+7. **[view, strip]** **Offline**, no provider request and no translation request is made, and no miss is kept: the lyrics saved for the song (if any) show, and the next lookup online asks the providers again. A translation endpoint on the listener's own machine (Metrolist's local AI) is still asked. Metrolist 22ea8ee6e.
+8. **[view, strip]** **Clear fetched lyrics**, an action in the lyrics settings with a confirmation: drops every fetched lyrics document and its translation and cached miss, so they are fetched again. It keeps the listener's own lyrics (imported, edited or drafts), their picks of a provider and their offsets (a song with an offset keeps it, with no lyrics, until the next fetch). Metrolist 709a8a61b (`CacheDao.clearFetchedLyrics`).
+
+Cases: `parse` (text before the first word tag, a BOM before the first tag (Metrolist 459059bb2), background vocals in enhanced LRC), `lrcOffset`.
 
 ## 12. Where the apps differ
 
@@ -126,6 +136,13 @@ Cases: `gaps`.
 - Text size and spacing: built 2026-11-20 as popup sliders (storage.local `lyricsTextSize` 10-40, `lyricsLineSpacing` 1.0-2.5, `src/plus/lyrics-ui-plus.js` `applySize`), but the default is the style's own sizes (22-36 px, `src/canvas.css:158-171, 342, 361`), not 36 and 1.3: a set size applies to every line, so the styles' larger active line is lost. The popup also has switches for §2.6 (real timing), §4.1 (auto-scroll) and §5.2 (sides).
 - Romanization: off / only / both (`lyricsRoman`), the romanized line under the original at 0.62 em (`src/canvas.css:1311`); a language picker.
 - Translation: built 2026-11-20 (`src/plus/lyrics-ui-plus.js` `translate`, through the line-render hook; storage.local `lyricsTranslate`, a popup switch, not a lyrics-menu one), into the browser's language, fetched by the background (`src/plus/bg-plus.js` `VIVI_TRANSLATE`: a content script's own request didn't get through in Firefox). Kept in memory for the last 20 songs, not on disk. No Latin-script retry through Input Tools (BitChord's).
+- Drawn ahead (§1.5): built 2026-11-24 (`src/plus/lyrics-ui-plus.js` `displayLead`, hook in `src/lyrics-ui.js` tick): the refresh interval is measured from the tick's own frames (an average of the intervals of 4-34 ms), 60 Hz until then. Paused, seeking or not yet playable (`readyState` under 3): 0.
+- The file's offset (§3.5): built 2026-11-24 (`lyrics-rules.js` `withLrcOffset`, hooked at the end of `parseLRC` and `parseEnhancedLRC` in `src/lyrics.js`, checked by the `lrcOffset` cases). Until then the PC dropped `[offset:]` as a metadata tag. §3.6 doesn't apply: no PC source carries translation or romanization lines (the PC translates through Google, §10, and romanizes itself, §9).
+- Enhanced LRC (§5.6, §11 cases): built 2026-11-24 in `parseEnhancedLRC`: the inline `[bg: …]` part is read as background words (the line's text joins them, as for TTML); text before the first word tag starts at the line tag, or at that first tag when the line tag is later. A row without a line tag (`First <00:01.50>word`) is still skipped (Metrolist reads it as a line at its first word). A BOM was already ignored (JavaScript's `\s` includes U+FEFF). Checked by the `parse` cases, which load `src/lyrics.js` in a sandbox.
+- Gaps (§6.1, the first word's start): built 2026-11-24 in `lyrics-rules.js` `gaps`.
+- YouTube Music's lyrics (§11.6): built 2026-11-24 (`src/plus/video-canvas-page.js` op `ytlyrics`, `src/plus/lyrics-plus.js` `fromYtMusic`; the page asks `next` as the web client with the listener's visitor id and no cookies, then `browse` as the Android client). Asked after every other source, before YouTube's captions; a popup provider switch "YouTube Music", on by default.
+- Offline (§11.7): built 2026-11-24 (`src/lyrics.js` `fetchBestLyrics`, `lyrics-ui-plus.js` `translate`): with `navigator.onLine` false nothing is asked; the PC keeps no miss in any case.
+- Clear fetched lyrics (§11.8): nothing to build. The PC saves no fetched lyrics: they are kept in memory for the page (60 songs, an hour), never on disk, and a page reload clears them; it has no lyrics of the listener's own. Its offsets live apart (§3) and nothing clears them.
 - Sources: built 2026-11-20. SimpMusic (`src/plus/lyrics-plus.js` `fromSimpMusic`, fetched by `src/plus/bg-plus.js`) joins the race, not after it: the PC races its providers (`src/lyrics.js:1050-1119`). Its answer is `{ type: "success", data: [{ durationSeconds, … }] }`, not BitChord's `success` and `duration` (BitChord's fork reads none of it). YouTube captions (`fromYtCaptions`, read by the page in `src/plus/video-canvas-page.js` op `captions`) are asked only when nothing else answered; read from the track's own www.youtube.com URL (music.youtube.com's `/api/timedtext` answers with the app's page), ♪ marks taken out. Both are popup provider switches, on by default.
 
 ### Phone strip against the original

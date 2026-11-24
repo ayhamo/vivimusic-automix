@@ -1384,7 +1384,7 @@
     // Shift the raw video position back by whatever SponsorBlock already
     // skipped past (so lyrics stay aligned to the real song, not the video
     // file's timeline), then apply the user's manual fine-tune correction.
-    const nowMs = (VP.songSec(video) * 1000) - sponsorOffsetMs + manualOffsetMs + VP.globalOffset(); // vivi+ hook: held during a crossfade; the global offset (lyrics.md §3.1)
+    const nowMs = (VP.songSec(video) * 1000) - sponsorOffsetMs + manualOffsetMs + VP.globalOffset() + VP.displayLead(video); // vivi+ hook: held during a crossfade; the global offset (lyrics.md §3.1); drawn a display delay ahead (§1.5)
 
     const panel = document.getElementById(PANEL_ID);
     if (!panel) return;

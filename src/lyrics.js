@@ -206,7 +206,8 @@
     for (let i = 0; i < lines.length; i++) {
       lines[i].end = i < lines.length - 1 ? lines[i + 1].start : lines[i].start + 8000;
     }
-    return { mode: 'line', lines };
+    const res = { mode: 'line', lines };
+    return globalThis.__viviLyricsRules?.withLrcOffset?.(res, text) ?? res; // vivi+ hook: the file's [offset:] (lyrics.md §3.5)
   }
 
   // ── Word / syllable model ────────────────────────────────────────────────
@@ -363,18 +364,27 @@
       const m = lineTag.exec(row);
       if (!m) continue;
       const lineStart = parseTimeToMs(m[1]);
-      const body = row.slice(m[0].length);
+      const whole = row.slice(m[0].length);
+      // vivi+: an inline background vocal "[bg: <t>word <t>word]" is its own words, marked bg (lyrics.md §5.6)
+      const bgM = /\s*\[bg:([^\]]*)\]\s*$/i.exec(whole);
+      const body = bgM ? whole.slice(0, bgM.index) : whole;
       const segs = [];
-      let last = 0, curT = null;
-      for (const t of body.matchAll(wordTag)) {
-        const chunk = body.slice(last, t.index);
-        if (curT !== null && chunk !== '') segs.push({ text: chunk, start: curT, end: parseTimeToMs(t[1]) });
-        else if (curT === null && chunk.trim() !== '') segs.push({ text: chunk, start: lineStart, end: parseTimeToMs(t[1]) });
-        curT = parseTimeToMs(t[1]);
-        last = t.index + t[0].length;
-      }
-      const tail = body.slice(last);
-      if (tail.trim() !== '' && curT !== null) segs.push({ text: tail, start: curT, end: null });
+      const read = (src, bg) => {
+        let last = 0, curT = null;
+        for (const t of src.matchAll(wordTag)) {
+          const chunk = src.slice(last, t.index);
+          const at = parseTimeToMs(t[1]);
+          if (curT !== null && chunk !== '') segs.push({ text: chunk, start: curT, end: at, bg });
+          // text before the first word tag starts at the line tag, never after that tag's word (Metrolist 0bc6ec068)
+          else if (curT === null && chunk.trim() !== '') segs.push({ text: chunk, start: Math.min(lineStart, at), end: at, bg });
+          curT = at;
+          last = t.index + t[0].length;
+        }
+        const tail = src.slice(last);
+        if (tail.trim() !== '' && curT !== null) segs.push({ text: tail, start: curT, end: null, bg });
+      };
+      read(body, false);
+      if (bgM) read(' ' + bgM[1], true);
       raw.push({ start: lineStart, segs, plain: body.replace(wordTag, '').trim() });
     }
     raw.sort((a, b) => a.start - b.start);
@@ -395,7 +405,8 @@
         text: words.map((w) => w.text + (w.joined ? '' : ' ')).join('').trim(),
       });
     });
-    return finalizeResult(lines);
+    const res = finalizeResult(lines);
+    return globalThis.__viviLyricsRules?.withLrcOffset?.(res, text) ?? res; // vivi+ hook: the file's [offset:] (lyrics.md §3.5)
   }
 
   // QRC (QQ Music, "Better Lyrics Portato"): "[lineStart,lineDur]text(start,dur)text(start,dur)".
@@ -1137,6 +1148,7 @@
       if (typeof onUpdate === 'function') onUpdate(cached);
       return cached;
     }
+    if (navigator.onLine === false) { log('offline: no provider requests, no miss kept'); return null; } // vivi+ (lyrics.md §11.7)
     const best = await resolveLyrics(track, excludeKeys, onUpdate);
     if (!best) { log('all providers failed or disabled'); return null; }
     log('resolved', track, best.provider, best.mode);

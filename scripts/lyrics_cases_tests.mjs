@@ -6,6 +6,7 @@
 //   node scripts/lyrics_cases_tests.mjs        (exit 1 on a failure)
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
+import vm from 'node:vm';
 const PC = createRequire(import.meta.url)('../src/plus/lyrics-rules.js');
 
 const cases = JSON.parse(readFileSync(new URL('../spec/lyrics/lyrics-cases.json', import.meta.url), 'utf8'));
@@ -45,13 +46,15 @@ function sides(lines, agents = {}, respect = true) {
   if (respect && total > 0 && right / total >= 0.85) return out.map((a) => (a === 'left' ? 'right' : a === 'right' ? 'left' : a));
   return out;
 }
-// LyricsListIndexing.kt:28-53 buildLyricsListItems (the gap indicators only)
+// LyricsListIndexing.kt:28-53 buildLyricsListItems (the gap indicators only); a line starts at
+// LyricsRetiming.kt timelineStartMs: min(its tag, its first timed word's start) (5f58b4081)
+const startOf = (l) => Math.min(l.start, ...(l.words ?? []).filter((w) => w.end > w.start).map((w) => w.start));
 function gaps(lines) {
   const out = [];
-  if ((lines[0]?.start ?? 0) >= 7000) out.push([0, lines[0].start - 800]);
+  if (lines.length && startOf(lines[0]) >= 7000) out.push([0, startOf(lines[0]) - 800]);
   let lastEnd = null;
   for (const l of lines) {
-    if (lastEnd != null && l.start - lastEnd >= 7000) out.push([lastEnd + 310, l.start - 800]);
+    if (lastEnd != null && startOf(l) - lastEnd >= 7000) out.push([lastEnd + 310, startOf(l) - 800]);
     lastEnd = Math.max(lastEnd ?? 0, l.end);
   }
   return out;
@@ -93,6 +96,18 @@ for (const c of cases.gaps) check('gaps (PC)', c.name, PC.gaps(c.input.lines).ma
 for (const c of cases.sides) check('sides (PC)', c.name, PC.sides(c.input.lines, c.input.agents, c.input.respect), c.expect);
 for (const c of cases.offset) check('offset (PC)', c.name, PC.offsetOf(c.input.song, c.input.global, c.input.player, c.input.lyricTime), c.expect);
 for (const c of cases.activeLines) check('activeLines (PC)', c.name, PC.activeLines(c.input.lines, c.input.position, { wordSynced: c.input.wordSynced, leadMs: c.input.leadMs }), c.expect);
+// the PC's parsers (src/lyrics.js, with lyrics-rules.js for the file's [offset:]), loaded in a sandbox
+{
+  const ctx = vm.createContext({ console: { log() {}, warn() {} }, setTimeout, clearTimeout, URL,
+    chrome: { storage: { local: { get: (d, cb) => cb?.(d && typeof d === 'object' ? d : {}) }, onChanged: { addListener() {} } }, runtime: { sendMessage() {}, onMessage: { addListener() {} } } } });
+  ctx.window = ctx; ctx.globalThis = ctx;
+  for (const f of ['src/plus/lyrics-rules.js', 'src/lyrics.js']) vm.runInContext(readFileSync(new URL('../' + f, import.meta.url), 'utf8'), ctx);
+  const L = ctx.window.__viviLyrics;
+  const shape = (r) => (r?.lines ?? []).map((l) => ({ start: l.start, ...(l.words ? { words: l.words.map((w) => (w.bg ? [w.text, w.start, 'bg'] : [w.text, w.start])) } : {}) }));
+  const parseWith = (c) => shape(c.input.format === 'enhancedLrc' ? L.parseEnhancedLRC(c.input.text) : L.parseLRC(c.input.text));
+  for (const c of cases.parse) check('parse (PC)', c.name, parseWith(c), c.expect);
+  for (const c of cases.lrcOffset) check('lrcOffset (PC)', c.name, parseWith(c), c.expect);
+}
 console.log('skip  the PC: no pure currentLine function (the PC lights lines by activeLines, §2.4 is the strip\'s)');
 console.log(`\nlyrics cases: ${ok} ok, ${failed} DIFF`);
 process.exit(failed ? 1 : 0);

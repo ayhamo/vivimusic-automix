@@ -9,7 +9,7 @@
   // ── What upstream's scripts read from us ──
   window.viviPlusPopup = {
     // popup.js: extra lyrics providers (on by default) and their priority labels
-    providers: { lyricsplus: true, paxsenix: true, genius: true, simpmusic: true, ytcaptions: true },
+    providers: { lyricsplus: true, paxsenix: true, genius: true, simpmusic: true, ytmusic: true, ytcaptions: true },
     priorityLabels: { paxsenix: 'Paxsenix (Apple Music)', lyricsplus: 'LyricsPlus (Syllable / Word)' },
     // popup.js: where the update button leads (upstream's points at its own AMO listing)
     updatePage: 'https://github.com/ayhamo/vivimusic-automix/releases/latest',
@@ -245,6 +245,10 @@
       <div class="provider-row">
         <span class="pname">SimpMusic<small>By the video</small></span><span class="lvls"><i class="lvl lvl-word">WORD</i><i class="lvl lvl-line">LINE</i></span>
         <label class="switch small"><input type="checkbox" id="prov-simpmusic" checked/><span class="slider"></span></label>
+      </div>
+      <div class="provider-row">
+        <span class="pname">YouTube Music<small>Its own lyrics</small></span><span class="lvls"><i class="lvl lvl-line">LINE</i></span>
+        <label class="switch small"><input type="checkbox" id="prov-ytmusic" checked/><span class="slider"></span></label>
       </div>
       <div class="provider-row">
         <span class="pname">YouTube captions<small>Last resort</small></span><span class="lvls"><i class="lvl lvl-line">LINE</i></span>

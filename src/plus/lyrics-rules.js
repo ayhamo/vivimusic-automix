@@ -89,21 +89,52 @@
    * The instrumental gaps (§6.1, Metrolist's buildLyricsListItems): an intro from 0 to the first line - 800 when that
    * line starts at 7000 or later; between lines, from the latest end so far + 310 to the next start - 800, when they
    * are 7000 or more apart. lines: [{ start, end }] in order. Answers [[start, end], ...] with each gap's line index
-   * after it ([start, end, before]).
+   * after it ([start, end, before]). A line with timed words starts at its first word when that is earlier than
+   * its tag (Metrolist 5f58b4081, timelineStartMs: words with end > start).
    */
+  const lineStart = (l) => {
+    const w = Array.isArray(l.words) ? l.words.filter((x) => x.end > x.start).map((x) => x.start) : [];
+    return w.length ? Math.min(l.start, ...w) : l.start;
+  };
   function gaps(lines) {
     const list = Array.isArray(lines) ? lines : [];
     const out = [];
-    if (list.length && list[0].start >= GAP_MIN_MS) out.push([0, list[0].start - 800, 0]);
+    if (list.length && lineStart(list[0]) >= GAP_MIN_MS) out.push([0, lineStart(list[0]) - 800, 0]);
     let lastEnd = null;
     list.forEach((l, i) => {
-      if (lastEnd != null && l.start - lastEnd >= GAP_MIN_MS) out.push([lastEnd + 310, l.start - 800, i]);
+      const s = lineStart(l);
+      if (lastEnd != null && s - lastEnd >= GAP_MIN_MS) out.push([lastEnd + 310, s - 800, i]);
       lastEnd = Math.max(lastEnd ?? 0, l.end);
     });
     return out;
   }
 
-  const api = { LEAD_MS, activeLines, offsetOf, sides, gaps, GAP_AHEAD_MS };
+  /**
+   * An LRC file's own [offset:+/-N] (§3.5, Metrolist LrcTiming.kt): the last such tag on a line of its own, in ms,
+   * added to every line and word time, none below 0 (Metrolist's sign: a positive offset shows the lyrics later).
+   * result: a parsed { mode, lines } (lines [{ start, end, words? }]); answers it shifted, or as it was.
+   */
+  const LRC_OFFSET_RE = /^[ \t]*\[offset:[ \t]*([+-]?\d+)[ \t]*\][ \t]*\r?$/gim;
+  function lrcOffsetMs(text) {
+    const all = [...String(text ?? '').matchAll(LRC_OFFSET_RE)];
+    const n = all.length ? parseInt(all[all.length - 1][1], 10) : 0;
+    return Number.isFinite(n) ? n : 0;
+  }
+  function withLrcOffset(result, text) {
+    const off = lrcOffsetMs(text);
+    if (!off || !result || !Array.isArray(result.lines)) return result;
+    const t = (x) => (Number.isFinite(x) ? Math.max(0, x + off) : x);
+    const span = (o) => ({ ...o, start: t(o.start), end: t(o.end) });
+    return {
+      ...result,
+      lines: result.lines.map((l) => ({
+        ...span(l),
+        ...(Array.isArray(l.words) ? { words: l.words.map((w) => ({ ...span(w), ...(Array.isArray(w.syllables) ? { syllables: w.syllables.map(span) } : {}) })) } : {}),
+      })),
+    };
+  }
+
+  const api = { LEAD_MS, activeLines, offsetOf, sides, gaps, GAP_AHEAD_MS, lrcOffsetMs, withLrcOffset };
   globalThis.__viviLyricsRules = api;
   if (typeof module === 'object' && module.exports) module.exports = api;
 })();

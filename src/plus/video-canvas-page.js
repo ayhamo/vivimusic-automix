@@ -1718,6 +1718,42 @@
     return null;
   }
 
+  // lyrics.md §11.6 (BitChord eba87458): YouTube Music's own timed lyrics. The song's Lyrics tab (its MPLY browse id,
+  // from `next`) answers the web client with the untimed shelf only; asked as the Android Music client, anonymously,
+  // it carries timedLyricsData: one { lyricLine, cueRange: { startTimeMilliseconds, endTimeMilliseconds } } per line.
+  const YTM_ANDROID = { clientName: 'ANDROID_MUSIC', clientVersion: '7.21.50', id: '21' };
+  async function ytMusicLyricsOf(id) {
+    if (!/^[\w-]{11}$/.test(id)) return null;
+    const v = visitor();
+    const nxt = await innertube('next', {
+      videoId: id,
+      context: { client: { clientName: 'WEB_REMIX', clientVersion: cfg('INNERTUBE_CLIENT_VERSION') || '1.20251101.01.00', hl: 'en', gl: 'US', ...(v ? { visitorData: v } : {}) } },
+    });
+    const m = /"browseId":"(MPLY[\w-]+)"/.exec(JSON.stringify(nxt || {}));
+    if (!m) return null;
+    const page = await timed('/youtubei/v1/browse?prettyPrint=false', {
+      method: 'POST',
+      credentials: 'omit',
+      headers: { 'Content-Type': 'application/json', 'X-YouTube-Client-Name': YTM_ANDROID.id, 'X-YouTube-Client-Version': YTM_ANDROID.clientVersion },
+      body: JSON.stringify({ browseId: m[1], context: { client: { clientName: YTM_ANDROID.clientName, clientVersion: YTM_ANDROID.clientVersion, hl: 'en', gl: 'US' } } }),
+    }, 15000, (r) => { if (!r.ok) throw new Error('browse HTTP ' + r.status); return r.json(); });
+    const find = (o) => {
+      if (!o || typeof o !== 'object') return null;
+      if (Array.isArray(o.timedLyricsData)) return o.timedLyricsData;
+      for (const x of Object.values(o)) { const f = find(x); if (f) return f; }
+      return null;
+    };
+    const lines = [];
+    for (const l of find(page) || []) {
+      const text = String((l && l.lyricLine) || '').trim();
+      const start = Number(l && l.cueRange && l.cueRange.startTimeMilliseconds);
+      const end = Number(l && l.cueRange && l.cueRange.endTimeMilliseconds);
+      if (!text || !Number.isFinite(start)) continue;
+      lines.push({ start, end: Number.isFinite(end) && end > start ? end : start + 3000, text });
+    }
+    return lines.length ? lines : null;
+  }
+
   let findSeq = 0;
   async function find(d) {
     const my = ++findSeq;
@@ -1805,6 +1841,7 @@
       else if (d.op === 'prefetch') { prefetch(d.ids); say({ reqId: d.reqId, ok: true }); }
       else if (d.op === 'clear') { await clearAll(); say({ reqId: d.reqId, ok: true }); }
       else if (d.op === 'captions') { const lines = await captionsOf(String(d.id || ''), String(d.lang || '')); say({ reqId: d.reqId, ok: !!lines, lines }); }
+      else if (d.op === 'ytlyrics') { const lines = await ytMusicLyricsOf(String(d.id || '')); say({ reqId: d.reqId, ok: !!lines, lines }); }
     } catch (err) {
       say({ reqId: d.reqId, ok: false, why: String((err && err.message) || err) });
     }

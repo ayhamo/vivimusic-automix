@@ -65,7 +65,7 @@
   function extendKeys(defaults, settings, priorityKeys) {
     // { lyricsplus, ...upstream, paxsenix, genius, spotify }
     for (const obj of [defaults, settings]) {
-      insertKeys(obj, { lyricsplus: true }, 'spotify', { paxsenix: true, genius: true, simpmusic: true, ytcaptions: true });
+      insertKeys(obj, { lyricsplus: true }, 'spotify', { paxsenix: true, genius: true, simpmusic: true, ytmusic: true, ytcaptions: true });
     }
     // ['lyricsplus', ..., 'betterlyrics', 'paxsenix', ...]
     priorityKeys.unshift('lyricsplus');
@@ -146,26 +146,29 @@
   // YouTube's captions (lyrics.md §11.2): the page reads the player's caption tracks (video-canvas-page.js op
   // 'captions'); line-synced only. Asked last, when no other source has the song.
   let capSeq = 0;
-  function fromYtCaptions(track) {
+  // The page reads YouTube's own lines (src/plus/video-canvas-page.js): op 'captions' (§11.2) or 'ytlyrics' (§11.6).
+  function fromPage(track, op, name, waitMs) {
     if (!track.videoId) return Promise.resolve(null);
     return new Promise((resolve) => {
       const reqId = 'vlq' + (++capSeq);
       const done = (lines) => {
         clearTimeout(timer); window.removeEventListener('message', on);
         if (!Array.isArray(lines) || !lines.length) { resolve(null); return; }
-        const parsed = L.checkTiming({ mode: 'line', lines }, track, 'YouTube captions');
-        if (parsed) parsed.provider = 'YouTube captions';
+        const parsed = L.checkTiming({ mode: 'line', lines }, track, name);
+        if (parsed) parsed.provider = name;
         resolve(parsed || null);
       };
       const on = (e) => {
         const d = e.data;
         if (e.source === window && d && d.ch === 'vivi-vcanvas' && d.dir === 'out' && d.reqId === reqId) done(d.ok ? d.lines : null);
       };
-      const timer = setTimeout(() => done(null), 8000);
+      const timer = setTimeout(() => done(null), waitMs);
       window.addEventListener('message', on);
-      window.postMessage({ ch: 'vivi-vcanvas', dir: 'in', op: 'captions', reqId, id: track.videoId, lang: navigator.language || 'en' }, window.location.origin);
+      window.postMessage({ ch: 'vivi-vcanvas', dir: 'in', op, reqId, id: track.videoId, lang: navigator.language || 'en' }, window.location.origin);
     });
   }
+  const fromYtCaptions = (track) => fromPage(track, 'captions', 'YouTube captions', 8000);
+  const fromYtMusic = (track) => fromPage(track, 'ytlyrics', 'YouTube Music', 9000);
 
   // Genius — plain-text lyrics fallback
   async function fromGenius(track) {
@@ -320,13 +323,14 @@
         best = await raceProviders(titleJobs, onUpdate);
       }
     }
-    // 3. YouTube's own captions, after every other source (lyrics.md §11.3)
+    // 3. YouTube Music's own timed lyrics, then YouTube's captions, after every other source (lyrics.md §11.3, 11.6)
+    if (!best && on('ytmusic')) best = await fromYtMusic(track);
     if (!best && on('ytcaptions')) best = await fromYtCaptions(track);
     return best;
   }
 
   // Result labels of our providers, for providerKeyForName().
-  const PLUS_KEY_BY_NAME = { Paxsenix: 'paxsenix', LyricsPlus: 'lyricsplus', Genius: 'genius', SimpMusic: 'simpmusic', 'YouTube captions': 'ytcaptions' };
+  const PLUS_KEY_BY_NAME = { Paxsenix: 'paxsenix', LyricsPlus: 'lyricsplus', Genius: 'genius', SimpMusic: 'simpmusic', 'YouTube Music': 'ytmusic', 'YouTube captions': 'ytcaptions' };
 
   function bind(ctx) {
     L = ctx;

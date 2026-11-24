@@ -459,6 +459,7 @@
     lastList = list; lastResult = result;
     list.querySelectorAll('.vivi-lyrics-trans').forEach((el) => el.remove());
     if (!translateOn || !result || !Array.isArray(result.lines)) return;
+    if (navigator.onLine === false) return;   // offline: no translation request (lyrics.md §11.7)
     const tl = String(navigator.language || 'en');
     const slots = [];
     result.lines.forEach((l, i) => { const x = String((l && l.text) || '').trim(); if (x) slots.push({ i, x }); });
@@ -496,7 +497,21 @@
     });
   }
 
+  // lyrics.md §1.5 (Mornye a422ffd1): a frame reaches the screen about two refresh intervals after it is drawn, so
+  // playing lyrics are drawn that far ahead of the audio (8-40 ms), times the playback speed. Paused, seeking or
+  // loading: the exact position. The refresh interval is measured from the lyrics tick's own frames (one per frame).
+  let lastFrameAt = 0, frameMs = 1000 / 60;
+  function displayLead(video) {
+    const now = performance.now(), dt = now - lastFrameAt;
+    lastFrameAt = now;
+    if (dt > 4 && dt < 34) frameMs += (dt - frameMs) * 0.05;   // frames of 30-240 Hz; a skipped frame isn't one
+    if (!video || video.paused || video.seeking || video.readyState < 3) return 0;
+    const speed = video.playbackRate > 0 ? video.playbackRate : 1;
+    return Math.min(40, Math.max(8, 2 * frameMs)) * speed;
+  }
+
   plus.lyricsUi = {
+    displayLead,
     tabByPosition, onUserTabClick, makeRefreshIcon, makeRefetchTabButton, syncRefetchTabButton,
     fillPos, markRtl, songSec, holdTrack, takeDuration, fillDuration, recheckDuration, bind, activeLine,
     globalOffset, songOffset, offsetChanged, extendOffsetPanel, followPaused, side, addGaps,
