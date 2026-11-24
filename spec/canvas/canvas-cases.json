@@ -10,6 +10,7 @@
   "spotifyMatch": "canvas.md §4. Metrolist DirectCanvasProvider.kt:397-436. Durations in ms; 0 or null = unknown.",
   "spotifyMedia": "canvas.md §4. Metrolist DirectCanvasProvider.kt:378-395 (trustedMedia, Spotify: scdn.co).",
   "spotifyTotp": "canvas.md §4. spotlib TOTP as SpotifyCanvas.java:257-272: the secret xor (i % 33 + 9) joined as decimal digits (spotlib Totp.kt joinToString), HMAC-SHA1, 30 s steps, 6 digits.",
+  "spotifyCanvas": "canvas.md §4 rule 5. Metrolist 460a3168a DirectCanvasProvider.kt:224-237 (spotifyTrackCanvas). answer: the pathfinder JSON for operationName canvas; expect the canvas URL, or null.",
   "videoMatch": "canvas.md §5. Prism MusicVideoMatch.kt:19-58 (pick). The song, the search results in order; expect the picked id or null.",
   "bestPart": "canvas.md §6. Prism BestPart.kt:68-101 (peakMs). intensity = one value per segment of segmentMs; expect startMs or null (nothing stands out). noFrames: FrameJudge.kt:72-76.",
   "clipJudge": "canvas.md §7. Prism FrameJudge.kt (bars 97-112, isStill 130-140, windows 149-177, choose 203-210, cropX 232-257, judge 59-69) and ClipRefine.kt (cuts 79-91, flashing 94-117, end 123-126, the flash loop 195-198).",
@@ -1316,6 +1317,111 @@
    "name": "time 0",
    "nowMs": 0,
    "expect": "204513"
+  }
+ ],
+ "spotifyCanvas": [
+  {
+   "name": "a canvas on scdn.co",
+   "answer": {
+    "data": {
+     "trackUnion": {
+      "__typename": "Track",
+      "canvas": {
+       "url": "https://canvaz.scdn.co/upload/artist/0000000000000000000000/video/0000000000000000.cnvs.mp4",
+       "type": "VIDEO_LOOPING_RANDOM"
+      },
+      "uri": "spotify:track:2qSkIjg1o9h3YT9RAgYN75"
+     }
+    }
+   },
+   "expect": "https://canvaz.scdn.co/upload/artist/0000000000000000000000/video/0000000000000000.cnvs.mp4"
+  },
+  {
+   "name": "no canvas for the track",
+   "answer": {
+    "data": {
+     "trackUnion": {
+      "__typename": "Track",
+      "canvas": null,
+      "uri": "spotify:track:2qSkIjg1o9h3YT9RAgYN75"
+     }
+    }
+   },
+   "expect": null
+  },
+  {
+   "name": "a canvas with no url",
+   "answer": {
+    "data": {
+     "trackUnion": {
+      "__typename": "Track",
+      "canvas": {
+       "type": "VIDEO"
+      },
+      "uri": "spotify:track:2qSkIjg1o9h3YT9RAgYN75"
+     }
+    }
+   },
+   "expect": null
+  },
+  {
+   "name": "a canvas on another host is not taken",
+   "answer": {
+    "data": {
+     "trackUnion": {
+      "__typename": "Track",
+      "canvas": {
+       "url": "https://example.com/a.cnvs.mp4"
+      },
+      "uri": "spotify:track:2qSkIjg1o9h3YT9RAgYN75"
+     }
+    }
+   },
+   "expect": null
+  },
+  {
+   "name": "a canvas over http is not taken",
+   "answer": {
+    "data": {
+     "trackUnion": {
+      "__typename": "Track",
+      "canvas": {
+       "url": "http://canvaz.scdn.co/upload/artist/0000000000000000000000/video/0000000000000000.cnvs.mp4"
+      },
+      "uri": "spotify:track:2qSkIjg1o9h3YT9RAgYN75"
+     }
+    }
+   },
+   "expect": null
+  },
+  {
+   "name": "the url not a string",
+   "answer": {
+    "data": {
+     "trackUnion": {
+      "__typename": "Track",
+      "canvas": {
+       "url": 42
+      },
+      "uri": "spotify:track:2qSkIjg1o9h3YT9RAgYN75"
+     }
+    }
+   },
+   "expect": null
+  },
+  {
+   "name": "no trackUnion (an unknown id)",
+   "answer": {
+    "data": {
+     "trackUnion": null
+    }
+   },
+   "expect": null
+  },
+  {
+   "name": "no data",
+   "answer": {},
+   "expect": null
   }
  ],
  "videoMatch": [

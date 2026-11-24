@@ -72,11 +72,14 @@ Original: Metrolist `ML/jvmSharedMain/kotlin/com/metrolist/shared/api/artwork/Di
    - title: shared words over the larger set, at least 0.75;
    - length: within 10 000 ms when both are known;
    - album: at least 0.5 the same way, when both are known.
-5. **[both]** The canvas comes from the public mirror `spotify-canva.vercel.app/api/canvas?trackId=` for a 22-character id; the entry must name `spotify:track:<id>`. ML `:224-234`.
+5. **[both]** The canvas comes from Spotify itself, still anonymous: pathfinder (`POST https://api-partner.spotify.com/pathfinder/v2/query`) with the same access token and client token as the search (rule 1), `operationName` `canvas`, `variables` `{trackUri: "spotify:track:<id>"}` for a 22-character id, `extensions.persistedQuery` `{version: 1, sha256Hash: "575138ab27cd5c1b3e54da54d0a7cc8d85485402de26340c2145f0f6bb5e7a9f"}`. The canvas is `data.trackUnion.canvas.url`, taken only when rule 6 trusts it; a `null` canvas is "no canvas" for that track. ML `:224-237, 379` (Metrolist 460a3168a). Until 2026-11-24 this was the public mirror `spotify-canva.vercel.app/api/canvas?trackId=`; it now answers every request with HTTP 402.
+   - **An expired session** (HTTP 401) drops the access token and the client token once and asks again. A second 401 is a failed lookup.
+   - **A rate limit** (HTTP 429) is not retried: the lookup fails (never saved as a miss, §2 rule 1). ML spotlib `SpotifyClient.canvasQuery` (`rateLimitRetries = 0`).
+   - GraphQL `errors` in the answer, or any other HTTP error, is a failed lookup.
 6. **[both]** Media is taken only from https, port 443, no user or password, host `scdn.co` or under it. ML `:378-395`.
 7. **[both]** Each request times out at 8000 ms; an answer is read up to 256 KB. ML `:60-64, 124, 227`. Phone `:46`.
 
-Cases: `spotifyMatch`, `spotifyMedia`, `spotifyTotp`.
+Cases: `spotifyMatch`, `spotifyMedia`, `spotifyTotp`, `spotifyCanvas` (rule 5: a pathfinder answer to the canvas URL).
 
 ## 5. Finding the music video
 

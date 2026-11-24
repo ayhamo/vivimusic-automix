@@ -1,7 +1,8 @@
 // Vivimusic Web+: Spotify Canvas without a Spotify login, as on the phone (SpotifyCanvas.java,
 // Metrolist's DirectCanvasProvider): an anonymous web-player token (TOTP), the client token,
-// Spotify's search (pathfinder searchTopResultsList), Metrolist's match rules, and the canvas
-// URL from the public mirror. Only https scdn.co media is taken.
+// Spotify's search (pathfinder searchTopResultsList), Metrolist's match rules, and the canvas from
+// Spotify's own pathfinder `canvas` query (Metrolist 460a3168a; the public mirror now answers 402).
+// Only https scdn.co media is taken.
 //
 // Loaded after spotify.js and background.js. It wraps upstream's spotifyCanvasForTrack (a global
 // function, called by background.js for VIVI_SPOTIFY_CANVAS), so upstream's file is unchanged:
@@ -14,8 +15,8 @@ const viviSpotifyCanvas = (() => {
   const TOKEN_URL = 'https://open.spotify.com/api/token';
   const CLIENT_TOKEN_URL = 'https://clienttoken.spotify.com/v1/clienttoken';
   const PATHFINDER_URL = 'https://api-partner.spotify.com/pathfinder/v2/query';
-  const MIRROR_URL = 'https://spotify-canva.vercel.app/api/canvas?trackId=';
   const SEARCH_HASH = '12d940b3f7381506a82ff5382eb59b0ed65118656e6bcdfbe4cebc528f75d29d';
+  const CANVAS_HASH = '575138ab27cd5c1b3e54da54d0a7cc8d85485402de26340c2145f0f6bb5e7a9f';
   const APP_VERSION = '1.2.96.390.gd46a85db';
   const WEB_CLIENT_ID = 'd8a5ed958d274c2e8ee717e6a4b0971d';
   // spotlib's Totp: the web player's secret (obfuscated), version 61, 30 s steps
@@ -83,7 +84,8 @@ const viviSpotifyCanvas = (() => {
     }
   }
 
-  // a pathfinder persisted query with the anonymous tokens (fetched again once on a 401)
+  // a pathfinder persisted query with the anonymous tokens: an expired session (401) drops both
+  // tokens and asks once more; a rate limit (429) or any other error fails the lookup (canvas.md §4 rule 5)
   async function query(operationName, sha256Hash, variables) {
     const body = JSON.stringify({ variables, operationName, extensions: { persistedQuery: { version: 1, sha256Hash } } });
     for (let attempt = 0; attempt < 2; attempt++) {
@@ -140,14 +142,15 @@ const viviSpotifyCanvas = (() => {
       && (!String(album || '').trim() || !String(foundAlbum || '').trim() || similarity(album, foundAlbum) >= 0.5);
   }
 
-  // Metrolist's publicSpotifyCanvas: the public mirror's canvas for the track
-  async function publicCanvas(trackId) {
+  // the canvas URL in a pathfinder `canvas` answer, when trusted (Metrolist's spotifyTrackCanvas)
+  function canvasOf(answer) {
+    const url = answer?.data?.trackUnion?.canvas?.url;
+    return typeof url === 'string' && trusted(url) ? url : null;
+  }
+  // the track's canvas, asked of Spotify (canvas.md §4 rule 5)
+  async function trackCanvas(trackId) {
     if (!/^[A-Za-z0-9]{22}$/.test(trackId)) return null;
-    const r = await get(MIRROR_URL + encodeURIComponent(trackId));
-    if (r.status !== 200) return null;
-    const list = (await r.json())?.canvasesList || [];
-    const c = list.find((x) => x?.trackUri === `spotify:track:${trackId}` && trusted(x.canvasUrl));
-    return c ? c.canvasUrl : null;
+    return canvasOf(await query('canvas', CANVAS_HASH, { trackUri: `spotify:track:${trackId}` }));
   }
 
   // Metrolist's spotifyCanvas: the first matching track among the top 10 results that has a canvas
@@ -168,7 +171,7 @@ const viviSpotifyCanvas = (() => {
       const foundMs = Number(track.duration?.totalMilliseconds);
       if (!matches(title, artist, album, durationMs, track.name || '', names.join(', '),
         track.albumOfTrack?.name, Number.isFinite(foundMs) ? foundMs : null, primary, names[0])) continue;
-      const canvas = await publicCanvas(track.id);
+      const canvas = await trackCanvas(track.id);
       if (trusted(canvas)) {
         console.info(`[vivi canvas] spotify: '${track.name}' by ${names.join(', ')} (${track.id}) has a canvas`);
         return canvas;
@@ -198,7 +201,7 @@ const viviSpotifyCanvas = (() => {
     return url;
   }
 
-  return { find, totp, matches, trusted };
+  return { find, totp, matches, trusted, canvasOf };
 })();
 globalThis.viviSpotifyCanvas = viviSpotifyCanvas;   // for the test page and the console
 

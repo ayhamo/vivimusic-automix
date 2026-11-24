@@ -1,7 +1,7 @@
 // The shared canvas cases (spec/canvas/canvas-cases.json) against the PC's code:
 //   src/plus/video-canvas-page.js  (its pure core, globalThis.__viviVideoCanvasCore)
 //   src/plus/canvas-settings.js    (parseOrder, parseEnabled, pickVariant)
-//   src/plus/bg-canvas.js          (viviSpotifyCanvas: totp, matches, trusted)
+//   src/plus/bg-canvas.js          (viviSpotifyCanvas: totp, matches, trusted, canvasOf)
 //   src/apple-canvas.js + the Apple block of src/plus/bg-plus.js (search, scoring, motion URLs)
 // Prints ok or DIFF per case, "skip" for a group the PC has no pure function for, then a summary.
 //
@@ -138,6 +138,7 @@ await run('spotifyMatch', (c) => {
 });
 await run('spotifyMedia', (c) => SP.trusted(c.url));
 await run('spotifyTotp', (c) => SP.totp(c.nowMs));
+await run('spotifyCanvas', (c) => SP.canvasOf(c.answer));
 
 // music video: findVideo takes what pick() takes from the search results [id, title, channel, durationSec]
 await run('videoMatch', (c) => {
