@@ -264,6 +264,7 @@ Original: Metrolist's Artwork page, `ML/commonMain/kotlin/com/metrolist/shared/u
    - **[PC]** Upstream's Connect and Disconnect (`spotifyConnectFromBrowser`, `clearSpotify`, made disconnect-safe in a1e4144): Connect opens open.spotify.com and waits up to 2 minutes for the listener to sign in there. The pasted-cookie field is hidden, and the row shows no part of the cookie.
    - **[phone only]** A sign-in screen with Spotify's own login page (a web view); the `sp_dc` cookie is read from it once the listener is signed in, and kept in the app's private storage.
 10. **[both]** A change to the order, the sources on, the mode, either quality or a master switch clears the "failed" marks, so the new choice is tried at once. `ML/commonMain/kotlin/com/metrolist/shared/ui/player/PlayerScreen.kt:647-655`.
+11. **[phone only]** Morphe's own "Apple Music animated artwork" patch (Morphe 2.4, #5082) would put a second animated layer on `player_thumbnail` and ask Apple twice. While our canvas is on, ours wins and Morphe's switch counts as off; while ours is off, Morphe's works as Morphe ships it.
 
 Cases: `settings` (`settingsOrder`, `settingsEnabled`, `appleVariant`).
 
