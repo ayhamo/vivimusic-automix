@@ -274,12 +274,13 @@
   // The Canvas switch (#spotifyCanvasEnabled: the music video and Spotify) and the Apple
   // animated artwork switch (#enableToggle) are the two master switches; under them the source
   // list in the order tried, each with up/down and its own switch, then the qualities and the
-  // mode. No Spotify login (rule 9): the sign-in blocks and the old two-way "prefer" are hidden.
+  // mode. The Spotify sign-in row (rule 9) stays, without its pasted-cookie field; the old two-way
+  // "prefer" is hidden.
   const CS = window.__viviCanvasSettings;
   const SEL = 'background:rgba(255,255,255,0.06); color:var(--text-1); border:1px solid rgba(255,255,255,0.12); border-radius:8px; padding:5px 8px; font-size:12.5px;';
   if (CS) {
     document.head.insertAdjacentHTML('beforeend', `<style>
-      #spotifyDisconnected, #spotifyConnected { display: none !important; }
+      #spotifySpDc, #spotifySaveCookieBtn { display: none !important; }
       .vivi-src-row { display:flex; align-items:center; gap:8px; padding:6px 0; transition:opacity .15s; }
       .vivi-src-row + .vivi-src-row { border-top:1px solid rgba(255,255,255,0.06); }
       .vivi-src-row .vivi-src-name { flex:1; font-size:12.5px; color:var(--text-1); }
@@ -295,7 +296,7 @@
       const n = row?.nextElementSibling;
       if (note && n?.matches('p.theme-sub')) n.textContent = note;
     };
-    relabel('spotifyCanvasEnabled', 'Canvas', "The song's music video or Spotify's Canvas, played silently over the cover. Spotify needs no account.");
+    relabel('spotifyCanvasEnabled', 'Canvas', "The song's music video or Spotify's Canvas, played silently over the cover. Spotify's Canvas uses your Spotify sign-in when you have one (Connect below opens Spotify; you sign in there).");
     const prio = document.getElementById('canvasPrioritySelect')?.closest('.row');
     if (prio) { const n = prio.nextElementSibling; prio.style.display = 'none'; if (n?.matches('p.theme-sub')) n.style.display = 'none'; }
 

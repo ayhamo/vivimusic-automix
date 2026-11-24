@@ -6,8 +6,7 @@
 //
 // Loaded after spotify.js and background.js. It wraps upstream's spotifyCanvasForTrack (a global
 // function, called by background.js for VIVI_SPOTIFY_CANVAS), so upstream's file is unchanged:
-// only the no-login lookup runs: Spotify's canvas is anonymous only (canvas.md §13 rule 9), so
-// upstream's signed-in lookup is never called.
+// the listener's own Spotify sign-in first (upstream's lookup), then the anonymous one (canvas.md §4 rule 0).
 
 'use strict';
 
@@ -205,15 +204,32 @@ const viviSpotifyCanvas = (() => {
 })();
 globalThis.viviSpotifyCanvas = viviSpotifyCanvas;   // for the test page and the console
 
-// vivi+ hook: replaces upstream's lookup (spotify.js); upstream's saved canvas URLs are used first
+// vivi+ hook around upstream's lookup (spotify.js): saved canvas URLs first, then the listener's
+// own sign-in (upstream's signed-in lookup, its canvas trusted per rule 6), then the anonymous one
 if (typeof spotifyCanvasForTrack === 'function') {
+  const signedInCanvas = spotifyCanvasForTrack;
   // eslint-disable-next-line no-global-assign
   spotifyCanvasForTrack = async function (track) {
     const key = `${track.artist}—${track.song}`;
     const saved = (await chrome.storage.local.get(`spotify_canvas_${key}`))[`spotify_canvas_${key}`];
     if (saved?.videoUrl) return saved.videoUrl;
+    let url = null;
+    if (await getSpDc()) {
+      try {
+        url = await signedInCanvas(track);
+        if (url && !viviSpotifyCanvas.trusted(url)) {
+          console.warn('[vivi canvas] spotify (signed in): the canvas is not on scdn.co, not taken');
+          await chrome.storage.local.remove(`spotify_canvas_${key}`);
+          url = null;
+        }
+        console.info(`[vivi canvas] spotify (signed in): ${url ? 'a canvas' : 'none'} for '${track.song}'`);
+      } catch (e) {
+        console.warn('[vivi canvas] spotify (signed in) failed:', e?.message || e);
+      }
+    }
+    if (url) return url;
     try {
-      const url = await viviSpotifyCanvas.find(track);
+      url = await viviSpotifyCanvas.find(track);
       if (url) await chrome.storage.local.set({ [`spotify_canvas_${key}`]: { videoUrl: url, cachedAt: Date.now() } });
       return url;
     } catch (e) {

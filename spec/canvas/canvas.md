@@ -59,11 +59,18 @@ Original: BitChord `BC/data/canvas/AppleMusicCanvas.kt`. Phone: `FEAT/AppleCanva
 
 Cases: `appleScore`, `appleRank`, `appleToken`, `appleMotion`.
 
-## 4. Spotify Canvas, no login
+## 4. Spotify Canvas
 
-Original: Metrolist `ML/jvmSharedMain/kotlin/com/metrolist/shared/api/artwork/DirectCanvasProvider.kt`. Phone: `FEAT/SpotifyCanvas.java`. PC: `src/plus/bg-canvas.js`.
+Original: Metrolist `ML/jvmSharedMain/kotlin/com/metrolist/shared/api/artwork/DirectCanvasProvider.kt`. Phone: `FEAT/SpotifyCanvas.java`. PC: `src/plus/bg-canvas.js`, with upstream's signed-in lookup in `src/spotify.js`.
 
-1. **[both]** Always anonymous: the web player's token by TOTP (spotlib's secret, version 61, 30 s steps, 6 digits), then a client token. Never the listener's Spotify account. ML `:139-149`. Phone `:44-45, 209-272`.
+0. **[both]** The order (since 2026-11-24; the anonymous canvas answers `null` for every track today):
+   1. **The listener's own Spotify sign-in**, when there is one: the web player's token from their `sp_dc` session, the canvas asked for the matched track. A canvas found this way still has to pass rule 6.
+   2. **Without a sign-in**, or when the signed-in lookup finds nothing or fails: the anonymous lookup of rules 1-7. It is cheap and may answer again.
+   3. Else no Spotify canvas (the next source in §1).
+   - **[PC]** The signed-in lookup is upstream's own (`spotifyCanvasForTrack`: its track match `resolveSpotifyTrackId`, the canvas over spclient `canvaz-cache` in protobuf). **[phone only]** The phone has no upstream lookup: it asks pathfinder `canvas` (rule 5) with the signed-in token, after the match of rules 2-4.
+   - **[both]** The session is the listener's: they sign in on Spotify's own page (PC: open.spotify.com in the browser; phone: a sign-in screen, §13 rule 9). The `sp_dc` cookie is never printed, logged, shown (not even in part) or put in a URL; it is sent only to Spotify, in the cookie header.
+   - **[both]** After Sign out the session is forgotten by the app and not picked up again (PC: the browser's own Spotify login is left alone, and not read until Sign in).
+1. **[both]** The anonymous lookup: the web player's token by TOTP (spotlib's secret, version 61, 30 s steps, 6 digits), then a client token. No account. ML `:139-149`. Phone `:44-45, 209-272`.
 2. **[both]** Search: pathfinder `searchTopResultsList`, query `title artist`, 10 results. ML `:159-186`.
 3. **[both]** The first Track among the top 10 that matches and has a canvas wins. ML `:187-221`.
 4. **[both]** Match (ML `:397-436`):
@@ -79,7 +86,7 @@ Original: Metrolist `ML/jvmSharedMain/kotlin/com/metrolist/shared/api/artwork/Di
 6. **[both]** Media is taken only from https, port 443, no user or password, host `scdn.co` or under it. ML `:378-395`.
 7. **[both]** Each request times out at 8000 ms; an answer is read up to 256 KB. ML `:60-64, 124, 227`. Phone `:46`.
 
-Cases: `spotifyMatch`, `spotifyMedia`, `spotifyTotp`, `spotifyCanvas` (rule 5: a pathfinder answer to the canvas URL).
+Cases: `spotifyMatch`, `spotifyMedia`, `spotifyTotp`, `spotifyCanvas` (rule 5: a pathfinder answer to the canvas URL). Not cased: the signed-in lookup (it needs a live session; checked live).
 
 ## 5. Finding the music video
 
@@ -253,7 +260,9 @@ Original: Metrolist's Artwork page, `ML/commonMain/kotlin/com/metrolist/shared/u
 6. **[both]** **YouTube canvas quality:** Auto, 2160p, 1440p, 1080p, 720p or 480p (default); the music video's stream is asked for at that height, Auto leaves it to the player. Changing it looks the song's video canvas up again. `Settings.kt:722`, `ML/commonMain/kotlin/com/metrolist/shared/settings/SettingEnums.kt:143-160`, `ML/commonMain/kotlin/com/metrolist/shared/viewmodels/PlayerViewModel.kt:782`.
 7. **[both]** **YouTube canvas mode:** Clips (default) or Full video. Full video plays the whole music video, muted. Clips plays the part picked by §6-7; this is ours. Metrolist's clips are 4 random 3000 ms parts of the video (`AnimatedCoverSelection.kt:12, 55-79`), which our clip picking replaces. Metrolist shows both YouTube settings on Android only (`AppearanceSettingsRegistration.kt:824-866`).
 8. **[both]** **Artist images** and **Artist videos** from Apple Music, for the artist page's header: two switches, both off by default (videos follow images until set), and an artist video quality with the same choices as rule 5, default 720p. Keyed by the storefront country and language, the artist's name, both switches and the quality. `Settings.kt:711-714`, `AnimatedArtworkService.kt:275-290`. Metrolist hides them on iOS.
-9. **[both]** No Spotify login, and no setting for one: Spotify's canvas is anonymous only (§4.1). Metrolist 14.0.1's Spotify sign-in page is for importing playlists, not canvas.
+9. **[both]** **Spotify sign-in:** one row under the Canvas switch: Sign in while signed out, and while signed in "Spotify connected" with Sign out (§4 rule 0). No password or cookie is typed into the app. Until 2026-11-24 this rule said "no Spotify login"; that was wrong.
+   - **[PC]** Upstream's Connect and Disconnect (`spotifyConnectFromBrowser`, `clearSpotify`, made disconnect-safe in a1e4144): Connect opens open.spotify.com and waits up to 2 minutes for the listener to sign in there. The pasted-cookie field is hidden, and the row shows no part of the cookie.
+   - **[phone only]** A sign-in screen with Spotify's own login page (a web view); the `sp_dc` cookie is read from it once the listener is signed in, and kept in the app's private storage.
 10. **[both]** A change to the order, the sources on, the mode, either quality or a master switch clears the "failed" marks, so the new choice is tried at once. `ML/commonMain/kotlin/com/metrolist/shared/ui/player/PlayerScreen.kt:647-655`.
 
 Cases: `settings` (`settingsOrder`, `settingsEnabled`, `appleVariant`).

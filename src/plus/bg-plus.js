@@ -634,6 +634,12 @@ getSecretDict = async function getSecretDict() {
   spotifyConnectFromBrowser = function spotifyConnectFromBrowser() { return viviWithKeepAlive(connect); };
 }
 
+// canvas.md §4 rule 0: no part of the sp_dc cookie leaves the background (upstream showed 8 of its characters)
+{
+  const status = spotifyStatus;
+  spotifyStatus = async function spotifyStatus() { const s = await status(); if (s) delete s.masked; return s; };
+}
+
 clearSpotify = async function clearSpotify() {
   spotifyTokenCache = null;
   spotifyClientTokenCache = null;
