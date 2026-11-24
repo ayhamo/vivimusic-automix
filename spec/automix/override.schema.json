@@ -13,13 +13,25 @@
     },
     "lanes": {
       "type": "object",
-      "description": "Only with preset custom: the shapes of editor.md §3",
+      "description": "Only with preset custom: each lane a shape of editor.md §3, or a drawing (§10)",
       "additionalProperties": false,
       "required": ["volume", "eq", "effect"],
       "properties": {
-        "volume": { "enum": ["smooth", "crossfade", "overlap", "cutInFadeOut", "fadeInCutOut", "centerCut"] },
-        "eq": { "enum": ["centerBassSwap", "endBassSwap", "threeBandFade", "quickBassCut", "none"] },
-        "effect": { "enum": ["none", "lpOut", "hpIn", "lpBoth", "hpBoth", "lpInHpOut"] }
+        "volume": { "oneOf": [
+          { "enum": ["smooth", "crossfade", "overlap", "cutInFadeOut", "fadeInCutOut", "centerCut"] },
+          { "type": "object", "additionalProperties": false, "required": ["unit", "out", "in"],
+            "properties": { "unit": { "$ref": "#/$defs/unit" }, "out": { "$ref": "#/$defs/gainCurve" }, "in": { "$ref": "#/$defs/gainCurve" } } }
+        ] },
+        "eq": { "oneOf": [
+          { "enum": ["centerBassSwap", "endBassSwap", "threeBandFade", "quickBassCut", "none"] },
+          { "type": "object", "additionalProperties": false, "required": ["unit", "out", "in"],
+            "properties": { "unit": { "$ref": "#/$defs/unit" }, "out": { "$ref": "#/$defs/eqDeck" }, "in": { "$ref": "#/$defs/eqDeck" } } }
+        ] },
+        "effect": { "oneOf": [
+          { "enum": ["none", "lpOut", "hpIn", "lpBoth", "hpBoth", "lpInHpOut"] },
+          { "type": "object", "additionalProperties": false, "required": ["unit", "out", "in"],
+            "properties": { "unit": { "$ref": "#/$defs/unit" }, "out": { "$ref": "#/$defs/effectDeck" }, "in": { "$ref": "#/$defs/effectDeck" } } }
+        ] }
       }
     },
     "bars": { "enum": [2, 4, 8, 16, 32], "description": "the window's length; absent: Auto. Ignored for loop." },
@@ -45,6 +57,17 @@
     { "if": { "properties": { "preset": { "const": "custom" } }, "required": ["preset"] }, "then": { "required": ["lanes"] }, "else": { "not": { "required": ["lanes"] } } }
   ],
   "$defs": {
+    "unit": { "enum": ["beat", "sec"], "description": "editor.md §10 rule 1: x in beats of A from the window's start, or seconds of the mix" },
+    "points": {
+      "type": "array", "maxItems": 128,
+      "description": "[x, v], sorted by x; at most 2 at one x (a step, played as an 8 ms ramp)",
+      "items": { "type": "array", "prefixItems": [{ "type": "number", "minimum": 0 }, { "type": "number" }], "minItems": 2, "maxItems": 2 }
+    },
+    "gainCurve": { "allOf": [{ "$ref": "#/$defs/points" }], "minItems": 1, "items": { "prefixItems": [true, { "minimum": 0, "maximum": 1 }] } },
+    "dbCurve": { "allOf": [{ "$ref": "#/$defs/points" }], "minItems": 1, "items": { "prefixItems": [true, { "minimum": -18, "maximum": 0 }] } },
+    "hzCurve": { "allOf": [{ "$ref": "#/$defs/points" }], "minItems": 1, "items": { "prefixItems": [true, { "minimum": 20, "maximum": 20000 }] } },
+    "eqDeck": { "type": "object", "additionalProperties": false, "properties": { "bass": { "$ref": "#/$defs/dbCurve" }, "high": { "$ref": "#/$defs/dbCurve" } } },
+    "effectDeck": { "type": "object", "additionalProperties": false, "properties": { "lp": { "$ref": "#/$defs/hzCurve" }, "hp": { "$ref": "#/$defs/hzCurve" } } },
     "position": {
       "type": "object",
       "additionalProperties": false,

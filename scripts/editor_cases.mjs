@@ -52,7 +52,28 @@ for (const c of spec.plans) {
   if (!ok) failed++;
   console.log(`${ok ? 'ok  ' : 'DIFF'} plan ${c.name}${ok ? '' : ': got ' + JSON.stringify(got)}`);
 }
-const n = spec.curves.length + spec.windows.length + spec.plans.length;
+// editor.md §10, drawn curves
+const counted = (o) => o && { ...o, lanes: Object.fromEntries(Object.entries(o.lanes || {}).map(([k, v]) => [k, typeof v === 'string' ? v : { out: v.out.length ?? Object.keys(v.out).length, in: v.in.length ?? Object.keys(v.in).length }])) };
+const draws = spec.draw.filter((c) => c.name);
+for (const c of draws) {
+  let got;
+  if (c.fn === 'pointCurves') {
+    const D = c.D ?? A.glideSteps(c.glide.q, c.glide.beats, c.glide.beatOutSec).total;
+    got = A.pointCurves(c.lanes, D, c.beatSec, c.glide || null);
+  } else if (c.fn === 'presetCurves') got = A.presetCurves(c.override, c.D, c.beatSec, { beatSec: c.beatSec, glide: null });
+  else if (c.fn === 'normalizeOverride') { got = A.normalizeOverride(c.override); if (c.count) got = counted(got); }
+  else if (c.fn === 'shapeDrawing') got = A.shapeDrawing(c.lane, c.shape, c.D, c.beatSec, null, c.unit);
+  else if (c.fn === 'plan') {
+    const P = load(null), from = song(c.out), to = song(c.in);
+    const p = P.plan({ fromId: 'a', toId: 'b', from, to, durationSec: from.durationSec, pos: c.pos, earliest: c.pos + 4.5, pick: c.override });
+    got = { style: p.style, bars: p.bars, durationSec: r6(p.durationSec), outRate: r6(p.outRate || 1), rate: r6(p.rate), gainOut: p.curves.out.gain, gainIn: p.curves.in.gain };
+  }
+  if (update) { c.expect = got ?? null; continue; }
+  const ok = same(got ?? null, c.expect);
+  if (!ok) failed++;
+  console.log(`${ok ? 'ok  ' : 'DIFF'} draw ${c.name}${ok ? '' : ': got ' + JSON.stringify(got)}`);
+}
+const n = spec.curves.length + spec.windows.length + spec.plans.length + draws.length;
 if (update) { writeFileSync(FILE, JSON.stringify(spec, null, 1) + '\n'); console.log('wrote', n, 'cases'); }
 else console.log(failed ? `${failed} case(s) differ` : `all ${n} editor cases pass`);
 process.exit(failed ? 1 : 0);

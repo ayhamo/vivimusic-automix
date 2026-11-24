@@ -6,8 +6,8 @@ file. The user's edits are saved per pair as an **override** (`override.schema.j
 turns an override into a plan whose `curves` (plan.schema.json) both engines play.
 
 Fixtures: `editor-cases.json` (an override → its curves and window). Runner on the extension:
-`node scripts/editor_cases.mjs`. Functions: `presetCurves` and `resolveWindow` in
-`src/automix/automix.js`.
+`node scripts/editor_cases.mjs`. Functions: `presetCurves`, `resolveWindow`, and for
+drawings (§10) `pointCurves`, `drawSec` and `normalizeOverride`, in `src/automix/automix.js`.
 
 Sources: research `Spotify-Apple-Mixing.md` §1.2 (Spotify's editor) and §5 (what we lack), and
 SHORTLIST "Overview → editor".
@@ -17,7 +17,7 @@ SHORTLIST "Overview → editor".
 - **Key:** `"<fromVideoId>>``<toVideoId>"`, the same key both apps use today for `{style, bars}`.
 - **Fields:**
   - `preset`;
-  - `lanes` {volume, eq, effect} (only for `custom`);
+  - `lanes` {volume, eq, effect} (only for `custom`): each a shape name, or a drawing (§10);
   - `bars`;
   - `beatMatch`;
   - `window` {out, in}, each a bar index plus a nudge in ms plus the seconds it meant when saved;
@@ -328,3 +328,102 @@ the window.
 
 Both engines play `plan.curves`. The extension's engine plays gain, the low and high shelves, HP, LP
 and rate on both decks. The phone's blend engine plays the same six.
+
+## 10. Drawn curves
+
+Asked for after Spotify mixes the shapes of §3 can't make: a volume gated on and off 20 times, a
+bump before a jump at the window's middle, slopes that bend twice. Under Customize, a lane can hold
+points the user drew instead of a shape name. Both engines already play any `[[t, v], …]` curve
+(plan.schema.json), so only the stored form, the conversion and the editor are new.
+
+**1. The stored drawing.** In `lanes` (with `preset: custom`), a lane is a shape name (§3) or a
+drawing:
+
+```json
+"lanes": {
+  "volume": { "unit": "beat", "out": [[0, 1], [8, 1], [8, 0], [8.5, 0], [8.5, 1]], "in": [[0, 0], [32, 1]] },
+  "eq": "centerBassSwap",
+  "effect": { "unit": "beat", "out": { "hp": [[24, 20], [32, 1000]] }, "in": {} }
+}
+```
+
+- `unit`: `beat` (x in beats of A from the window's start) or `sec` (x in seconds of the mix). The
+  editor draws in beats, and in seconds when the plan has no beat grid (beat match Off, a hand-over,
+  a fade). Either unit plays on any plan (rule 4).
+- The curves, each a list of `[x, v]`:
+
+  | Lane | Per deck | Plan curve | Range |
+  |---|---|---|---|
+  | volume | the list itself | `gain` | 0..1 |
+  | eq | `bass`, `high` | `bassDb`, `highDb` | −18..0 dB |
+  | effect | `lp`, `hp` | `lowpassHz`, `highpassHz` | 20..20000 Hz |
+
+- A volume drawing has both decks. An EQ or effect curve that's missing is none: the deck plays
+  that band or filter open. Rate is never drawn: it comes from the beat-match mode (§3, §4).
+- Lanes mix freely: a drawn volume with a named EQ shape is fine.
+
+**2. Saving** (`normalizeOverride`, both apps):
+- x is rounded to 0.001 and never below 0; v is clamped to its range and rounded to 0.001 (Hz to
+  1 Hz).
+- Points are sorted by x, ties kept in the order drawn. At most 2 points share one x (a step): a
+  third at that x is dropped.
+- At most 128 points per curve (`DRAW_MAX_POINTS`): the ones past 128 are dropped. The editor
+  refuses the 129th instead, with exactly "128 points is the most for one line". (A gate is 4
+  points, so 20 gates and their lead-in fit; a full drawing of 10 curves is under 20 KB.)
+- An EQ or effect drawing with no curve left is saved as `none`. A volume drawing with a deck that
+  has no points, or a drawing without a valid `unit`, is invalid: the lanes are refused and the
+  override drops `custom`, as an invalid shape name does today.
+
+**3. Steps.** Two points at one x are a step. It plays as a ramp of `CUT_RAMP_SEC` (8 ms, as Slam):
+`[t, a] [t + 0.008, b]`, the ramp's end held at the next point's t when that comes sooner. So a gate
+never clicks.
+
+**4. From x to the plan's seconds** (`drawSec(x, unit, beatSec, glide)`; `pointCurves`):
+- `sec`: t = x.
+- `beat` on a beat-matched plan (a blend or a filter mix): one beat of A in the mix's seconds,
+  `barSec / 4` (A's beat over its rate, so a sped-up A is counted right). Under Glide the beats
+  differ: beat k starts at the glide's `at[k]` and lasts `dur[k]` (`glideSteps`), and t =
+  at[floor(x)] + frac(x) · dur[floor(x)]. Past the last beat, its length goes on.
+- `beat` on a plan with no beat match (a fade, a hand-over, beat match Off): A's beat from its end
+  grid (`editorGrid(A, 'out')`), else 0.5 s (120 BPM).
+- A half- or double-time pair counts on A's grid: B's beats land on every other x, or two per x. The
+  planner's folding (automix.js `foldRate`) keeps them locked.
+
+**5. The window's length** (decision A): the drawing keeps its beats when the length changes.
+- Points past the window's end are cut, and the value there (linear, Hz geometric) is added as the
+  last point at D. When the first point is already past D, the curve is its first value held:
+  `[[0, v]]`.
+- A drawing shorter than the window holds its last value, as every curve does.
+- Before the first point, the first value is held.
+
+**6. In the editor** (extension: `src/automix-overview.js`; the phone draws its own, and can show a
+drawing read-only first):
+- Each lane's dropdown has "Draw". Picking it turns the lane's shape into points
+  (`shapeDrawing`): the shape's curves read back to x, an 8 ms ramp read back as a step. A drawing
+  starts as the shape it came from.
+  - On a loop mix (Auto chose one), Draw first picks Custom and starts the drawing on the blend
+    planned for it.
+  - A drawing is made for the window it was drawn on, so each drawing edit also saves the length
+    shown (`bars`) when Length is Auto. Auto could otherwise shorten the window under it (a key
+    clash plays 2 bars). A length picked by hand afterwards still applies (rule 5).
+- With a drawn lane, a row of curve chips appears under the canvas (Volume; Bass, High; Lowpass,
+  Highpass, for the drawn lanes). The chosen curve is drawn bold with its points, on both decks'
+  halves; the others stay as they are.
+- On the chosen curve:
+  - a click inside the frame adds a point to that deck's curve; a drag moves it; a double-click or a
+    right-click deletes it;
+  - x snaps to a quarter beat (`beat`), or 10 ms (`sec`); Shift drags free;
+  - a drag onto a neighbour's x makes a step, but never a third point at one x;
+  - a deck's last point can't be deleted from a volume drawing.
+  - While a curve is chosen, the frame is for points: the window is moved with the nudges or after
+    "Done" (no curve chosen).
+- **Repeat:** "Repeat beats a–b every n until the end" copies that span's points of the chosen
+  curve, both decks, along the window (start beat, length in beats; n = the length). The points
+  already in each copy's span are replaced. Refused past 128 points, with the same message.
+- **Undo** (Ctrl+Z, and a button): one step back per edit while the dialog is open, 50 steps.
+- Each edit is saved at once, as any other edit, so the next plan (and Preview) plays it.
+
+**7. To plan.curves** (§9): a drawn lane replaces that lane's curves of the shape; the planner's
+tempo stays, as for any preset.
+
+Cases: `editor-cases.json`, group `draw` (`pointCurves` and `normalizeOverride` on drawings).

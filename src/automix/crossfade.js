@@ -2936,7 +2936,8 @@
       }
       const D = x ? x.elementAt : m.durationSec;
       const [gIn, gOut] = x ? [null, null] : m.preset && m.curves
-        ? [m.curves.in.gain, m.curves.out.gain].map((pts) => Float32Array.from({ length: 256 }, (_, i) => curveAt(pts, (D * i) / 255, false)))
+        // (1024: a drawn gate of a fifth of a second still shows, editor.md §10)
+        ? [m.curves.in.gain, m.curves.out.gain].map((pts) => Float32Array.from({ length: 1024 }, (_, i) => curveAt(pts, (D * i) / 1023, false)))
         : gainCurves(m, m.style, D);
       ovShape = { m, src, x, D, gIn, gOut };
     }

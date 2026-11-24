@@ -400,7 +400,9 @@
       if (ov && ov.preset !== 'loop') {
         if (warnings.length) p.warnings = warnings;
         if (ov.window?.in && p.style === 'blend') p.windowIn = true;   // placed by the user: the kick lock leaves it (editor.md §6)
-        const pc = !(p.fallback && !(from && to)) && presetCurves(ov, p.durationSec, p.style === 'crossfade' ? null : p.beatSec);
+        // a drawing's beats (editor.md §10 rule 4): the mix's beat of A, its glide steps; with no beat match, A's own beat
+        const draw = p.style !== 'crossfade' && p.barSec > 0 ? { beatSec: p.barSec / 4, glide: p.glide } : { beatSec: editorGrid(from, 'out')?.beatSec || 0.5, glide: null };
+        const pc = !(p.fallback && !(from && to)) && presetCurves(ov, p.durationSec, p.style === 'crossfade' ? null : p.beatSec, draw);
         if (pc) {
           // the preset's gain, shelves and filters; the planner's tempo stays (editor.md §9)
           for (const side of ['out', 'in']) { if (p.curves[side].rate) pc[side].rate = p.curves[side].rate; }
@@ -419,7 +421,15 @@
     if (!o) return null;
     const n = {};
     if (PRESET_NAMES.includes(o.preset)) n.preset = o.preset;
-    if (n.preset === 'custom' && o.lanes && Object.keys(LANE_VALUES).every((k) => LANE_VALUES[k].includes(o.lanes[k]))) n.lanes = { volume: o.lanes.volume, eq: o.lanes.eq, effect: o.lanes.effect };
+    if (n.preset === 'custom' && o.lanes) {
+      // each lane a shape name (§3) or a drawing (§10 rule 2)
+      const l = {};
+      for (const k of Object.keys(LANE_VALUES)) {
+        const v = o.lanes[k];
+        l[k] = typeof v === 'string' ? (LANE_VALUES[k].includes(v) ? v : null) : normalizeDrawing(k, v);
+      }
+      if (Object.values(l).every((v) => v)) n.lanes = l;
+    }
     if (n.preset === 'custom' && !n.lanes) delete n.preset;
     if (!n.preset && (o.family === 'blend' || o.family === 'filter')) n.family = o.family;
     if (n.preset !== 'loop') {
@@ -1395,9 +1405,24 @@
     eq: ['centerBassSwap', 'endBassSwap', 'threeBandFade', 'quickBassCut', 'none'],
     effect: ['none', 'lpOut', 'hpIn', 'lpBoth', 'hpBoth', 'lpInHpOut'],
   };
-  function presetCurves(override, D, beatSec) {
+  // draw: { beatSec, glide } for drawn lanes (editor.md §10 rule 4; default: beatSec, no glide)
+  function presetCurves(override, D, beatSec, draw = null) {
     const lanes = override?.preset === 'custom' ? override.lanes : PRESET_LANES[override?.preset];
     if (!lanes || !(D > 0)) return null;
+    const drawn = (k) => lanes[k] && typeof lanes[k] === 'object';
+    if (Object.keys(LANE_VALUES).some(drawn)) {
+      // the named lanes as §3, then each drawn lane's curves in their place (§10 rule 7)
+      const named = { ...lanes };
+      for (const k of Object.keys(LANE_VALUES)) if (drawn(k)) named[k] = k === 'volume' ? 'crossfade' : 'none';
+      const base = presetCurves({ preset: 'custom', lanes: named }, D, beatSec);
+      if (!base) return null;
+      const pc = pointCurves(lanes, D, draw?.beatSec ?? beatSec ?? 0.5, draw?.glide || null);
+      for (const k of Object.keys(LANE_VALUES)) {
+        if (!drawn(k)) continue;
+        for (const side of ['out', 'in']) for (const key of DRAW_KEYS[k]) { if (pc[side][key]) base[side][key] = pc[side][key]; else delete base[side][key]; }
+      }
+      return base;
+    }
     const e = CUT_RAMP_SEC / D, hb = beatSec > 0 ? (0.5 * beatSec) / D : 0.02, C = EDITOR_CUT_DB;
     const r4 = (v) => Math.round(v * 1e6) / 1e6;
     const at = (pts) => pts.map(([x, v]) => [r4(x * D), r4(v)]);
@@ -1431,6 +1456,131 @@
       default: return null;
     }
     return { durationSec: r4(D), out, in: inn };
+  }
+
+  // ───────── drawn curves (editor.md §10) ─────────
+  const DRAW_MAX_POINTS = 128;   // 20 gates of 4 points (a stutter) fit
+  // a lane's plan curves, and each drawn curve's name in the stored deck and its range
+  const DRAW_KEYS = { volume: ['gain'], eq: ['bassDb', 'highDb'], effect: ['lowpassHz', 'highpassHz'] };
+  const DRAW_CURVES = {
+    gain: { lane: 'volume', name: null, lo: 0, hi: 1, hz: false },
+    bassDb: { lane: 'eq', name: 'bass', lo: EDITOR_CUT_DB, hi: 0, hz: false },
+    highDb: { lane: 'eq', name: 'high', lo: EDITOR_CUT_DB, hi: 0, hz: false },
+    lowpassHz: { lane: 'effect', name: 'lp', lo: 20, hi: 20000, hz: true },
+    highpassHz: { lane: 'effect', name: 'hp', lo: 20, hi: 20000, hz: true },
+  };
+  const deckCurve = (drawing, side, key) => { const c = DRAW_CURVES[key], d = drawing?.[side]; return c.name ? d?.[c.name] : d; };
+  // rule 4: x (beats of A, or seconds) -> seconds of the mix. glide: the plan's { q, beats, beatOutSec }.
+  function drawSec(x, unit, beatSec, glide) {
+    if (unit === 'sec') return x;
+    if (glide?.q && glide.beats > 0) {
+      const G = glideSteps(glide.q, glide.beats, glide.beatOutSec), B = G.dur.length;
+      const k = Math.min(B - 1, Math.max(0, Math.floor(x)));
+      return G.at[k] + (x - k) * G.dur[k];
+    }
+    return x * (beatSec > 0 ? beatSec : 0.5);
+  }
+  // seconds of the mix -> x (the inverse, for the editor)
+  function drawX(t, unit, beatSec, glide) {
+    if (unit === 'sec') return t;
+    if (glide?.q && glide.beats > 0) {
+      const G = glideSteps(glide.q, glide.beats, glide.beatOutSec), B = G.dur.length;
+      let k = 0;
+      while (k < B - 1 && G.at[k + 1] <= t) k++;
+      return k + (t - G.at[k]) / G.dur[k];
+    }
+    return t / (beatSec > 0 ? beatSec : 0.5);
+  }
+  const valueAt = (a, b, t, hz) => {
+    const f = (t - a[0]) / Math.max(1e-12, b[0] - a[0]);
+    return hz ? a[1] * Math.pow(b[1] / a[1], f) : a[1] + (b[1] - a[1]) * f;
+  };
+  // rules 3-5: the drawn lanes -> plan curves { out, in } over a window of D seconds
+  function pointCurves(lanes, D, beatSec, glide) {
+    const r6 = (v) => Math.round(v * 1e6) / 1e6;
+    const res = { out: {}, in: {} };
+    for (const [lane, keys] of Object.entries(DRAW_KEYS)) {
+      const d = lanes?.[lane];
+      if (!d || typeof d !== 'object') continue;
+      for (const side of ['out', 'in']) for (const key of keys) {
+        const pts = deckCurve(d, side, key);
+        if (!Array.isArray(pts) || !pts.length) continue;
+        const hz = DRAW_CURVES[key].hz;
+        const ts = pts.map(([x, v]) => [drawSec(x, d.unit, beatSec, glide), v]);
+        // a step (two points at one x): its second point 8 ms on, held at the next point's t
+        for (let i = 1; i < ts.length; i++) {
+          if (pts[i][0] === pts[i - 1][0]) ts[i][0] = Math.min(ts[i][0] + CUT_RAMP_SEC, i + 1 < ts.length ? ts[i + 1][0] : Infinity);
+        }
+        // the window's end: later points cut, the value at D the last one
+        let c = ts;
+        const past = ts.findIndex(([t]) => t > D + 1e-9);
+        if (past === 0) c = [[0, ts[0][1]]];
+        else if (past > 0) {
+          c = ts.slice(0, past);
+          if (c[c.length - 1][0] < D - 1e-9) c.push([D, valueAt(ts[past - 1], ts[past], D, hz)]);
+        }
+        res[side][key] = c.map(([t, v]) => [r6(t), r6(v)]);
+      }
+    }
+    return res;
+  }
+  // rule 2: a drawing as saved (null: invalid; 'none' for an EQ or effect drawing with no curve left)
+  function normalizeDrawing(lane, d) {
+    if (!d || typeof d !== 'object' || !['beat', 'sec'].includes(d.unit) || !DRAW_KEYS[lane]) return null;
+    const r3 = (v) => Math.round(v * 1e3) / 1e3;
+    const clean = (pts, c) => {
+      if (!Array.isArray(pts)) return null;
+      const ok = pts.filter((p) => Array.isArray(p) && Number.isFinite(p[0]) && Number.isFinite(p[1]))
+        .map(([x, v]) => [Math.max(0, r3(x)), c.hz ? Math.round(clamp(v, c.lo, c.hi)) : r3(clamp(v, c.lo, c.hi))])
+        .map((p, i) => [p, i]).sort((a, b) => a[0][0] - b[0][0] || a[1] - b[1]).map(([p]) => p);
+      const kept = [];
+      for (const p of ok) {
+        if (kept.length >= DRAW_MAX_POINTS) break;
+        const n = kept.length;
+        if (n >= 2 && kept[n - 1][0] === p[0] && kept[n - 2][0] === p[0]) continue;   // a third at one x
+        kept.push(p);
+      }
+      return kept.length ? kept : null;
+    };
+    const out = { unit: d.unit };
+    let any = false;
+    for (const side of ['out', 'in']) {
+      if (lane === 'volume') {
+        const c = clean(d[side], DRAW_CURVES.gain);
+        if (!c) return null;
+        out[side] = c;
+        any = true;
+      } else {
+        const deck = {};
+        for (const key of DRAW_KEYS[lane]) {
+          const c = clean(d[side]?.[DRAW_CURVES[key].name], DRAW_CURVES[key]);
+          if (c) { deck[DRAW_CURVES[key].name] = c; any = true; }
+        }
+        out[side] = deck;
+      }
+    }
+    return any ? out : 'none';
+  }
+  // rule 6: a named shape as a drawing, so "Draw" starts from the shape. The shape's curves read
+  // back to x; an 8 ms ramp read back as a step (two points at one x).
+  function shapeDrawing(lane, shape, D, beatSec, glide, unit) {
+    const pc = presetCurves({ preset: 'custom', lanes: { volume: 'crossfade', eq: 'none', effect: 'none', [lane]: shape } }, D, beatSec);
+    if (!pc) return null;
+    const r3 = (v) => Math.round(v * 1e3) / 1e3;
+    const toX = (pts) => {
+      const xs = pts.map(([t, v]) => [r3(drawX(t, unit, beatSec, glide)), v]);
+      for (let i = 1; i < pts.length; i++) if (pts[i][0] - pts[i - 1][0] <= CUT_RAMP_SEC + 1e-6 && pts[i][0] > pts[i - 1][0]) xs[i][0] = xs[i - 1][0];
+      return xs.map(([x, v]) => [x, r3(v)]);
+    };
+    const d = { unit };
+    for (const side of ['out', 'in']) {
+      if (lane === 'volume') d[side] = toX(pc[side].gain);
+      else {
+        d[side] = {};
+        for (const key of DRAW_KEYS[lane]) if (pc[side][key]) d[side][DRAW_CURVES[key].name] = toX(pc[side][key]);
+      }
+    }
+    return normalizeDrawing(lane, d);
   }
 
   // A saved window position back to song seconds, editor.md §6. grid: { downbeatSec, beatSec } of that
@@ -1786,6 +1936,7 @@
     kickSource,
     loopOrBlend,
     presetCurves, migratePick, normalizeOverride, editorGrid, windowLimits,
+    pointCurves, drawSec, drawX, shapeDrawing, normalizeDrawing, DRAW_MAX_POINTS,
     resolveWindow,
     PRESET_LANES,
     PRESET_BARS,

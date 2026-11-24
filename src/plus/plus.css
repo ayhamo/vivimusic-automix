@@ -445,6 +445,12 @@ ytmusic-player-bar:has(ytmusic-player-expanding-menu:not([aria-hidden="true"]):n
 .vivi-amx-ov-lane i { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
 .vivi-amx-ov-lane select { margin-left: auto; min-width: 210px; background: #1f1c2a; color: #fff; border: 1px solid rgba(255, 255, 255, 0.16); border-radius: 8px; padding: 3px 6px; font: inherit; }
 .vivi-amx-ov-canvas { cursor: grab; touch-action: none; }
+.vivi-amx-ov-draw { margin-left: 82px; display: flex; flex-direction: column; gap: 6px; font-size: 12px; color: rgba(255, 255, 255, 0.75); }
+.vivi-amx-ov-draw[hidden], .vivi-amx-ov-draw .vivi-amx-ov-chip[hidden] { display: none; }
+.vivi-amx-ov-draw .vivi-amx-ov-label { width: auto; }
+.vivi-amx-ov-repeat { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.vivi-amx-ov-repeat input { width: 64px; background: #1f1c2a; color: #fff; border: 1px solid rgba(255, 255, 255, 0.16); border-radius: 8px; padding: 3px 6px; font: inherit; }
+.vivi-amx-ov-hint { color: rgba(255, 255, 255, 0.55); }
 .vivi-amx-ov-canvas:active { cursor: grabbing; }
 @media (max-width: 560px) {
   .vivi-amx-ov-songs { flex-direction: column; align-items: stretch; }

@@ -10,7 +10,8 @@
  * or custom lanes, beat match, a length (Auto, 2 to 32 bars) and the window
  * (each song dragged under the mix, snapped to its grid, nudged in 10 ms) can
  * be set for each pair of songs, kept (or locked) for the next time the pair
- * plays, and Preview jumps to just before the mix.
+ * plays, and Preview jumps to just before the mix. A lane can be drawn point by
+ * point instead (editor.md §10): Draw in its dropdown, then the curve chips.
  *
  * Opened by its button in the player bar (while Automix is on) or by
  * clicking the Automix toast. Everything here only reads what crossfade.js plans
@@ -34,8 +35,22 @@
     eq: [['centerBassSwap', 'Bass swap at the centre'], ['endBassSwap', 'Bass swap at the end'], ['threeBandFade', 'Three-band fade'], ['quickBassCut', 'Quick bass cut'], ['none', 'None']],
     effect: [['none', 'None'], ['lpOut', 'Low-pass out'], ['hpIn', 'High-pass in'], ['lpBoth', 'Low-pass both'], ['hpBoth', 'High-pass both'], ['lpInHpOut', 'Low-pass in, high-pass out']],
   };
+  for (const k of Object.keys(LANE_OPTIONS)) LANE_OPTIONS[k].push(['draw', 'Draw…']);
   const LANE_COLORS = { volume: '#4C8DFF', eq: '#F5C542', effect: '#A779FF' };
   const NUDGE_MS = 10, NUDGE_MAX_MS = 2000;
+  // editor.md §10: the drawable curves: plan key, chip, lane, name in the stored deck, and the
+  // lane's height (0 at the bottom, 1 at the top) as the canvas draws it
+  const LOG1K = Math.log(1000);
+  const CURVES = {
+    gain: { chip: 'Volume', lane: 'volume', name: null, norm: (v) => v, value: (n) => n },
+    bassDb: { chip: 'Bass', lane: 'eq', name: 'bass', norm: (v) => 1 + v / 18, value: (n) => 18 * n - 18 },
+    highDb: { chip: 'High', lane: 'eq', name: 'high', norm: (v) => 1 + v / 18, value: (n) => 18 * n - 18 },
+    lowpassHz: { chip: 'Lowpass', lane: 'effect', name: 'lp', norm: (v) => Math.log(v / 20) / LOG1K, value: (n) => 20 * Math.pow(1000, n) },
+    highpassHz: { chip: 'Highpass', lane: 'effect', name: 'hp', norm: (v) => 1 - Math.log(v / 20) / LOG1K, value: (n) => 20 * Math.pow(1000, 1 - n) },
+  };
+  // a new curve in an empty deck: open (0 dB, the filter open)
+  const OPEN = { bassDb: 0, highDb: 0, lowpassHz: 20000, highpassHz: 20 };
+  const MAX_POINTS = 128, UNDO_MAX = 50, HIT_PX = 7;
 
   const xf = () => window.__viviCrossfade;
   const A = () => window.__viviAutomix;
@@ -157,6 +172,21 @@
     return out;
   }
 
+  // the canvas's layout (drawStatic, and the drawing editor's hit tests)
+  function layout(D, w, h) {
+    const pad = Math.max(4, D * 0.24), t0 = -pad, t1 = D + pad;
+    const gap = 10, laneH = (h - gap * 3) / 2;
+    const top = [gap, gap * 2 + laneH];
+    return {
+      t0, t1, top, laneH,
+      X: (t) => ((t - t0) / (t1 - t0)) * w,
+      T: (x) => t0 + (x / w) * (t1 - t0),
+      // a curve's height n (0..1) in deck k's half: the fader's own scale for volume, the EQ/filter one else
+      Y: (key, k, n) => (key === 'gain' ? top[k] + laneH - 1 - n * (laneH - 4) : top[k] + 2 + (1 - n) * (laneH - 6)),
+      N: (key, k, y) => Math.max(0, Math.min(1, key === 'gain' ? (top[k] + laneH - 1 - y) / (laneH - 4) : 1 - (y - top[k] - 2) / (laneH - 6))),
+    };
+  }
+
   // ───────── the dialog ─────────
   let ui = null;   // { root, card, canvas, ... } while open
   let frame = 0, sig = '', staticLayer = null, songsSig = '', drawnShape = null;
@@ -205,11 +235,30 @@
       sw.style.background = LANE_COLORS[k];
       const sel = el('select');
       for (const [v, t] of LANE_OPTIONS[k]) { const o = el('option', '', t); o.value = v; sel.append(o); }
-      sel.addEventListener('change', () => pick({ preset: 'custom', lanes: { ...lanesNow(), [k]: sel.value } }));
+      sel.addEventListener('change', () => (sel.value === 'draw' ? startDraw(k) : pick({ preset: 'custom', lanes: { ...lanesNow(), [k]: sel.value } })));
       lab.append(sw, document.createTextNode(label), sel);
       custom.append(lab);
       laneSel[k] = sel;
     }
+    // the drawing's tools (editor.md §10 rule 6): which curve, Repeat, Undo
+    const drawRow = el('div', 'vivi-amx-ov-draw');
+    drawRow.hidden = true;
+    const curveChips = chipRow('Draw', [...Object.entries(CURVES).map(([k, c]) => [k, c.chip]), ['', 'Done']], (v) => { drawKey = v || null; pdrag = null; sig = ''; });
+    const rep = el('div', 'vivi-amx-ov-repeat');
+    const num = (title, v) => { const i = el('input'); i.type = 'number'; i.min = '0'; i.step = '0.25'; i.value = String(v); i.title = title; return i; };
+    const repFrom = num('Where the part to repeat starts', 0), repLen = num('How long it is, and how far apart the copies are', 2);
+    const repUnit = el('span', '', 'beats');
+    const repBtn = el('button', 'vivi-amx-ov-chip', 'Repeat');
+    repBtn.type = 'button';
+    repBtn.title = 'Copy this part of the chosen line along the window, both songs';
+    repBtn.addEventListener('click', () => repeat(Number(repFrom.value), Number(repLen.value)));
+    const undoBtn = el('button', 'vivi-amx-ov-chip', 'Undo');
+    undoBtn.type = 'button';
+    undoBtn.title = 'Undo (Ctrl+Z)';
+    undoBtn.addEventListener('click', undoDraw);
+    rep.append(document.createTextNode('Repeat from'), repFrom, document.createTextNode('every'), repLen, repUnit, repBtn, undoBtn);
+    const drawHint = el('div', 'vivi-amx-ov-hint', '');
+    drawRow.append(curveChips.row, rep, drawHint);
     const matchRow = chipRow('Beat match', BEAT_MATCH, (v) => pick({ beatMatch: v }));
     const barsRow = chipRow('Length', BARS, (v) => pick({ bars: Number(v) || null }));
     const winRow = el('div', 'vivi-amx-ov-row');
@@ -246,12 +295,15 @@
     const badge = el('span', 'vivi-amx-ov-badge', 'Custom');
     badge.hidden = true;
     actions.append(preview, lock, reset, badge, note);
-    controls.append(presetRow.row, custom, matchRow.row, barsRow.row, winRow, actions);
+    controls.append(presetRow.row, custom, drawRow, matchRow.row, barsRow.row, winRow, actions);
     card.append(head, songsRow, well, legend, controls);
     root.append(card);
     root.addEventListener('pointerdown', (e) => { if (e.target === root) hide(); });
     document.body.append(root);
-    ui = { root, card, sub, songsRow, canvas, msg, clock, presetRow, custom, laneSel, matchRow, barsRow, nudgeBtns, winReset, preview, lock, reset, badge, note };
+    ui = { root, card, sub, songsRow, canvas, msg, clock, presetRow, custom, laneSel, matchRow, barsRow, nudgeBtns, winReset, preview, lock, reset, badge, note,
+      drawRow, curveChips, repUnit, repBtn, undoBtn, drawHint };
+    canvas.addEventListener('dblclick', (e) => pointDelete(e));
+    canvas.addEventListener('contextmenu', (e) => { if (drawOn(xf()?.overview?.())) { e.preventDefault(); pointDelete(e); } });
     canvas.addEventListener('pointerdown', dragStart);
     canvas.addEventListener('pointermove', dragMove);
     canvas.addEventListener('pointerup', dragEnd);
@@ -266,6 +318,7 @@
     const root = ui.root;
     ui = null;
     drag = null;   // (a drag the Esc key cut short is dropped, not saved)
+    pdrag = null; drawKey = null; undo.length = 0; pendingDraw = null;
     cancelAnimationFrame(frame);
     frame = 0;
     document.removeEventListener('keydown', onKey, true);
@@ -273,7 +326,11 @@
     setTimeout(() => root.remove(), 250);
   }
   function onKey(e) {
-    if (e.key === 'Escape') { e.stopPropagation(); e.preventDefault(); hide(); }
+    if (e.key === 'Escape') { e.stopPropagation(); e.preventDefault(); hide(); return; }
+    // Ctrl+Z: a drawing's last edit back (not while typing in a field)
+    if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'z' && undo.length && !/^(INPUT|SELECT|TEXTAREA)$/.test(e.target?.tagName || '')) {
+      e.stopPropagation(); e.preventDefault(); undoDraw();
+    }
   }
   function chipRow(label, items, onPick) {
     const row = el('div', 'vivi-amx-ov-row');
@@ -354,6 +411,7 @@
   }
   function dragStart(e) {
     const s = xf()?.overview?.();
+    if (drawOn(s)) { if (e.button === 0 && e.detail < 2) pointStart(e, s); return; }
     if (!windowEditable(s) || e.button !== 0) return;
     const r = ui.canvas.getBoundingClientRect();
     const side = e.clientY - r.top < r.height / 2 ? 'out' : 'in';
@@ -373,6 +431,7 @@
     in: ["that is B's start", "the window has to end 10 s before B's end"],
   };
   function dragMove(e) {
+    if (pdrag) { pointMove(e); return; }
     if (!drag) return;
     if (!(e.buttons & 1)) { drag = null; sig = ''; return; }   // released where we didn't hear it
     const s = drag.s, ov = A().migratePick(s.pick);
@@ -402,6 +461,7 @@
     return w;
   }
   function dragEnd(e) {
+    if (pdrag) { pointEnd(e); return; }
     if (!drag) return;
     const d = drag;
     drag = null;
@@ -424,6 +484,193 @@
     const pos = { ...now, nudgeMs: n, sec: Math.round((now.sec + dir * NUDGE_MS / 1000) * 1000) / 1000 };
     if (!pos.nudgeMs) delete pos.nudgeMs;
     pick({ window: windowWith(s, ov, side, pos) });
+  }
+
+  // ───────── drawn curves (editor.md §10) ─────────
+  let drawKey = null;            // the curve being drawn (a CURVES key), null: none chosen
+  let pdrag = null;              // a point being dragged: { s, key, side, i, d, moved }
+  let pendingDraw = null;        // { pair, lane }: Draw picked on a loop mix, started once the blend is planned
+  const undo = [];               // { pair, lanes } before each edit, newest last
+  // the beat a drawing's x counts in, as the planner reads it (automix.js plan, §10 rule 4)
+  function drawCtx(s) {
+    const m = s.mix;
+    const beat = m.style !== 'crossfade' && m.barSec > 0;
+    return {
+      beatSec: beat ? m.barSec / 4 : A().editorGrid(A().get(s.fromId), 'out')?.beatSec || 0.5,
+      glide: beat ? m.glide || null : null,
+      unit: m.style === 'crossfade' ? 'sec' : 'beat',
+    };
+  }
+  const drawingOf = (s, lane) => { const l = A().migratePick(s?.pick)?.lanes?.[lane]; return l && typeof l === 'object' ? l : null; };
+  const pointsOf = (d, key, side) => { const n = CURVES[key].name; return (n ? d?.[side]?.[n] : d?.[side]) || []; };
+  function withPoints(d, key, side, pts) {
+    const n = CURVES[key].name, c = JSON.parse(JSON.stringify(d));
+    if (n) { c[side] = { ...(c[side] || {}) }; if (pts.length) c[side][n] = pts; else delete c[side][n]; } else c[side] = pts;
+    return c;
+  }
+  function drawOn(s) {
+    return !!(drawKey && s && !s.why && s.toId && s.mix && s.mix.style !== 'loop' && drawingOf(s, CURVES[drawKey].lane));
+  }
+  // Draw in a lane's dropdown: the lane's shape as points, saved (rule 6)
+  function startDraw(lane) {
+    const s = xf()?.overview?.();
+    if (!s?.mix || s.why || !s.toId) { sig = ''; return; }
+    // on a loop mix (Auto chose one): Custom first, and the drawing once the blend is planned
+    if (s.mix.style === 'loop') { pendingDraw = { pair: s.pairKey, lane }; pick({ preset: 'custom', lanes: lanesNow() }); return; }
+    const cur = lanesNow()[lane];
+    const c = drawCtx(s);
+    let d = typeof cur === 'object' ? cur : A().shapeDrawing(lane, cur, s.D, c.beatSec, c.glide, c.unit);
+    if (!d || d === 'none') d = { unit: c.unit, out: {}, in: {} };
+    // the lane's curves the shape didn't have start flat and open, so each can be drawn
+    for (const key of Object.keys(CURVES).filter((k) => CURVES[k].lane === lane)) {
+      for (const side of ['out', 'in']) if (!pointsOf(d, key, side).length && key !== 'gain') d = withPoints(d, key, side, [[0, OPEN[key]]]);
+    }
+    saveDrawing(s, lane, d);
+    drawKey = Object.keys(CURVES).find((k) => CURVES[k].lane === lane);
+  }
+  function saveDrawing(s, lane, d) {
+    const ov = A().migratePick(s.pick) || {};
+    // the length it was drawn for stays (rule 6): Auto would move it under the drawing
+    const bars = ov.bars || ([2, 4, 8, 16, 32].includes(s.mix.bars) && s.mix.style !== 'crossfade' ? s.mix.bars : null);
+    undo.push({ pair: s.pairKey, lanes: ov.lanes ? JSON.parse(JSON.stringify(ov.lanes)) : null, preset: ov.preset || null, bars: ov.bars || null, barsAfter: bars });
+    if (undo.length > UNDO_MAX) undo.shift();
+    pick({ preset: 'custom', lanes: { ...lanesNow(), [lane]: d }, ...(bars ? { bars } : {}) });
+  }
+  function undoDraw() {
+    const s = xf()?.overview?.();
+    while (undo.length && undo[undo.length - 1].pair !== s?.pairKey) undo.pop();   // another pair's edits are gone with it
+    const u = undo.pop();
+    if (!u) return;
+    // the length goes back only if this edit set it (one picked by hand since stays)
+    const now = A().migratePick(s.pick)?.bars || null;
+    pick({ ...(u.lanes && u.preset === 'custom' ? { preset: 'custom', lanes: u.lanes } : { preset: u.preset || 'auto' }), bars: now === u.barsAfter ? u.bars : now });
+  }
+  // the point of the chosen curve under the pointer: { side, k, i } (i: null when none is near)
+  function hitOf(e, s) {
+    const r = ui.canvas.getBoundingClientRect(), L = layout(s.D, r.width, r.height);
+    const px = e.clientX - r.left, py = e.clientY - r.top;
+    const k = py < r.height / 2 ? 0 : 1, side = k ? 'in' : 'out';
+    const c = drawCtx(s), d = drawingOf(s, CURVES[drawKey].lane), C = CURVES[drawKey];
+    const pts = pointsOf(d, drawKey, side);
+    let best = null, bd = HIT_PX;
+    pts.forEach(([x, v], i) => {
+      const dist = Math.hypot(L.X(A().drawSec(x, d.unit, c.beatSec, c.glide)) - px, L.Y(drawKey, k, C.norm(v)) - py);
+      if (dist <= bd) { bd = dist; best = i; }
+    });
+    return { side, k, i: best, px, py, L, c, d, pts };
+  }
+  // a pointer position as a point [x, v]: x snapped (a quarter beat, or 10 ms; Shift: free)
+  function pointAt(h, e) {
+    const t = Math.max(0, Math.min(h.L.T(h.px), pdrag?.s?.D ?? Infinity));
+    let x = Math.max(0, A().drawX(t, h.d.unit, h.c.beatSec, h.c.glide));
+    x = e.shiftKey ? Math.round(x * 1000) / 1000 : h.d.unit === 'sec' ? Math.round(x * 100) / 100 : Math.round(x * 4) / 4;
+    const v = CURVES[drawKey].value(h.L.N(drawKey, h.k, h.py));
+    return [x, drawKey.endsWith('Hz') ? Math.round(v) : Math.round(v * 1000) / 1000];
+  }
+  function pointStart(e, s) {
+    const h = hitOf(e, s);
+    let pts = h.pts.map((p) => [...p]), i = h.i;
+    if (i == null) {
+      const t = h.L.T(h.px);
+      if (t < 0 || t > s.D) return;   // points go inside the frame
+      if (pts.length >= MAX_POINTS) { refused = { pair: s.pairKey, text: `${MAX_POINTS} points is the most for one line` }; return; }
+      pdrag = { s };
+      const p = pointAt(h, e);
+      if (pts.filter((q) => q[0] === p[0]).length >= 2) return void (pdrag = null);   // never a third at one x
+      i = pts.findIndex((q) => q[0] > p[0]);
+      if (i < 0) i = pts.length;
+      pts.splice(i, 0, p);
+    }
+    pdrag = { s, key: drawKey, side: h.side, k: h.k, i, d: withPoints(h.d, drawKey, h.side, pts), added: h.i == null, moved: h.i == null };
+    ui.canvas.setPointerCapture(e.pointerId);
+    e.preventDefault();
+    sig = '';
+  }
+  function pointMove(e) {
+    if (!(e.buttons & 1)) { pdrag = null; sig = ''; return; }
+    const r = ui.canvas.getBoundingClientRect(), s = pdrag.s;
+    const h = { px: e.clientX - r.left, py: e.clientY - r.top, k: pdrag.k, L: layout(s.D, r.width, r.height), c: drawCtx(s), d: pdrag.d };
+    const pts = pointsOf(pdrag.d, pdrag.key, pdrag.side).map((p) => [...p]), i = pdrag.i;
+    const p = pointAt(h, e);
+    // held between its neighbours: onto one makes a step, but never a third point at one x
+    const prev = pts[i - 1], next = pts[i + 1];
+    let lo = prev ? prev[0] : 0, hi = next ? next[0] : Infinity;
+    if (prev && pts[i - 2] && pts[i - 2][0] === prev[0]) lo += 0.001;
+    if (next && pts[i + 2] && pts[i + 2][0] === next[0]) hi -= 0.001;
+    p[0] = Math.max(lo, Math.min(hi, p[0]));
+    pts[i] = p;
+    pdrag.d = withPoints(pdrag.d, pdrag.key, pdrag.side, pts);
+    pdrag.moved = true;
+    sig = '';
+  }
+  function pointEnd(e) {
+    const d = pdrag;
+    pdrag = null;
+    try { ui.canvas.releasePointerCapture(e.pointerId); } catch { /* gone */ }
+    sig = '';
+    if (!d.moved || xf()?.overview?.()?.pairKey !== d.s.pairKey) return;
+    saveDrawing(d.s, CURVES[d.key].lane, d.d);
+  }
+  // a double-click or right-click on a point deletes it; a volume deck keeps its last point
+  function pointDelete(e) {
+    const s = xf()?.overview?.();
+    if (!drawOn(s)) return;
+    e.preventDefault();
+    pdrag = null;
+    const h = hitOf(e, s);
+    if (h.i == null) return;
+    if (drawKey === 'gain' && h.pts.length <= 1) { refused = { pair: s.pairKey, text: 'A volume line keeps at least one point' }; return; }
+    saveDrawing(s, CURVES[drawKey].lane, withPoints(h.d, drawKey, h.side, h.pts.filter((_, j) => j !== h.i)));
+  }
+  // Repeat (rule 6): the chosen curve's points in [from, from + len), both decks, copied every len
+  // along the window; each copy replaces the points in its span
+  function repeat(from, len) {
+    const s = xf()?.overview?.();
+    if (!drawOn(s) || !(len > 0) || !(from >= 0)) return;
+    const lane = CURVES[drawKey].lane, c = drawCtx(s);
+    let d = drawingOf(s, lane);
+    const end = A().drawX(s.D, d.unit, c.beatSec, c.glide);
+    for (const side of ['out', 'in']) {
+      const pts = pointsOf(d, drawKey, side);
+      const part = pts.filter(([x]) => x >= from && x < from + len);
+      if (!part.length) continue;
+      let out = pts.filter(([x]) => x < from + len);
+      for (let a = from + len; a < end - 1e-9; a += len) {
+        out = out.filter(([x]) => x < a);
+        out.push(...part.map(([x, v]) => [Math.round((x - from + a) * 1000) / 1000, v]));
+      }
+      out.push(...pts.filter(([x]) => x >= end - 1e-9 && x > out[out.length - 1][0]));
+      if (out.length > MAX_POINTS) { refused = { pair: s.pairKey, text: `${MAX_POINTS} points is the most for one line` }; return; }
+      d = withPoints(d, drawKey, side, out);
+    }
+    saveDrawing(s, lane, d);
+  }
+  // the chosen curve on top of the canvas: bold, with its points (the one being dragged as it moves)
+  function drawPoints(g, s, w, h) {
+    if (!drawOn(s)) return;
+    const lane = CURVES[drawKey].lane, d = pdrag?.d || drawingOf(s, lane), C = CURVES[drawKey];
+    const L = layout(s.D, w, h), c = drawCtx(s);
+    const x0 = L.X(0), x1 = L.X(s.D);
+    g.save();
+    g.beginPath(); g.rect(x0, 0, x1 - x0, h); g.clip();
+    for (const [k, side] of [[0, 'out'], [1, 'in']]) {
+      const pts = pointsOf(d, drawKey, side);
+      if (!pts.length) continue;
+      const xy = pts.map(([x, v]) => [L.X(A().drawSec(x, d.unit, c.beatSec, c.glide)), L.Y(drawKey, k, C.norm(v))]);
+      g.strokeStyle = LANE_COLORS[lane];
+      g.lineWidth = 2.5;
+      g.beginPath();
+      g.moveTo(x0, xy[0][1]);
+      for (const [x, y] of xy) g.lineTo(x, y);
+      g.lineTo(x1, xy[xy.length - 1][1]);
+      g.stroke();
+      xy.forEach(([x, y], i) => {
+        g.fillStyle = pdrag && pdrag.side === side && pdrag.i === i ? '#fff' : LANE_COLORS[lane];
+        g.beginPath(); g.arc(x, y, 4, 0, Math.PI * 2); g.fill();
+        g.strokeStyle = '#15141c'; g.lineWidth = 1; g.stroke();
+      });
+    }
+    g.restore();
   }
 
   function loop() {
@@ -472,6 +719,8 @@
     // the cards again once an analysis lands (their BPM and key)
     const ss = s.pairKey + '|' + [s.fromId, s.toId].map((id) => (id && A()?.get(id)?.bpm ? 1 : 0)).join('');
     if (songsSig !== ss) { songsSig = ss; drawSongs(s); }
+    if (pendingDraw && (pendingDraw.pair !== s.pairKey || !s.editable)) pendingDraw = null;
+    else if (pendingDraw && s.mix.style !== 'loop' && s.mix.preset === 'custom') { const l = pendingDraw.lane; pendingDraw = null; startDraw(l); return; }   // (the next frame shows the saved drawing)
     setControls(s);
     draw(s);
   }
@@ -494,8 +743,26 @@
     const lanes = preset === 'loop' ? null : preset === 'custom' && ov.lanes ? ov.lanes : A()?.PRESET_LANES?.[preset] || A()?.PRESET_LANES?.smooth || null;
     for (const [k, sel] of Object.entries(laneSel)) {
       sel.disabled = !s?.toId || preset === 'loop';
-      const v = lanes?.[k] || '';
+      const v = lanes?.[k] ? (typeof lanes[k] === 'object' ? 'draw' : lanes[k]) : '';
       if (v && sel.value !== v) sel.value = v;
+    }
+    // the drawing's tools: shown while a lane is drawn; the chips of the drawn lanes' curves
+    const drawnLanes = preset === 'custom' && ov.lanes ? Object.keys(ov.lanes).filter((k) => typeof ov.lanes[k] === 'object') : [];
+    const canDraw = !!s?.toId && !!s.mix && s.mix.style !== 'loop' && drawnLanes.length > 0;
+    if (drawKey && !(canDraw && drawnLanes.includes(CURVES[drawKey].lane))) { drawKey = null; pdrag = null; }
+    ui.drawRow.hidden = !canDraw;
+    for (const b of ui.curveChips.chips) {
+      const key = b.dataset.v;
+      b.hidden = !!key && !drawnLanes.includes(CURVES[key].lane);
+      mark(b, key === (drawKey || ''));
+    }
+    if (canDraw) {
+      setIf(ui.repUnit, 'textContent', drawCtx(s).unit === 'sec' ? 's' : 'beats');
+      ui.repBtn.disabled = !drawKey;
+      ui.undoBtn.disabled = !undo.some((u) => u.pair === s.pairKey);
+      setIf(ui.drawHint, 'textContent', drawKey
+        ? `Click in the frame to add a point to ${CURVES[drawKey].chip.toLowerCase()}, drag to move it, double-click or right-click to delete (Shift: free). Done moves the window again.`
+        : 'Pick a line to draw on.');
     }
     custom.classList.toggle('vivi-off', preset === 'loop');
     for (const b of matchRow.chips) { mark(b, b.dataset.v === bm); b.disabled = !s?.toId || preset === 'loop'; }
@@ -610,6 +877,7 @@
       }
     }
     ui.clock.textContent = s.paused && clock ? clock + ' (paused)' : clock;
+    drawPoints(g, s, w, h);
   }
 
   function drawStatic(s, w, h, dpr, t0, t1) {
@@ -617,10 +885,7 @@
     layer.width = Math.round(w * dpr); layer.height = Math.round(h * dpr);
     const g = layer.getContext('2d');
     g.scale(dpr, dpr);
-    const X = (t) => ((t - t0) / (t1 - t0)) * w;
-    const T = (x) => t0 + (x / w) * (t1 - t0);
-    const gap = 10, laneH = (h - gap * 3) / 2;
-    const top = [gap, gap * 2 + laneH];
+    const { X, T, top, laneH } = layout(s.D, w, h);
     const L = lanes(s);
     // grey well, the mix's frame
     g.fillStyle = 'rgba(255,255,255,0.04)';
