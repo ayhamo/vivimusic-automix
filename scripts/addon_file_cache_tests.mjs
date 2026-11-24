@@ -159,5 +159,52 @@ const cacheWith = (maxBytes, st = fakeStorage(), c = fakeCache()) => ({ st, c, F
   check("REFRESH: answers forgotten, the song's cached files dropped, the ticket gone", [rf, forgot, before - (await files.stats()).files, S.ticketOf(f.ticket), await S.handle({ type: 'VIVI_ADDONS_REFRESH', ticket: f.ticket })], [{ ok: true, cleared: 3, files: 2 }, [['Weak', ['idA', 'idB']]], 2, undefined, { none: 'ticket expired' }]);
 }
 
+// ---- 8.1.4: a copy refused by a later check (the page's fit) passes to the next ready row or lane ----
+{
+  const st = fakeStorage({ addonsEnabled: true, addonsTier: 'LOSSLESS', addonsList: [{ id: 'idA', base: 'https://a.example/SECRET-A', name: 'A', host: 'a.example' }, { id: 'idB', base: 'https://b.example/SECRET-B', name: 'B', host: 'b.example' }] });
+  const c = fakeCache();
+  const files = FC.create({ open: () => c, storage: st, maxBytes: async () => 512e6, now: () => ++T });
+  const calls = [];
+  const client = {
+    health: () => ({}),
+    find: async (song, addons) => ({ found: addons.map((a) => ({ addon: { ...a, name: a.id, host: a.id + '.example' }, rows: [{ id: a.id + '-1' }, { id: a.id + '-2' }] })), tried: [] }),
+    // the first row of the first lane left, as a race of these lanes would answer
+    open: async (found, song, opt, tried = []) => {
+      calls.push(found.map((f) => [f.addon.id, f.rows.map((r) => r.id)]));
+      const f = found[0];
+      return f ? { addon: { base: f.addon.base, name: f.addon.name, host: f.addon.host, id: f.addon.id }, row: f.rows[0], stream: { transport: 'file', codec: 'flac' }, tried } : { none: 'no addon has it', tried };
+    },
+  };
+  const S = A.create({ storage: st, client, fetch: async () => ({ ok: true, status: 200, headers: { get: () => null }, arrayBuffer: async () => bytes(100) }), files });
+  const f = await S.handle({ type: 'VIVI_ADDONS_FIND', song: { title: 'Refused', artist: 'X', durationSec: 200 } });
+  const o = await S.handle({ type: 'VIVI_ADDONS_OPEN', ticket: f.ticket });
+  const n1 = await S.handle({ type: 'VIVI_ADDONS_NEXT', ticket: f.ticket, why: 'no match (score 0.31)' });
+  check('NEXT: the refused row is passed over; the same addon\'s next row', [o.row.id, n1.row.id, calls[1]], ['idA-1', 'idA-2', [['idA', ['idA-2']], ['idB', ['idB-1', 'idB-2']]]]);
+  check('NEXT: the refusal is in tried, without the link', n1.tried.some((t) => t.row === 'idA-1' && /refused: no match/.test(t.why) && !/SECRET/.test(JSON.stringify(t))), true);
+  const n2 = await S.handle({ type: 'VIVI_ADDONS_NEXT', ticket: f.ticket, why: 'no match' });
+  check('NEXT again: the next lane', [n2.addon.host, n2.row.id], ['idB.example', 'idB-1']);
+  // a cached file of a refused row isn't served again for the song
+  await files.put(files.keyOf('idA', 'idA-1', 'LOSSLESS'), bytes(100), { mime: 'audio/flac', stream: { codec: 'flac', transport: 'file' } });
+  const n3 = await S.handle({ type: 'VIVI_ADDONS_NEXT', ticket: f.ticket, why: 'no match' });
+  check('NEXT: a refused row\'s cached file is not played; the race goes on', [n3.cached, n3.row.id], [undefined, 'idB-2']);
+  const n4 = await S.handle({ type: 'VIVI_ADDONS_NEXT', ticket: f.ticket, why: 'no match' });
+  check('NEXT with every row refused: none (YouTube\'s audio), no /stream asked', [n4.none, calls.length], ['no addon has it', 4]);
+  check('NEXT before OPEN or on an expired ticket', [await S.handle({ type: 'VIVI_ADDONS_NEXT', ticket: (await S.handle({ type: 'VIVI_ADDONS_FIND', song: { title: 'New', artist: 'X', durationSec: 200 } })).ticket }), await S.handle({ type: 'VIVI_ADDONS_NEXT', ticket: 'tnope' })], [{ none: 'not opened' }, { none: 'ticket expired' }]);
+}
+
+{
+  // §8.1.6: a playlist or manifest is never kept, and one already in the store is never served
+  const { F, c } = cacheWith(1e6);
+  const txt = (s) => new TextEncoder().encode(s).buffer;
+  check('an HLS playlist (by its bytes) is not kept', await F.put('h', txt('#EXTM3U\n#EXT-X-VERSION:3\n')), false);
+  check('a DASH manifest (BOM, xml header, then MPD) is not kept', await F.put('d', txt('﻿<?xml version="1.0"?>\n<MPD xmlns="urn:mpeg:dash:schema:mpd:2011">')), false);
+  check('a manifest by its type is not kept', await F.put('t', bytes(100), { mime: 'application/dash+xml' }), false);
+  check('a FLAC file is kept', await F.put('f', txt('fLaC' + 'x'.repeat(60)), { mime: 'audio/flac' }), true);
+  await F.put('m', txt('fLaC' + 'x'.repeat(60)), { mime: 'audio/flac' });
+  const stored = [...c.m.keys()].find((u) => u.endsWith('m'));
+  c.m.set(stored, txt('#EXTM3U\n'));   // the store holds a playlist under that key
+  check('a stored playlist is not served, and is dropped', [await F.get('m'), await F.has('m'), c.m.has(stored)], [null, null, false]);
+}
+
 console.log(failed ? `\n${failed} failed` : '\nall passed');
 process.exit(failed ? 1 : 0);

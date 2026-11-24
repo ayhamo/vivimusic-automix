@@ -122,6 +122,19 @@
     return s.open;
   }
 
+  // 8.1.4: the opened copy was refused by a later check (the fit): the next ready row or lane, while the
+  // song still plays YouTube's audio. "Refused" is per row; the song's other rows and addons still count.
+  async function nextFor(id, why) {
+    const s = songs.get(id);
+    if (!enabled || s?.state !== 'ready' || !s.ticket) return null;
+    const r = await ask({ type: 'VIVI_ADDONS_NEXT', ticket: s.ticket, why: String(why || ''), ytKbps: ytAudio?.kbps || 0 });
+    if (r.addon) Object.assign(s, { state: 'ready', addon: r.addon, row: r.row, stream: r.stream, tried: r.tried, why: null, cached: !!r.cached, play: null });
+    else Object.assign(s, { state: 'found', why: r.none, tried: r.tried });
+    show();
+    log(`${s.meta?.artist} - ${s.meta?.song}: ${r.addon ? `the next row: ${r.addon.name} (${r.addon.host}) row ${r.row.id}` : 'no other row: ' + r.none} (after a refusal: ${why})`, r.tried?.length ? r.tried : '');
+    return s;
+  }
+
   // 8.2.1, once the song's copy plays: a lossy copy, or a cached one below the tier asked, is
   // followed by one pass for a better copy -> true when one was found (it is then the song's)
   async function upgradeFor(id) {
@@ -319,5 +332,5 @@
     return { state, addon, row, stream, why, tried, candidates, play };
   }
 
-  window.__viviAddonsPage = { statusOf, openFor, lookAhead, fetchFor, note, isOn: () => enabled, openDue, upgradeFor, upgradeQuality, deckAlive: () => { deckAt = Date.now(); } };
+  window.__viviAddonsPage = { statusOf, openFor, nextFor, lookAhead, fetchFor, note, isOn: () => enabled, openDue, upgradeFor, upgradeQuality, deckAlive: () => { deckAt = Date.now(); } };
 })();

@@ -34,6 +34,15 @@
     const index = async () => (await storage.get({ [INDEX]: {} }))[INDEX] || {};
     const save = (ix) => storage.set({ [INDEX]: ix });
 
+    // §8.1.6: an HLS playlist or a DASH manifest is never kept and never served (Laya 33a710d1: a manifest read
+    // through the audio cache came back as another copy's audio). By its type or its first bytes.
+    const MANIFEST_MIME = /mpegurl|dash\+xml/i;
+    function isManifest(bytes, mime) {
+      if (MANIFEST_MIME.test(String(mime || ''))) return true;
+      const head = new TextDecoder().decode(new Uint8Array(bytes, 0, Math.min(bytes?.byteLength || 0, 512))).replace(/^﻿/, '').trimStart();
+      return head.startsWith('#EXTM3U') || /^(<\?xml[^>]*>\s*)?<MPD[\s>]/.test(head);
+    }
+
     const keyOf = (addonId, rowId, quality) => [addonId, rowId, quality || ''].map((x) => String(x ?? '')).join('|');
 
     async function has(key) {
@@ -48,9 +57,11 @@
         if (!ix[key]) return null;
         const r = await (await files()).match(urlOf(key));
         if (!r) { delete ix[key]; await save(ix); return null; }   // the browser let it go
+        const got = await r.arrayBuffer();
+        if (isManifest(got, ix[key].meta?.mime)) { delete ix[key]; await save(ix); await (await files()).delete(urlOf(key)); return null; }
         ix[key] = { ...ix[key], at: now() };
         await save(ix);
-        return { bytes: await r.arrayBuffer(), meta: ix[key].meta };
+        return { bytes: got, meta: ix[key].meta };
       });
     }
 
@@ -58,6 +69,7 @@
       return inTurn(async () => {
         const max = await maxBytes(), size = bytes?.byteLength || 0;
         if (!max || !size || size > max) return false;
+        if (isManifest(bytes, meta.mime)) return false;
         const ix = await index(), c = await files();
         delete ix[key];
         // least recently played out first, until the new file fits
