@@ -289,12 +289,16 @@
     return { subBassRatio: subBassRatio(c), bassCurve: bassCurve(c), ...chromaEvidence(mono, sr), loudnessCurve: loudnessCurve(mono, sr) };
   }
 
+  const ANALYSIS_MAX_SEC = 480;
   // BitChord analyzer.ts analyzeOne, from the song's compressed bytes.
   async function analyzeSong(id, fileKey, bytes, musicVideo) {
     const decodeCtx = new OfflineAudioContext({ numberOfChannels: 2, length: 1, sampleRate: ANALYSIS_SR });
     const buffer = await decodeCtx.decodeAudioData(bytes.slice(0));
+    // over 8 minutes: not analysed, and not saved (automix.js ANALYSIS_MAX_SEC; versions.md "Analysis length")
+    if (buffer.duration > ANALYSIS_MAX_SEC) return { tooLong: true, durationSec: buffer.duration };
     const mono = downmixToMono(buffer);
     const durationSec = buffer.duration;
+    reply({ type: 'progress', fileKey, stage: 'lowEnd' });   // the page's progress row (editor.md §11)
     const contentEndSec = contentEnd(mono, ANALYSIS_SR);   // (before mono goes to the worker)
     const low = lowEnd(mono, ANALYSIS_SR);
     // Beat This! wants mono at 22,050 Hz: the browser's resampler, not decimation.
@@ -320,6 +324,7 @@
       return { offsetSec: s, left: left.slice(a, b), right: right.slice(a, b) };
     });
 
+    reply({ type: 'progress', fileKey, stage: 'models' });
     const res = await new Promise((resolve) => {
       jobs.set(fileKey, resolve);
       worker.postMessage(
@@ -329,6 +334,7 @@
     });
     if (res.type !== 'result' || !res.result) throw new Error(res.message || 'analysis failed');
     const analysis = { fileKey: id, durationSec, contentEndSec, ...low, ...res.result, musicVideo: !!musicVideo, analysisVersion: ANALYSIS_VERSION };
+    reply({ type: 'progress', fileKey, stage: 'saving' });
     await putCached(analysis);
     return analysis;
   }

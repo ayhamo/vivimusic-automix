@@ -62,6 +62,11 @@ These cases check the analysers and the mixes they lead to. Cases and thresholds
      joined (100%, 100%). `tempo-change-100-110` came back for its downbeat only, as a known miss:
      at 97% its beats are under the margin.
 
+6. **A song over 8 minutes (480 s) isn't analysed** (2026-11-24, versions.md "Analysis length"). The
+   check `tooLong` needs no render: both apps answer "too long" from the decoded length, before any
+   model runs. The extension's runner reads the cap from `automix.js` and `host.js` and fails when
+   they differ.
+
 ## Known misses (found 2026-11-19, kept as found)
 
 On the extension's analyser (BitChord's worker with `beat_this_final0_q8` and `vocals_umxhq_int8`).

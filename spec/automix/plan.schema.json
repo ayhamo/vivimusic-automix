@@ -54,7 +54,8 @@
         "beatSec": { "type": "number" },
         "bpm": { "type": "number" },
         "vocal": { "type": "number", "minimum": 0, "maximum": 1, "description": "Share of the loop that is sung (must stay under 0.03, no sung run over 0.2 s)." },
-        "checkedBy": { "enum": ["lyrics", "mask"], "description": "Sung spans from synced lyrics, or the open-unmix mask when the song has none." }
+        "checkedBy": { "enum": ["lyrics", "mask"], "description": "Sung spans from synced lyrics, or the open-unmix mask when the song has none." },
+        "phrase": { "type": "boolean", "description": "The incoming side only: its loop starts on a 4-bar phrase line counted from the song's first downbeat (within a quarter beat). Adds 0.01 to the loop's score in loopOrBlend (versions.md \"Loop on the blend's bars\")." }
       }
     },
     "loopPlan": {

@@ -410,6 +410,14 @@ ytmusic-player-bar:has(ytmusic-player-expanding-menu:not([aria-hidden="true"]):n
 .vivi-amx-ov-well { position: relative; border-radius: 10px; overflow: hidden; background: #15141c; }
 .vivi-amx-ov-canvas { display: block; width: 100%; height: 220px; }
 .vivi-amx-ov-msg { padding: 48px 16px; text-align: center; color: rgba(255, 255, 255, 0.7); font-size: 13px; }
+.vivi-amx-ov-prog { margin: 8px 2px 0; }
+.vivi-amx-ov-prog-text { font-size: 12px; color: rgba(255, 255, 255, 0.9); margin-bottom: 4px; }
+.vivi-amx-ov-prog-bar { height: 6px; border-radius: 3px; background: rgba(255, 255, 255, 0.2); overflow: hidden; position: relative; }
+.vivi-amx-ov-prog-bar i { display: block; height: 100%; width: 0; background: #ff2b5c; border-radius: 3px; transition: width 0.3s; }
+.vivi-amx-ov-prog[data-kind="failed"] .vivi-amx-ov-prog-text { color: #ff8a80; }
+.vivi-amx-ov-prog[data-kind="failed"] .vivi-amx-ov-prog-bar, .vivi-amx-ov-prog[data-kind="note"] .vivi-amx-ov-prog-bar { visibility: hidden; }
+.vivi-amx-ov-prog[data-kind="busy"] .vivi-amx-ov-prog-bar i { width: 30% !important; animation: vivi-amx-busy 1.2s ease-in-out infinite; }
+@keyframes vivi-amx-busy { from { transform: translateX(-100%); } to { transform: translateX(340%); } }
 .vivi-amx-ov-legend {
   display: flex; flex-wrap: wrap; align-items: center; gap: 12px;
   margin: 8px 2px 14px; font-size: 11px; color: rgba(255, 255, 255, 0.65);

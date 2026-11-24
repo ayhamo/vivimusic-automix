@@ -28,6 +28,13 @@ const CACHE = opt('--cache', ROOT + '.cache/analysis');
 
 // host.js's constants: what the extension hands the worker
 const ANALYSIS_SR = 44100, BEAT_SR = 22050, BEAT_WINDOW_SEC = 59, VOCAL_WINDOW_SEC = (958 * 1024) / 44100;
+// songs over 8 minutes aren't analysed (versions.md "Analysis length"); read from both files so the cases can't drift
+const ANALYSIS_MAX_SEC = (() => {
+  const of = (f) => Number(/const ANALYSIS_MAX_SEC = (\d+)/.exec(readFileSync(ROOT + f, 'utf8'))?.[1]);
+  const a = of('src/automix/automix.js'), h = of('src/automix/host.js');
+  if (!(a > 0) || a !== h) throw new Error(`ANALYSIS_MAX_SEC: automix.js ${a}, host.js ${h}`);
+  return a;
+})();
 
 // ───────── the worker, in node ─────────
 let worker = null;
@@ -111,6 +118,14 @@ async function synthetic() {
   if (unknown.length) { console.error('no such case: ' + unknown.join(', ')); return 1; }
   for (const c of SPEC.synthetic) {
     if (only && !only.split(',').includes(c.name)) continue;
+    if (c.check.includes('tooLong')) {
+      // host.js analyzeSong: a decoded song over the cap is answered "too long" before any model runs
+      const over = c.song.sec > ANALYSIS_MAX_SEC;
+      console.log(`${over ? 'ok  ' : 'DIFF'} ${c.name}`);
+      console.log(`       ${over ? 'ok   ' : 'DIFF '} tooLong: ${c.song.sec} s against the cap of ${ANALYSIS_MAX_SEC} s`);
+      if (!over) failed++;
+      continue;
+    }
     // one render; the beat model's input is its fixed resample (analysis_signals.mjs half)
     const a = render(c.song, ANALYSIS_SR), b = half(a);
     const r = await analyse('syn-' + c.name, a, a, b);

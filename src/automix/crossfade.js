@@ -267,6 +267,11 @@
       const reply = (data) => window.postMessage({ ch: CHANNEL, dir: 'fixture', reqId: d.reqId, ...data }, window.location.origin);
       (async () => {
         const songsOut = [];
+        // linesOnly: each song's lyric line shapes alone (the song must be in the queue for its title)
+        if (d.linesOnly) {
+          for (const id of (Array.isArray(d.ids) ? d.ids.slice(0, 12) : [])) songsOut.push({ id, lines: await A.lyricLines(id) });
+          return reply({ ok: true, songs: songsOut });
+        }
         for (const id of ids) {
           const analysis = A?.get(id);
           if (!analysis) throw new Error('not analysed yet: ' + id);
@@ -277,7 +282,8 @@
             for (let i = w * per; i < Math.min(data.length, (w + 1) * per); i += 16) { ss += data[i] * data[i]; n++; }
             loud.push(n ? Math.round(Math.sqrt(ss / n) * 1e4) / 1e4 : 0);
           }
-          songsOut.push({ id, analysis, sung: await A.sungSpans(id), loudness20Hz: loud, decodedSec: buf.duration });
+          // lines: their shapes only (times, word counts), never their text (versions.md "Where a song is sung")
+          songsOut.push({ id, analysis, sung: await A.sungSpans(id), lines: await A.lyricLines(id), loudness20Hz: loud, decodedSec: buf.duration });
         }
         reply({ ok: true, songs: songsOut });
       })().catch((e) => reply({ ok: false, error: String(e?.message || e) }));
@@ -871,6 +877,8 @@
     }
     live = me;
     plan = null;
+    // the mix as heard, for "no effect three times in a row" (automix.js heard)
+    if (mix) window.__viviAutomix?.heard?.(mix);
     addonEvent('handover', { id: me.oldId, T, aPos: me.aPos, addonTail: !!p.addon, base, t0: me.t0 ?? null, style: mix?.style || null, outRate: mix?.outRate ?? null, glide: !!mix?.glide });
     log('handover done, tail gain', base.toFixed(2), mix ? `, blend in ${(me.t0 - ctx.currentTime).toFixed(2)} s, pressing next in ${(me.askAt - ctx.currentTime).toFixed(2)} s` : ', pressing next');
     // (a speed-up stops the copy at its start on purpose: the stretch deck plays on, so the mix goes on)
@@ -2204,6 +2212,7 @@
   });
   // FIND, OPEN, the file, YouTube's audio, the fit, the level and the decode, once per song
   const retryable = (p) => p.state === 'failed' && p.tries < 2 && performance.now() - p.failedAt > 60000;
+  const NEXT_ROWS = 4;   // protocol.md 8.1.4: copies tried after a refused one, per song (each is a file download)
   function prepareAddon(g, id, AP, durSec, say = () => {}) {
     const have = prepared.get(id);
     // a failed one is kept (each try downloads the file) and tried once more, a minute later at the earliest
@@ -2214,7 +2223,7 @@
     const me = {};
     me.promise = (async () => {
       const F = window.__viviOffsetFit, A = window.__viviAutomix;
-      const s = await AP.openFor(id, durSec);
+      let s = await AP.openFor(id, durSec);
       if (s?.state !== 'ready') return { none: s?.why || 'no addon has it', state: 'none' };
       say('fetching');
       const t0 = performance.now();
@@ -2228,61 +2237,67 @@
         if (!ytBytes && !/not downloaded|loading/.test(why)) break;
       }
       if (!ytBytes) throw new Error('YouTube\'s audio of the song: ' + (why || 'not downloaded'));
-      const file = await AP.fetchFor(id);
-      if (!file.bytes) throw new Error(file.none);
-      // the file's own format beats what the addon said (some send no bit depth or rate): the badge's Hi-Res
-      const fmt = flacFormat(file.bytes);
-      if (fmt) AP.note(id, { stream: { ...s.stream, ...fmt, codec: 'flac' } });
-      say('fitting');
-      const t1 = performance.now();
-      const [ytBuf, adBuf] = await Promise.all([decodeAt(ytBytes, F.FIT_RATE, 2), decodeAt(file.bytes, F.FIT_RATE, 2)]);
-      // the mono mixes here (cheap); the fit, both loudness reads and the true-peak pass in the
-      // analysis frame's worker (addons/fit.worker.js): on this thread they held the page about
-      // 1 s per song. This thread only when that frame is out (the arrays are then still here).
-      let busy = performance.now();
-      let yt = monoOf(ytBuf), ad = monoOf(adBuf);
-      busy = performance.now() - busy;
-      let where = 'worker';
-      let fitted = await A.addonWork({ op: 'fit', yt, ad, opt: { slackSec: 5 } }, [yt.buffer, ad.buffer])
-        .catch((e) => { log('addons: no fit worker:', e?.message || e); return null; });
-      if (!fitted) {
-        if (!yt.length || !ad.length) { yt = monoOf(ytBuf); ad = monoOf(adBuf); }   // (handed to the worker)
-        const t = performance.now();
-        const f = F.fit(yt, ad, { slackSec: 5 });
-        fitted = f.none ? { fit: f } : { fit: f, ytLufs: F.integratedLufs(yt, F.FIT_RATE), addonLufs: F.integratedLufs(ad, F.FIT_RATE) };
-        busy += performance.now() - t; where = 'main thread';
-      }
-      const { fit, ytLufs, addonLufs } = fitted;
-      if (fit.none) {
-        log(`addons: ${s.addon.name} (${s.addon.host}) refused for this song: ${fit.none}`, fit);
-        return { none: fit.none, state: 'refused', fit };
-      }
-      // the whole file at the audio context's rate (what the decks play), and its level: YouTube's
-      // loudness minus the file's, a boost at most +6 dB, the true peak kept at or under -1 dBTP
-      const full = await decodeAt(file.bytes, g.ctx.sampleRate, 2);
-      let lvl;
-      if (ytLufs > addonLufs) {   // a boost: its true peak is read over the whole file at the context's rate
-        let t = performance.now();
-        let addonChannels = Array.from({ length: full.numberOfChannels }, (_, c) => ownChannel(full, c));
-        busy += performance.now() - t;
-        const args = { ytLufs, addonLufs, addonChannels, rate: g.ctx.sampleRate };
-        lvl = (await A.addonWork({ op: 'gain', args }, addonChannels.map((x) => x.buffer)).catch(() => null))?.lvl;
-        if (!lvl) {
-          t = performance.now();
-          if (!addonChannels[0]?.length) args.addonChannels = addonChannels = Array.from({ length: full.numberOfChannels }, (_, c) => ownChannel(full, c));
-          lvl = F.sourceGainDb(args); busy += performance.now() - t; where = 'main thread';
+      // protocol.md 8.1.4: a copy the fit refuses passes to the next ready row or lane (the song plays YouTube's
+      // audio meanwhile), up to NEXT_ROWS more; YouTube's audio stays only when none passes
+      for (let more = 0; ; more++) {
+        const file = await AP.fetchFor(id);
+        if (!file.bytes) throw new Error(file.none);
+        // the file's own format beats what the addon said (some send no bit depth or rate): the badge's Hi-Res
+        const fmt = flacFormat(file.bytes);
+        if (fmt) AP.note(id, { stream: { ...s.stream, ...fmt, codec: 'flac' } });
+        say('fitting');
+        const t1 = performance.now();
+        const [ytBuf, adBuf] = await Promise.all([decodeAt(ytBytes, F.FIT_RATE, 2), decodeAt(file.bytes, F.FIT_RATE, 2)]);
+        // the mono mixes here (cheap); the fit, both loudness reads and the true-peak pass in the
+        // analysis frame's worker (addons/fit.worker.js): on this thread they held the page about
+        // 1 s per song. This thread only when that frame is out (the arrays are then still here).
+        let busy = performance.now();
+        let yt = monoOf(ytBuf), ad = monoOf(adBuf);
+        busy = performance.now() - busy;
+        let where = 'worker';
+        let fitted = await A.addonWork({ op: 'fit', yt, ad, opt: { slackSec: 5 } }, [yt.buffer, ad.buffer])
+          .catch((e) => { log('addons: no fit worker:', e?.message || e); return null; });
+        if (!fitted) {
+          if (!yt.length || !ad.length) { yt = monoOf(ytBuf); ad = monoOf(adBuf); }   // (handed to the worker)
+          const t = performance.now();
+          const f = F.fit(yt, ad, { slackSec: 5 });
+          fitted = f.none ? { fit: f } : { fit: f, ytLufs: F.integratedLufs(yt, F.FIT_RATE), addonLufs: F.integratedLufs(ad, F.FIT_RATE) };
+          busy += performance.now() - t; where = 'main thread';
         }
-      } else lvl = F.sourceGainDb({ ytLufs, addonLufs, addonChannels: [], rate: g.ctx.sampleRate });
-      const t3 = performance.now();
-      const rec = {
-        id, buf: full, off: fit.offsetSec, k: 10 ** (lvl.gainDb / 20), gainDb: lvl.gainDb, lvl, fit,
-        name: s.addon.name, host: s.addon.host, stream: s.stream,
-        took: { all: t3 - t0, fetch: t1 - t0, fit: t3 - t1 }, fileBytes: file.bytes.byteLength,
-      };
-      log(`addons: ${rec.name} (${rec.host}) fits: offset ${(rec.off * 1000).toFixed(1)} ms (score ${fit.score.toFixed(3)}, check ${fit.checkScore.toFixed(3)} at ${fit.checkSec.toFixed(0)} s), ` +
-        `level ${lvl.gainDb >= 0 ? '+' : ''}${lvl.gainDb.toFixed(2)} dB (wanted ${lvl.wantDb?.toFixed(2)}${lvl.capped ? ', capped by ' + lvl.capped : ''}), ` +
-        `${full.sampleRate} Hz x ${full.numberOfChannels}, ready after ${((t3 - t0) / 1000).toFixed(1)} s (fetch and YouTube's audio ${((t1 - t0) / 1000).toFixed(1)} s, fit, level and decode ${((t3 - t1) / 1000).toFixed(1)} s; fit and level in the ${where}, main thread busy ${busy.toFixed(0)} ms)`);
-      return { rec };
+        const { fit, ytLufs, addonLufs } = fitted;
+        if (fit.none) {
+          log(`addons: ${s.addon.name} (${s.addon.host}) refused for this song: ${fit.none}`, fit);
+          const nx = more < NEXT_ROWS && prepared.get(id) === me && AP.nextFor ? await AP.nextFor(id, fit.none) : null;
+          if (nx?.state === 'ready' && prepared.get(id) === me) { s = nx; say('fetching'); continue; }
+          return { none: fit.none, state: 'refused', fit };
+        }
+        // the whole file at the audio context's rate (what the decks play), and its level: YouTube's
+        // loudness minus the file's, a boost at most +6 dB, the true peak kept at or under -1 dBTP
+        const full = await decodeAt(file.bytes, g.ctx.sampleRate, 2);
+        let lvl;
+        if (ytLufs > addonLufs) {   // a boost: its true peak is read over the whole file at the context's rate
+          let t = performance.now();
+          let addonChannels = Array.from({ length: full.numberOfChannels }, (_, c) => ownChannel(full, c));
+          busy += performance.now() - t;
+          const args = { ytLufs, addonLufs, addonChannels, rate: g.ctx.sampleRate };
+          lvl = (await A.addonWork({ op: 'gain', args }, addonChannels.map((x) => x.buffer)).catch(() => null))?.lvl;
+          if (!lvl) {
+            t = performance.now();
+            if (!addonChannels[0]?.length) args.addonChannels = addonChannels = Array.from({ length: full.numberOfChannels }, (_, c) => ownChannel(full, c));
+            lvl = F.sourceGainDb(args); busy += performance.now() - t; where = 'main thread';
+          }
+        } else lvl = F.sourceGainDb({ ytLufs, addonLufs, addonChannels: [], rate: g.ctx.sampleRate });
+        const t3 = performance.now();
+        const rec = {
+          id, buf: full, off: fit.offsetSec, k: 10 ** (lvl.gainDb / 20), gainDb: lvl.gainDb, lvl, fit,
+          name: s.addon.name, host: s.addon.host, stream: s.stream,
+          took: { all: t3 - t0, fetch: t1 - t0, fit: t3 - t1 }, fileBytes: file.bytes.byteLength, passedOver: more,
+        };
+        log(`addons: ${rec.name} (${rec.host}) fits: offset ${(rec.off * 1000).toFixed(1)} ms (score ${fit.score.toFixed(3)}, check ${fit.checkScore.toFixed(3)} at ${fit.checkSec.toFixed(0)} s), ` +
+          `level ${lvl.gainDb >= 0 ? '+' : ''}${lvl.gainDb.toFixed(2)} dB (wanted ${lvl.wantDb?.toFixed(2)}${lvl.capped ? ', capped by ' + lvl.capped : ''}), ` +
+          `${full.sampleRate} Hz x ${full.numberOfChannels}, ready after ${((t3 - t0) / 1000).toFixed(1)} s (fetch and YouTube's audio ${((t1 - t0) / 1000).toFixed(1)} s, fit, level and decode ${((t3 - t1) / 1000).toFixed(1)} s; fit and level in the ${where}, main thread busy ${busy.toFixed(0)} ms)`);
+        return { rec };
+      }
     })().then((r) => { if (prepared.get(id) === me) Object.assign(me, r); return r; },
       (e) => { const r = { none: String(e?.message || e), state: 'failed' }; if (prepared.get(id) === me) Object.assign(me, r, { tries, failedAt: performance.now() }); return r; });
     prepared.set(id, me);
@@ -2816,7 +2831,7 @@
     if (amxOn) {
       wantSong(st.id);
       if (st.next && st.next !== st.id) wantSong(st.next);
-      if (songs.get(st.id)?.state === 'ready') A.request(st.id, true);   // the playing song's mix-out comes first
+      if (songs.get(st.id)?.state === 'ready') A.request(st.id, true, st.dur);   // the playing song's mix-out comes first
     } else if (amx.state !== 'fallback' && amx.state !== 'done') amx.state = 'off';
 
     if (amx.state === 'idle' || amx.state === 'waiting' || amx.state === 'ready') {
@@ -2935,7 +2950,9 @@
       const why = live ? 'A plain crossfade is playing' : amx.state === 'fallback' ? 'This song ends with a plain crossfade' : st.next ? 'Planning the mix…' : 'Nothing queued after this song';
       // a pick for this pair stays undoable while there is no mix to show
       const pairKey = !live && st.next ? st.id + '>' + st.next : '';
-      return pairKey && pairPicks[pairKey] ? { why, pairKey, toId: st.next, pick: pairPicks[pairKey] } : { why };
+      // (the songs, for the overview's progress row: editor.md §11)
+      const ids = { curId: st.id, nextId: st.next || null, live: !!live };
+      return pairKey && pairPicks[pairKey] ? { why, pairKey, toId: st.next, pick: pairPicks[pairKey], ...ids } : { why, ...ids };
     }
     const fromId = live ? live.oldId : st.id;
     const toId = m.nextId || (live ? '' : st.next) || '';
@@ -2965,7 +2982,7 @@
     else if (g && !live) at = (g.video.currentTime - (st.off || 0)) - m.mixOutTrackTime;
     const lp = loopPrep.key === pairKey ? loopPrep : null;
     return {
-      fromId, toId, pairKey, mix: m, x, D, at, gIn, gOut,
+      fromId, toId, pairKey, mix: m, x, D, at, gIn, gOut, live: !!live,
       phase: live ? live.phase : amx.state,
       paused: !live && !!g?.video?.paused,
       fromDur: live ? null : st.dur,

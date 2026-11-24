@@ -268,6 +268,19 @@ What the limits are, in words:
 - A saved mix-out the playhead has already passed isn't moved to "now": the planner's own mix-out
   plays instead, with "the mix-out at X s has already played" shown.
 - A length that doesn't fit before A's end plays as long as there is room, with the reason shown.
+- **Shortened:** a length picked (a preset's or "up to N bars") longer than a third of either song
+  plays as the most whole bars that fit, at least 1, with "shortened to N bars (X s): an overlap
+  can't be longer than a third of either song". Not for Loop, whose length is its own.
+- **A retired preset:** a saved pick naming a preset no longer offered plays as Automatic, with
+  "the preset "<id>" is no longer offered: Automatic plays". The pick stays saved; its length and
+  window still apply.
+- **Hear it on the next song:** a button that seeks the playing song to 12 s before the planned
+  mix-out, so the listener hears the transition without waiting. Greyed out when no mix is planned
+  for this song, or too little of it is left to reach that point.
+  - **[PC]** The overview's ▶ Preview: it seeks to about 21 s before the mix-out (the planner's
+    4 s hand lead, plus the 14 s tail copy lead + 3 s + the tempo ramp; 8 s instead of the tail
+    lead for a loop), because the PC copies A's tail before the mix. Greyed out while the plan isn't
+    editable or under 25 s are left.
 - The first window edit of one side (a drag or a nudge) saves the other side too, where the plan has
   it at that moment. With one side saved, the planner would still move the other (B's skip cap, the
   vocal re-route), and B's mix-in could jump bars under a 10 ms nudge of A.
@@ -437,3 +450,39 @@ drawing read-only first):
 tempo stays, as for any preset.
 
 Cases: `editor-cases.json`, group `draw` (`pointCurves` and `normalizeOverride` on drawings).
+
+## 11. The progress row
+
+One row in the overview, under the drawing well and above the legend, for the analysis and the loop
+search. From the phone's overview (`automix/Automix.java:639-650`, `automix/Analyzer.java`); rules 3
+and 4 are ours. Draft and BitChord's notes: `plan-progress-row.md`.
+
+1. **[all]** One row, this song before the next, never both: "Analysing this song: <stage> · NN%" or
+   "Analysing the next song: <stage> · NN%", over a bar filled to NN%. A song waiting in the queue
+   reads "waiting its turn · 0%".
+2. **[all, where the app has a separate loop-mix search]** With neither song analysing and the loop
+   search still running: "Looking for a loop mix…", with an indeterminate bar.
+3. **[all]** A failed analysis: "Analysis of this song / the next song failed: <reason>", in the row's
+   place, no bar, until the song is analysed again. The reason is always shown. Outcomes that aren't
+   failures get their own wording, never "failed": a song over the length limit ("is over 8 minutes:
+   not analysed, a plain crossfade"), a party stopping the analysis, a decode too short, a song from
+   a video.
+4. **[all]** Hidden during a live mix (the overview shows the mix itself then). Hidden until first
+   shown; after that the row keeps its room when it has nothing to say (invisible, not gone), so
+   the chips below don't jump. No setting.
+5. **[each app]** The stages and their % are each app's own, a fixed % at each stage's start:
+   nothing is counted inside a stage.
+   - Phone: waiting its turn 0, starting 0, downloading 0, decoding 2, finding the beats 22 (52
+     after the opening's beats), finding the key 82, measuring the low end and keys 84, finding the
+     vocals 85.
+   - PC: waiting its turn 0, getting the audio 0, decoding 5, measuring the low end and keys 15,
+     finding the beats, the key and the vocals 25, saving 95. The models run in one worker job that
+     sends nothing until it ends, so the 25-95 stretch has no steps.
+6. **[all]** Analysis only (the user, 2026-11-24): the row never shows the addon fetch or the take-over,
+   and it stays hidden during a live mix (rule 4).
+
+PC: built 2026-11-24. `src/automix/automix.js` `progressOf(id)` → `{status, stage, pct}` or
+`{status: 'error', why}`; the analysis frame (`host.js` `analyzeSong`) posts `{type: 'progress',
+fileKey, stage}` at its stage starts; the overview's `progressRow` in `src/automix-overview.js`
+(class `vivi-amx-ov-prog`, `src/plus/plus.css`). The snapshot names the songs (`curId`, `nextId`)
+even with no plan.

@@ -48,3 +48,38 @@ checked against them yet.
      isn't taken for that.
 
    Otherwise it stayed "done", and the overview showed "Planning the mix…" for good.
+
+## Playback speed [all]
+
+Mornye 7d35c877.
+
+1. **Plans are in song time.** Mix points, lengths and curves are positions in the songs, not wall
+   time. At a playback speed other than x1 a platform that mixes converts them by the speed; one that
+   can't mixes nothing (rule 2).
+2. **[PC]** YouTube Music on the web has no speed control. The PC mixes only while the player plays
+   at x1 (crossfade.js: `playbackRate === 1`); at any other speed YouTube plays the song through,
+   unmixed.
+
+## Sleep timer [all]
+
+Mornye 8a6b7fb5.
+
+1. **A sleep timer set to "end of song" drops a prepared mix.** The song plays to its own end and
+   playback stops there: the next song is never faded in, and its deck is let go.
+2. **[PC]** YouTube Music on the web has no sleep timer, so there is nothing to build.
+
+## Blend when I skip [all]
+
+Prism `SkipFadeRules.kt`. A skip (Next) that blends into the next song instead of cutting.
+
+Prism's targets:
+1. A setting, **off by default**.
+2. The blend lasts **1.5 s**.
+3. If the next song isn't ready to play within **4 s** of the skip, it is a plain skip.
+
+**[PC]** Built its own way, before this section: "Blend when I skip" (`crossfadeManualSkip`) is **on
+by default**; the blend lasts the user's crossfade length (1-12 s), the playing song fading out over
+a copy of its tail. After Next the PC waits up to 1.5 s for that copy, else it is a plain Next. Next
+(the button and Shift+N) only, and not within the song's last crossfade length + 2 s; Next or Prev
+during a planned mix is handled by the mix (`skipDuringMix`). The PC keeps these; a platform building it new
+takes Prism's targets.

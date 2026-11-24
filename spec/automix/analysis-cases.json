@@ -80,6 +80,12 @@
       "song": { "sec": 50, "kit": "click", "parts": [{ "from": 0, "bpm": 120 }], "voice": [[22.2, 44.4]], "pad": [57, 60, 64] },
       "check": ["tempo", "beats", "vocals"],
       "knownMiss": { "vocals": "2026-11-19: Open-Unmix (vocals_umxhq_int8) reads the held sine chord as voice too: 92% of frames sung, IoU 54%. Kept as found; both sides run the same model." }
+    },
+    {
+      "name": "too-long-481",
+      "what": "a song over 8 minutes (481 s): not analysed, reported as too long and not as a failure (versions.md \"Analysis length\"). Not rendered: the check is the length alone",
+      "song": { "sec": 481, "kit": "click", "parts": [{ "from": 0, "bpm": 120 }] },
+      "check": ["tooLong"]
     }
   ],
   "real": {

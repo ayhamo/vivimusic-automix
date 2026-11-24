@@ -86,6 +86,7 @@
       pending.clear();
       return;
     }
+    if (d.type === 'progress') { const id = String(d.fileKey || '').split(':')[0]; if (status.get(id) === 'analyzing') stageOf(id, d.stage); return; }
     const p = pending.get(d.fileKey);
     if (!p) return;
     pending.delete(d.fileKey);
@@ -141,13 +142,33 @@
   const results = new Map();
   const status = new Map();
   const failedAt = new Map();
+  // editor.md §11 (the progress row): each analysing song's stage and its fixed % at the stage's start
+  // (nothing is counted inside a stage), and a failure's reason, kept until the song is asked again
+  const STAGES = { waiting: ['waiting its turn', 0], audio: ['getting the audio', 0], decoding: ['decoding', 5], lowEnd: ['measuring the low end and keys', 15], models: ['finding the beats, the key and the vocals', 25], saving: ['saving', 95] };
+  const stage = new Map(), failedWhy = new Map();
+  const stageOf = (id, k) => { if (STAGES[k]) stage.set(id, k); };
+  function progressOf(id) {
+    const s = status.get(id) ?? null;
+    if (s === 'pending') return { status: s, stage: STAGES.waiting[0], pct: 0 };
+    if (s === 'analyzing') { const k = stage.get(id) || 'audio'; return { status: s, stage: STAGES[k][0], pct: STAGES[k][1] }; }
+    if (s === 'error') return { status: s, why: failedWhy.get(id) || 'unknown' };
+    return { status: s };
+  }
   let queue = [];
   let running = false;
 
-  function request(id, urgent = false) {
+  // Songs over 8 minutes aren't analysed (Laya 1a1f324b; versions.md "Analysis length"): "too long",
+  // a status of its own (not a failure, never retried); they mix as songs without an analysis do.
+  const ANALYSIS_MAX_SEC = 480;
+  function request(id, urgent = false, durationSec = null) {
     if (!id || !enabled) return;
     const known = status.get(id);
-    if (known === 'done' || known === 'analyzing') return;
+    if (known === 'done' || known === 'analyzing' || known === 'tooLong') return;
+    if (durationSec > ANALYSIS_MAX_SEC) {
+      status.set(id, 'tooLong');
+      log(`analysis of ${id}: too long (${Math.round(durationSec)} s, over ${ANALYSIS_MAX_SEC} s), not analysed`);
+      return;
+    }
     if (known === 'error' && Date.now() - (failedAt.get(id) ?? 0) < RETRY_FAILED_MS) return;
     if (known === 'pending') {
       if (urgent) {
@@ -168,9 +189,15 @@
       const id = queue.shift();
       if (status.get(id) !== 'pending') continue;
       status.set(id, 'analyzing');
+      stageOf(id, 'audio'); failedWhy.delete(id);
       const started = performance.now();
       try {
         const a = await analyzeOne(id);
+        if (a?.tooLong) {
+          status.set(id, 'tooLong');
+          log(`analysis of ${id}: too long (${Math.round(a.durationSec)} s, over ${ANALYSIS_MAX_SEC} s), not analysed`);
+          continue;
+        }
         results.set(id, a);
         while (results.size > KEEP_RESULTS) {
           const old = results.keys().next().value;
@@ -178,11 +205,14 @@
           status.delete(old);
         }
         status.set(id, 'done');
+        stage.delete(id);
         log(`analysis of ${id}${a.cached ? ' (saved)' : ''}${a.musicVideo ? ' (music video)' : ''}: ${a.bpm?.toFixed(1) ?? '?'} BPM (end ${a.tailGrid?.bpm?.toFixed(1) ?? '?'}), ${a.keyName ?? '?'}, grid ${a.gridConfidence.toFixed(2)} / end ${a.tailGrid?.gridConfidence?.toFixed(2) ?? '-'}, intro ends ${a.introEndSec?.toFixed(1) ?? '-'} s, outro from ${a.outroStartSec?.toFixed(1) ?? '-'} s${a.contentEndSec != null ? `, music ends ${a.contentEndSec.toFixed(1)} s` : ''}${a.subBassRatio != null ? `, sub-bass ${a.subBassRatio.toFixed(2)}` : ''}, in${Math.round(performance.now() - started)} ms`);
       } catch (e) {
         log('analysis of', id, 'failed:', e?.message || e);
         failedAt.set(id, Date.now());
         status.set(id, 'error');
+        stage.delete(id);
+        failedWhy.set(id, String(e?.message || e).slice(0, 120));
       }
     }
     running = false;
@@ -220,6 +250,7 @@
       return cached;
     }
     const { bytes, musicVideo } = await songBytes(id);
+    stageOf(id, 'decoding');
     const result = await askHost({ type: 'analyzeSong', id, bytes, musicVideo }, [bytes]);
     if (!result) throw new Error('analysis failed');
     return result;
@@ -386,15 +417,32 @@
   // (style 'blend', 'filter' or 'crossfade'; either may be null: Auto).
   // (an editor override, editor.md §9, or a pick from before the editor: migratePick)
   function plan({ fromId, toId, from, to, durationSec, pos, earliest, pick = null, fadeSec = null }) {
-    const ov = migratePick(pick);
+    let ov = migratePick(pick);
+    const notes = [];
+    // a preset no longer offered plays as Automatic, and says so (editor.md §6)
+    if (ov?.preset && ov.preset !== 'auto' && !PRESET_NAMES.includes(ov.preset)) {
+      notes.push(`the preset "${ov.preset}" is no longer offered: Automatic plays`);
+      ov = { ...ov, preset: 'auto' };
+    }
+    // an overlap is never longer than a third of either song: a longer length picked is shortened (editor.md §6)
+    const pickedBars = ov?.preset !== 'loop' ? ov?.bars || PRESET_BARS[ov?.preset] || null : null;
+    if (pickedBars && from && to) {
+      const g = editorGrid(from, 'out'), third = Math.min(durationSec, to.durationSec > 0 ? to.durationSec : Infinity) / 3;
+      const barSec = (g?.beatSec || 0) * 4;
+      if (barSec > 0 && pickedBars * barSec > third + 1e-6) {
+        const n = Math.max(1, Math.floor(third / barSec));
+        notes.push(`shortened to ${n} bar${n === 1 ? '' : 's'} (${(n * barSec).toFixed(1)} s): an overlap can't be longer than a third of either song`);
+        ov = { ...ov, bars: n };
+      }
+    }
     fallbackSec = fadeSec > 0 ? Math.min(FALLBACK_SEC, Math.max(1, Math.round(fadeSec))) : FALLBACK_SEC;
     pinnedBars = (ov?.preset !== 'loop' && (ov?.bars || PRESET_BARS[ov?.preset])) || null;
     try {
-      const warnings = [];
+      const warnings = [...notes];
       const p = planFor({ fromId, toId, from, to, durationSec, pos, earliest, pick: ov, warnings });
       p.curves = blendCurves(p);
       // a length the planner didn't use (a hand-over, a drop-in's two bars): why, not "fit here" (editor.md §6)
-      if (ov?.bars && ov.preset !== 'loop' && !warnings.length && (p.handoff || p.bridge || p.fallback || (p.shape === 'dropin' && p.bars !== ov.bars))) {
+      if (ov?.bars && ov.preset !== 'loop' && warnings.length === notes.length && (p.handoff || p.bridge || p.fallback || (p.shape === 'dropin' && p.bars !== ov.bars))) {
         warnings.push(`${ov.bars} bars not used: ${p.reason || 'a plain fade here'}`);
       }
       if (ov && ov.preset !== 'loop') {
@@ -643,6 +691,7 @@
     }
     if (v3 && !forced && (introShort || (dj?.clash ?? 0) > V2_CLASH_MAX)) {
       const why = introShort ? 'no intro in the next song to blend over' : `both would sing ${Math.round((dj?.clash ?? 0) * 100)}% of a blend`;
+      const avoid = avoidedMove();   // an effect heard twice running isn't picked a third time
       const sung = { out: lyricSpans(cur), in: lyricSpans(next) };
       // drop-in: the next song on its first downbeat at full level, two bars over the
       // playing song's exit, which may not cut a line (exit at most 12 s of music earlier)
@@ -650,11 +699,11 @@
       const dGlide = glideQ ? glideSteps(glideQ, DROP_IN_BARS * 4, fromGrid.beatSec) : null;
       const lo = Math.max(first, pos + rampSongSec);
       const natural = naturalMixOut(fromGrid, musicEnd(cur), dSpan);
-      for (let k = 0; k * fromGrid.barSec <= MAX_DISCARD_SEC; k++) {
+      for (let k = 0; avoid !== 'dropin' && k * fromGrid.barSec <= MAX_DISCARD_SEC; k++) {
         const o = natural - k * fromGrid.barSec;
         if (o < lo) break;
         const cut = voiceRisk(cur, o + dSpan - 1.5, o + dSpan, sung.out);
-        if (cut != null && cut >= SWAP_CLEAR) continue;
+        if (cut != null && cut >= SWAP_CLEAR && !singsOut(cur, o + dSpan, sung.out)) continue;
         const both = vocalOverlap(cur, next, o, dSpan, toGrid.downbeatSec, inPerOut, sung);
         if ((both ?? 0) > V2_CLASH_MAX) continue;
         const dDur = dGlide ? dGlide.total : dSpan / outRate;
@@ -680,7 +729,7 @@
       const body = bassMean(cur, mixOut, mixOut + at * outSpan);
       const swapsSingers = (voiceRisk(cur, mixOut + at * outSpan - 0.5, mixOut + at * outSpan + 0.5, sung.out) ?? 0) >= 0.5
         && (voiceRisk(next, inAt(at) - 0.5, inAt(at) + 0.5, sung.in) ?? 0) >= 0.7;
-      if (!introShort && leadBeats >= MUFFLE_MIN_LEAD_BEATS && at + MUFFLE_EXIT_BEATS / B <= 1 + 1e-6
+      if (avoid !== 'muffle' && !introShort && leadBeats >= MUFFLE_MIN_LEAD_BEATS && at + MUFFLE_EXIT_BEATS / B <= 1 + 1e-6
         && (body == null || body >= MUFFLE_MIN_BODY) && inAt(at - lead) >= MUFFLE_MIN_OPENING_SEC && !swapsSingers) {
         shape = 'muffle'; muffleLead = lead;
         shapeWhy = `${why}: a muffle (the playing song closes behind a low-pass)`;
@@ -993,6 +1042,7 @@
   // loop): the blend has to win by about as much as a fifth of a blend sung by
   // both songs, or a key score 0.19 worse on the loop's side.
   const LOOP_MARGIN = 0.02;
+  const LOOP_PHRASE_BONUS = 0.01;   // B's loop starts on a 4-bar phrase line (versions.md "Loop on the blend's bars")
   function loopOrBlend(blend, loop) {
     if (version !== 3 || !loop || loop.none) return { loop: !!loop && !loop.none };
     if (!blend || blend.fallback || blend.style !== 'blend' || blend.shape) return { loop: true, why: 'the blend fell back' };
@@ -1000,7 +1050,7 @@
     const length = (beats) => (beats === 16 ? 1 : beats === 8 ? 0.85 : beats === 32 ? 0.75 : 0.65);
     const score = (clash, keys, beats) => 0.82 * (0.15 * vocal(clash) + 0.13 * keys + 0.02 * length(beats));
     const b = score(blend.clash || 0, blend.harmonic?.score ?? 0.5, blend.bars * 4);
-    const l = score(Math.min(loop.out.vocal ?? 0, loop.in.vocal ?? 0), 1, loop.totalBars * 4);
+    const l = score(Math.min(loop.out.vocal ?? 0, loop.in.vocal ?? 0), 1, loop.totalBars * 4) + (loop.in.phrase ? LOOP_PHRASE_BONUS : 0);
     const r = (v) => Math.round(v * 1e4) / 1e4;
     return { loop: b < l + LOOP_MARGIN, why: `loop ${r(l)} vs blend ${r(b)} (the blend needs ${LOOP_MARGIN} more)` };
   }
@@ -1144,7 +1194,7 @@
       while (sungCache.size > 24) sungCache.delete(sungCache.keys().next().value);
     }
     const s = sungCache.get(id).spans;
-    return Array.isArray(s) ? s : null;
+    return Array.isArray(s) ? carveSung(s, a) : null;
   }
   // One lyrics lookup per song at a time: the loop mix's lookup and this one,
   // made at the same moment, share a single answer.
@@ -1245,12 +1295,12 @@
   function unmatchedMix(cur, next, fromGrid, toGrid, pos, earliest, why) {
     const b = beatlessBridge(cur, next);
     if (!b.none && b.mixOut >= earliest) return handoff(cur, next, earliest, why);
-    const lo = Math.max(earliest, pos);
+    const lo = Math.max(earliest, pos), avoid = avoidedMove();
     const f = filterMix(cur, next, fromGrid, toGrid, requestedBars(cur, next, fromGrid, toGrid.downbeatSec, true), pos, earliest, `${why}: a filter mix (no beat match)`, lo);
-    if (f.style === 'filter' && f.clash <= V2_CLASH_MAX) return f;
-    const sang = f.style === 'filter' ? `, both would sing ${Math.round(f.clash * 100)}% of a filter mix` : '';
-    return echoOut(cur, next, fromGrid, toGrid, lo, `${why}${sang}: an echo out (no beat match)`)
-      ?? handoff(cur, next, earliest, `${why}${sang}, and no filter mix or echo out fits`);
+    if (f.style === 'filter' && f.clash <= V2_CLASH_MAX && avoid !== 'filter') return f;
+    const sang = f.style !== 'filter' ? '' : avoid === 'filter' ? ', a filter mix the last two times' : f.clash > V2_CLASH_MAX ? `, both would sing ${Math.round(f.clash * 100)}% of a filter mix` : '';
+    const e = avoid === 'echo' ? null : echoOut(cur, next, fromGrid, toGrid, lo, `${why}${sang}: an echo out (no beat match)`);
+    return e ?? handoff(cur, next, earliest, `${why}${sang}, and no ${avoid === 'echo' ? 'third echo out in a row or ' : ''}filter mix or echo out fits`);
   }
   // Echo out (Prism MixMoves ECHO_OUT; editor.md §5): the beat before the catch (a bar line,
   // at an anchor) is fed to a 1-beat delay with feedback 0.53; the playing song's dry sound is
@@ -1284,6 +1334,40 @@
       };
     }
     return null;
+  }
+  // Orchard singsOut (transitionFlow.js, the adlib outro): from `time` to the music's end the voice
+  // never pauses 2 s for a line to finish, while the beat is gone over the last 4 s (beat presence
+  // under 0.5 at 2 s and at 0.5 s before the end). Any exit cuts such a voice, the song's own end
+  // included, so an exit may cut it (versions.md "Adlib outro").
+  const SINGS_OUT_TAIL_SEC = 4, LINE_PAUSE_SEC = 2;
+  function singsOut(a, time, spans = null) {
+    const end = Math.min(musicEnd(a).durationSec, a.durationSec - 0.3);
+    if (!(end - time >= SINGS_OUT_TAIL_SEC)) return false;
+    const closing = beatPresence(a, end - SINGS_OUT_TAIL_SEC / 2);
+    if (closing == null || closing >= 0.5 || (beatPresence(a, end - 0.5) ?? 1) >= 0.5) return false;
+    let pause = 0;
+    for (let at = time; at < end - 1; at += 0.25) {
+      const r = voiceRisk(a, at, at + 0.5, spans);
+      if (r == null) return false;
+      pause = r < 0.3 ? pause + 0.25 : 0;
+      if (pause >= LINE_PAUSE_SEC) return false;
+    }
+    return true;
+  }
+  // Prism MixMoves.pick: an effect move isn't heard a third time running (versions.md "No effect
+  // three times in a row"). The mixes as heard (crossfade.js reports each at its hand-over), the last 16.
+  const RECENT_MOVES = 16, EFFECT_MOVES = ['filter', 'echo', 'dropin', 'muffle'];
+  const recentMoves = [];
+  const moveOf = (p) => (!p ? null : p.style === 'filter' ? 'filter' : p.style === 'loop' ? 'loop' : p.style === 'blend' ? p.shape || 'blend' : 'crossfade');
+  function heard(p) {
+    const m = moveOf(p);
+    if (!m) return;
+    recentMoves.push(m);
+    while (recentMoves.length > RECENT_MOVES) recentMoves.shift();
+  }
+  function avoidedMove() {
+    const n = recentMoves.length, m = recentMoves[n - 1];
+    return n >= 2 && EFFECT_MOVES.includes(m) && recentMoves[n - 2] === m ? m : null;
   }
   function handoff(cur, next, earliest, reason) {
     // first rung: the two songs' beatless edges, at any tempo
@@ -1820,8 +1904,6 @@
   // guard; from the mask, a whole beat. A synced line is padded at its start
   // (the breath before it) and its end (the voice's tail and reverb).
   const LYRIC_GUARD_SEC = 0.3;
-  const LYRIC_LEAD_SEC = 0.15;
-  const LYRIC_TAIL_SEC = 0.35;
   const LYRICS_WAIT_MS = 8000;
   const MIN_LOUDNESS = 0.6;
   const OUT_SEARCH_SEC = 60;
@@ -1850,11 +1932,13 @@
     // outgoing: the latest instrumental loop that ends before the song does
     const outEnd = Math.min(out.durationSec - 0.5, outBuffer.duration - 0.1);
     const outFirst = Math.max(earliestOutSec, out.durationSec - OUT_SEARCH_SEC);
-    const outPick = firstClean((bars) => loopsBetween(out.tailBeats, out.firstDownbeatSec, outBar, outFirst, outEnd, bars).reverse(), outBuffer, out.vocals ?? [], sung.out ?? null, out.beatIntervalSec);
+    // the bar lines the blend uses: A's end grid (editorGrid 'out'), B's main grid (versions.md "Loop on the blend's bars")
+    const outGrid = editorGrid(out, 'out');
+    const outPick = firstClean((bars) => loopsBetween(out.tailBeats, outGrid?.downbeatSec ?? out.firstDownbeatSec, outGrid ? outGrid.beatSec * 4 : outBar, outFirst, outEnd, bars).reverse(), outBuffer, out.vocals ?? [], carveSung(sung.out ?? null, out), out.beatIntervalSec);
     if (!outPick) return { none: 'no instrumental bars near the end of the playing song' };
     // incoming: the earliest instrumental loop in its opening
     const inEnd = Math.min(IN_SEARCH_SEC + LOOP_BARS * inBar, inBuffer.duration - 20);
-    const inPick = firstClean((bars) => loopsBetween(inn.headBeats, inn.firstDownbeatSec, inBar, 0, inEnd, bars), inBuffer, inn.vocals ?? [], sung.in ?? null, inn.beatIntervalSec);
+    const inPick = firstClean((bars) => loopsBetween(inn.headBeats, inn.firstDownbeatSec, inBar, 0, inEnd, bars), inBuffer, inn.vocals ?? [], carveSung(sung.in ?? null, inn), inn.beatIntervalSec);
     if (!inPick) return { none: 'no instrumental bars in the opening of the next song' };
     // a loop's own length is its tempo: its beats exactly, bar line to bar line
     const outBeat = (outPick.end - outPick.start) / (outPick.bars * 4);
@@ -1874,9 +1958,12 @@
     const inLoopOutBars = inPick.bars / fold;
     const totalBars = Math.ceil((ENTER_BARS + rampBars + 2) / inLoopOutBars) * inLoopOutBars;
     const pick = (key, p, beatSec, bpm) => ({ key, loop: [p.start, p.end], bars: p.bars, beatSec, bpm, vocal: p.vocal, checkedBy: p.checkedBy });
+    // B's loop on a 4-bar phrase line, counted from B's first downbeat (a quarter beat either side):
+    // a small bonus in loopOrBlend (versions.md "Loop on the blend's bars" rule 3)
+    const phraseK = (inPick.start - inn.firstDownbeatSec) / (4 * inBar);
     const plan = {
       out: pick(out.fileKey, outPick, outBeat, outBpm),
-      in: pick(inn.fileKey, inPick, inBeat, inBpm),
+      in: { ...pick(inn.fileKey, inPick, inBeat, inBpm), phrase: Math.abs(phraseK - Math.round(phraseK)) * 16 <= 0.25 },
       fold, enterBars: ENTER_BARS, rampBars, exitBars: totalBars - ENTER_BARS - rampBars, totalBars,
     };
     plan.curves = loopCurves(plan);
@@ -1884,12 +1971,17 @@
   }
 
   // [bars]-bar loops in [from, to]: on the model's own downbeats where it has
-  // them (the seam is the music's bar line), else AutoMix's constant grid.
+  // them (the seam is the music's bar line), else AutoMix's constant grid. A
+  // model downbeat off the grid's bar lines (over a quarter beat) isn't used:
+  // the loop starts on the same bar lines as the blend, so it can't bring the
+  // next song in half a bar off (Vaina Loca: B's model downbeats from 7.17 s on
+  // sit 2 beats after the grid's; versions.md "Loop on the blend's bars").
   function loopsBetween(side, anchor, bar, from, to, bars) {
     const loops = [];
-    if (side && side.downbeats.length >= bars + 1) {
+    const onGrid = (t) => { const k = (t - anchor) / bar; return Math.abs(k - Math.round(k)) * bar <= bar / 16; };
+    const downs = side?.downbeats?.filter(onGrid) ?? [];
+    if (side && downs.length >= bars + 1) {
       const beat = 60 / side.bpm;
-      const downs = side.downbeats;
       for (const start of downs) {
         if (start < from) continue;
         const target = start + bars * 4 * beat;
@@ -1948,22 +2040,76 @@
     return n && covered >= (to - from) * 0.8 ? { share: sung / n, longestRunSec: longest / fps } : null;
   }
 
-  // BitChord sungSpansFromLines: each sung line, padded; a line with no known
-  // end (plain line sync times only its start) lasts to the next, 10 s at most.
-  function sungSpansFromLines(lines) {
+  // A synced line's shape, without its text: start and end (s; end null when the
+  // provider gives none), its word count, and its words' [start, end] when timed.
+  function lineShapes(lines) {
+    const shapes = [];
+    for (const l of lines) {
+      if (!Number.isFinite(l?.start)) continue;
+      const timed = Array.isArray(l.words) ? l.words.filter((w) => Number.isFinite(w?.start) && Number.isFinite(w?.end) && w.end >= w.start) : [];
+      const text = String(l.text ?? '').trim();
+      if (!text && !timed.length) continue;   // a gap line
+      shapes.push({
+        start: l.start / 1000,
+        end: Number.isFinite(l.end) && l.end > l.start ? l.end / 1000 : null,
+        words: text ? text.split(/\s+/).length : timed.length,
+        wordTimes: timed.length ? timed.map((w) => [w.start / 1000, w.end / 1000]) : null,
+      });
+    }
+    return shapes.sort((a, b) => a.start - b.start);
+  }
+  // Where each line is sung (versions.md "Where a song is sung", 2026-11-24). With
+  // word times: the first word's start to the last word's end + 0.3 s. Without: the
+  // line's start to the earliest of the next line's start, the start + its words x
+  // 0.35 s + 0.5 s, its own end when the provider gives one, and 10 s. (Until then a
+  // line without word times was sung up to the next line, 10 s at most: nearly
+  // every second of a song counted as sung, and Automix v2's ladder fell to the
+  // hand-over.)
+  const LINE_WORD_SEC = 0.35, LINE_PAD_SEC = 0.5, LINE_MAX_SEC = 10, WORD_TAIL_SEC = 0.3;
+  function sungSpansFromLines(shapes) {
     const spans = [];
-    const sorted = [...lines].filter((l) => Number.isFinite(l?.start)).sort((a, b) => a.start - b.start);
-    sorted.forEach((l, i) => {
-      const words = Array.isArray(l.words) ? l.words.filter((w) => Number.isFinite(w?.end)) : [];
-      if (!String(l.text ?? '').trim() && !words.length) return;   // a gap line
-      const start = l.start / 1000;
-      const next = sorted.slice(i + 1).find((n) => n.start > l.start)?.start;
-      const end = words.length
-        ? Math.max(...words.map((w) => w.end)) / 1000
-        : Math.min(start + 10, (Number.isFinite(l.end) && l.end > l.start ? l.end : next ?? l.start + 10000) / 1000);
-      spans.push([start - LYRIC_LEAD_SEC, Math.max(end, start) + LYRIC_TAIL_SEC]);
+    shapes.forEach((l, i) => {
+      if (l.wordTimes?.length) {
+        spans.push([Math.min(...l.wordTimes.map((w) => w[0])), Math.max(...l.wordTimes.map((w) => w[1])) + WORD_TAIL_SEC]);
+        return;
+      }
+      const next = shapes.slice(i + 1).find((n) => n.start > l.start)?.start ?? Infinity;
+      const end = Math.min(next, l.start + l.words * LINE_WORD_SEC + LINE_PAD_SEC, l.end ?? Infinity, l.start + LINE_MAX_SEC);
+      spans.push([l.start, Math.max(end, l.start)]);
     });
     return spans;
+  }
+  // The vocal mask, where the song has one, still hears a gap: inside a sung span a
+  // run of a beat or more with the mask under 0.3 isn't sung (so lyrics never mark
+  // sung what the mask hears as instrumental for 2 s or more either).
+  const MASK_GAP = 0.3;
+  const carved = new WeakMap();   // spans array -> Map(analysis -> carved spans)
+  function carveSung(spans, a) {
+    if (!Array.isArray(spans) || !a?.vocals?.length) return spans;
+    let byA = carved.get(spans);
+    if (!byA) { byA = new WeakMap(); carved.set(spans, byA); }
+    if (byA.has(a)) return byA.get(a);
+    const beat = a.beatIntervalSec > 0 ? a.beatIntervalSec : 0.5, out = [];
+    // lines that touch or overlap are one run first: a breath across a line change is one gap
+    const runs = [];
+    for (const [x, y] of [...spans].sort((p, q) => p[0] - q[0])) {
+      const last = runs[runs.length - 1];
+      if (last && x <= last[1]) last[1] = Math.max(last[1], y); else runs.push([x, y]);
+    }
+    const mask = (t) => { for (const w of a.vocals) { const i = Math.round((t - w.startSec) * w.fps); if (i >= 0 && i < w.curve.length) return w.curve[i]; } return null; };
+    for (const [x, y] of runs) {
+      let from = x, gapAt = null;
+      for (let t = x; t < y; t += 0.02) {
+        const m = mask(t);
+        if (m != null && m < MASK_GAP) { if (gapAt == null) gapAt = t; continue; }
+        if (gapAt != null && t - gapAt >= beat) { if (gapAt > from) out.push([from, gapAt]); from = t; }
+        gapAt = null;
+      }
+      if (gapAt != null && y - gapAt >= beat) { if (gapAt > from) out.push([from, gapAt]); }
+      else if (y > from) out.push([from, y]);
+    }
+    byA.set(a, out);
+    return out;
   }
 
   // Song details from YouTube Music's queue (crossfade-page.js), for the lyrics lookup.
@@ -1993,7 +2139,7 @@
   // BitChord state/player.ts sungSpans: where [id] is sung, from its synced
   // lyrics (the lyrics panel's lookup and cache); null when it has none, or
   // they don't come in time: the loop mix then goes by the vocal mask.
-  async function sungSpans(id) {
+  async function lyricLines(id) {
     try {
       const L = window.__viviLyrics;
       if (!L?.fetchBestLyrics) return null;
@@ -2007,9 +2153,14 @@
         new Promise((r) => setTimeout(() => r(null), LYRICS_WAIT_MS)),
       ]);
       if (!found || found.mode === 'plain' || !Array.isArray(found.lines) || !found.lines.length) return null;
-      const spans = sungSpansFromLines(found.lines);
-      return spans.length ? spans : null;
+      const shapes = lineShapes(found.lines);
+      return shapes.length ? shapes : null;
     } catch { return null; }
+  }
+  async function sungSpans(id) {
+    const shapes = await lyricLines(id);
+    const spans = shapes ? sungSpansFromLines(shapes) : [];
+    return spans.length ? spans : null;
   }
 
   function rms(buffer, from, to) {
@@ -2089,12 +2240,21 @@
     request,
     get: (id) => results.get(id) ?? null,
     statusOf: (id) => status.get(id) ?? null,
+    progressOf,
     plan,
+    heard,
+    recentMoves: () => [...recentMoves],
+    singsOut,
     asOutgoing,
     gridOk: (a) => !!gridOf(a) && a.gridConfidence >= MIN_GRID_CONFIDENCE,
     audioBytes,
     planLoopMix,
     sungSpans: sharedSungSpans,
+    lyricLines,
+    sungSpansFromLines,
+    carveSung,
+    // fixtures and tests: a song's sung spans as if its lyrics had come in (null: none)
+    primeSung: (id, spans) => sungCache.set(id, { spans: Array.isArray(spans) ? spans : null, at: Date.now(), tries: 2 }),
     meta: songMeta,
     loopSchedule,
     djShape,

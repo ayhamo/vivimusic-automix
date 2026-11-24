@@ -214,6 +214,14 @@
     const canvas = el('canvas', 'vivi-amx-ov-canvas');
     const msg = el('div', 'vivi-amx-ov-msg', '');
     well.append(canvas, msg);
+    // editor.md §11: the progress row, under the drawing well: hidden until first shown, then it keeps its room
+    const prog = el('div', 'vivi-amx-ov-prog');
+    const progText = el('div', 'vivi-amx-ov-prog-text', '');
+    const progBar = el('div', 'vivi-amx-ov-prog-bar');
+    const progFill = el('i');
+    progBar.append(progFill);
+    prog.append(progText, progBar);
+    prog.hidden = true;
     const legend = el('div', 'vivi-amx-ov-legend');
     for (const [k, t] of [['low', 'Low'], ['mid', 'Mid'], ['high', 'High'], ['volume', 'Volume'], ['eq', 'EQ'], ['effect', 'Effect']]) {
       const i = el('span', 'vivi-amx-ov-key');
@@ -296,11 +304,11 @@
     badge.hidden = true;
     actions.append(preview, lock, reset, badge, note);
     controls.append(presetRow.row, custom, drawRow, matchRow.row, barsRow.row, winRow, actions);
-    card.append(head, songsRow, well, legend, controls);
+    card.append(head, songsRow, well, prog, legend, controls);
     root.append(card);
     root.addEventListener('pointerdown', (e) => { if (e.target === root) hide(); });
     document.body.append(root);
-    ui = { root, card, sub, songsRow, canvas, msg, clock, presetRow, custom, laneSel, matchRow, barsRow, nudgeBtns, winReset, preview, lock, reset, badge, note,
+    ui = { root, card, sub, songsRow, canvas, msg, clock, prog, progText, progFill, presetRow, custom, laneSel, matchRow, barsRow, nudgeBtns, winReset, preview, lock, reset, badge, note,
       drawRow, curveChips, repUnit, repBtn, undoBtn, drawHint };
     canvas.addEventListener('dblclick', (e) => pointDelete(e));
     canvas.addEventListener('contextmenu', (e) => { if (drawOn(xf()?.overview?.())) { e.preventDefault(); pointDelete(e); } });
@@ -692,8 +700,34 @@
     return `${kind} · ${m.bars} bars · ${bpm} · ${s.D.toFixed(1)} s`;
   }
 
+  // editor.md §11: one row, this song's analysis before the next one's; "Looking for a loop mix…" while the
+  // loop search runs; a failure's reason in its place; hidden during a live mix. Shown once, it keeps its room.
+  function progressRow(s) {
+    const P = A()?.progressOf;
+    const live = !!s?.live;
+    let text = '', pct = null, kind = '';
+    if (P && s && !live) {
+      const cur = s.curId ?? s.fromId, nxt = s.nextId ?? s.toId;
+      for (const [id, who] of [[cur, 'this song'], [nxt, 'the next song']]) {
+        if (!id) continue;
+        const p = P(id);
+        if (p.status === 'pending' || p.status === 'analyzing') { text = `Analysing ${who}: ${p.stage} · ${p.pct}%`; pct = p.pct; break; }
+        if (p.status === 'error') { text = `Analysis of ${who} failed: ${p.why}`; kind = 'failed'; break; }
+        if (p.status === 'tooLong') { text = `${who === 'this song' ? 'This song' : 'The next song'} is over 8 minutes: not analysed, a plain crossfade`; kind = 'note'; break; }
+      }
+      if (!text && s.loop?.state === 'loading') { text = 'Looking for a loop mix…'; kind = 'busy'; }
+    }
+    const { prog, progText, progFill } = ui;
+    if (text) prog.hidden = false;
+    setIf(prog.style, 'visibility', text ? 'visible' : 'hidden');
+    setIf(progText, 'textContent', text);
+    prog.dataset.kind = kind;
+    setIf(progFill.style, 'width', pct == null ? '' : pct + '%');
+  }
+
   function render() {
     let s = xf()?.overview?.();
+    progressRow(s);
     if (!s || s.why) {
       ui.sub.textContent = s?.why || 'Automix is not running';
       ui.msg.textContent = s?.why || '';

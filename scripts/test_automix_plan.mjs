@@ -7,9 +7,9 @@ import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 
 // automix.js is a content script: run it with just enough of the extension world.
-function loadAutomix(bars, settings = {}) {
+function loadAutomix(bars, settings = {}, hooks = {}) {
   const listeners = [];
-  const window = { addEventListener() {}, location: { origin: 'https://music.youtube.com' } };
+  const window = { addEventListener: (type, fn) => { if (type === 'message') { const prev = hooks.post; hooks.post = (data) => { prev?.(data); fn({ origin: new URL('chrome-extension://test/').origin, data: { ch: 'vivi-automix', ...data } }); }; } }, location: { origin: 'https://music.youtube.com' } };
   const chrome = {
     runtime: { getURL: (p) => 'chrome-extension://test' + p },
     storage: {
@@ -326,4 +326,122 @@ test('Editor: windowLimits are where the planner clamps the window', () => {
   // a saved mix-out past the end lands inside them
   const p = planPick(A, cur, next, { preset: 'blend', bars: m.bars, window: { out: { bar: 99, sec: 0.4 + 99 * barSec(120) } } });
   assert.ok(p.mixOutTrackTime <= lim.out[1] + 1e-6 && p.mixOutTrackTime >= lim.out[0]);
+});
+
+// ───────── group 3 (2026-11-24): versions.md "Adlib outro", "No effect three times in a row",
+// "Analysis length"; editor.md §6 shortened and retired preset
+
+test('Adlib outro: a voice that never pauses over a beatless end sings out; a 2 s pause or a beat ends it', () => {
+  const A = loadAutomix('auto', { automixVersion: 3 });
+  const curve = (f) => ({ start: 0, step: 0.25, values: Array.from({ length: 200 * 4 }, (_, i) => f(i / 4)) });
+  const voice = (f) => [{ startSec: 150, fps: 20, curve: Array.from({ length: 50 * 20 }, (_, i) => f(150 + i / 20)) }];
+  const s = (bass, sing) => ({ ...song(120, 200), bassCurve: curve(bass), vocals: voice(sing) });
+  const beatGoneAt190 = (t) => (t < 190 ? 0.5 : 0.05);
+  assert.equal(A.singsOut(s(beatGoneAt190, () => 0.9), 185), true);
+  assert.equal(A.singsOut(s(beatGoneAt190, (t) => (t >= 192 && t < 194.5 ? 0 : 0.9)), 185), false, 'a 2 s pause');
+  assert.equal(A.singsOut(s(() => 0.5, () => 0.9), 185), false, 'the beat still plays');
+  assert.equal(A.singsOut(s(beatGoneAt190, () => 0.9), 197), false, 'under 4 s left');
+  assert.equal(A.singsOut(song(120, 200), 185), false, 'unmeasured');
+});
+
+test('No effect three times in a row: two filter mixes heard, the third pair gets no filter mix', () => {
+  const A = loadAutomix('auto', { automixVersion: 3 });
+  const p = planOf(A, song(120, 200), song(133, 200));
+  assert.equal(p.style, 'filter');
+  A.heard(p);
+  assert.equal(planOf(A, song(120, 200), song(133, 200)).style, 'filter', 'once is fine');
+  A.heard(p);
+  const q = planOf(A, song(120, 200), song(133, 200));
+  assert.notEqual(q.style, 'filter');
+  assert.match(q.reason, /a filter mix the last two times/);
+  A.heard({ style: 'blend', bars: 8 });
+  assert.equal(planOf(A, song(120, 200), song(133, 200)).style, 'filter', 'a blend in between resets it');
+  assert.deepEqual([...A.recentMoves()], ['filter', 'filter', 'blend']);
+});
+
+test('Editor: a length over a third of either song is shortened, and says so', () => {
+  const A = loadAutomix('auto', { automixVersion: 3 });
+  const p = planPick(A, song(120, 60), song(120, 200), { preset: 'blend', bars: 16 });
+  assert.equal(p.bars, 10);
+  assert.match(p.warnings.join(' '), /shortened to 10 bars \(20\.0 s\): an overlap can't be longer than a third of either song/);
+  const q = planPick(A, song(120, 200), song(120, 40), { preset: 'blend', bars: 16 });
+  assert.match(q.warnings.join(' '), /shortened to 6 bars/);
+  assert.doesNotMatch((planPick(A, song(120, 200), song(120, 200), { preset: 'blend', bars: 16 }).warnings || []).join(' '), /shortened/);
+});
+
+test('Editor: a retired preset plays as Automatic, and says so', () => {
+  const A = loadAutomix('auto', { automixVersion: 3 });
+  const p = planPick(A, song(120, 200), song(120, 200), { preset: 'gone' });
+  assert.match(p.warnings.join(' '), /the preset "gone" is no longer offered: Automatic plays/);
+  assert.equal(p.style, planOf(A, song(120, 200), song(120, 200)).style);
+});
+
+test('Analysis length: a song over 8 minutes is "too long", not a failure, and never retried', () => {
+  const A = loadAutomix('auto', { automixVersion: 3 });
+  A.request('long', true, 481);
+  assert.equal(A.statusOf('long'), 'tooLong');
+  A.request('long', true);
+  assert.equal(A.statusOf('long'), 'tooLong');
+});
+
+// editor.md §11 (the progress row)
+test('Progress row: waiting, the frame stages at their fixed %, a failure with its reason, too long apart', async () => {
+  const hooks = {};
+  const A = loadAutomix('auto', { automixVersion: 3 }, hooks);
+  assert.deepEqual({ ...A.progressOf('x') }, { status: null });
+  A.request('a'); A.request('b');
+  assert.deepEqual({ ...A.progressOf('a') }, { status: 'analyzing', stage: 'getting the audio', pct: 0 });
+  assert.deepEqual({ ...A.progressOf('b') }, { status: 'pending', stage: 'waiting its turn', pct: 0 });
+  hooks.post({ type: 'progress', fileKey: 'a:1', stage: 'models' });
+  assert.deepEqual({ ...A.progressOf('a') }, { status: 'analyzing', stage: 'finding the beats, the key and the vocals', pct: 25 });
+  hooks.post({ type: 'progress', fileKey: 'b:2', stage: 'models' });
+  assert.equal(A.progressOf('b').stage, 'waiting its turn', 'a song not analysing ignores a stage');
+  hooks.post({ type: 'progress', fileKey: 'a:1', stage: 'nonsense' });
+  assert.equal(A.progressOf('a').pct, 25, 'an unknown stage changes nothing');
+  await new Promise((r) => setTimeout(r, 20));
+  const f = A.progressOf('a');
+  assert.equal(f.status, 'error');
+  assert.ok(f.why && f.why !== 'unknown', 'the reason is kept: ' + f.why);
+  A.request('long', true, 481);
+  assert.deepEqual({ ...A.progressOf('long') }, { status: 'tooLong' });
+});
+
+// versions.md "Where a song is sung" (2026-11-24)
+test('Sung spans: a plain line ends at its words x 0.35 s + 0.5 s, the next line, its own end or 10 s', () => {
+  const A = loadAutomix('auto', { automixVersion: 3 });
+  const sp = A.sungSpansFromLines([
+    { start: 10, end: null, words: 4, wordTimes: null },     // 10 + 4 x 0.35 + 0.5 = 11.9
+    { start: 20, end: null, words: 40, wordTimes: null },    // capped at 10 s: 30
+    { start: 31, end: null, words: 10, wordTimes: null },    // the next line comes first: 33
+    { start: 33, end: 33.8, words: 6, wordTimes: null },     // its own end: 33.8
+    { start: 40, end: 45, words: 3, wordTimes: [[40.2, 40.6], [40.6, 41], [41.1, 41.5]] },   // words: 40.2 .. 41.5 + 0.3
+  ]);
+  const r = sp.map(([a, b]) => [Math.round(a * 1000) / 1000, Math.round(b * 1000) / 1000]);
+  assert.deepEqual(JSON.parse(JSON.stringify(r)), [[10, 11.9], [20, 30], [31, 33], [33, 33.8], [40.2, 41.8]]);
+});
+
+test('Sung spans: the vocal mask cuts a gap of a beat or more out of a lyric span, not a shorter one', () => {
+  const A = loadAutomix('auto', { automixVersion: 3 });
+  const a = { ...song(120, 60), vocals: [{ startSec: 0, fps: 50, curve: Array.from({ length: 60 * 50 }, (_, i) => (i >= 500 && i < 550 ? 0.05 : i >= 700 && i < 715 ? 0.05 : 0.9)) }] };
+  // 10-11 s instrumental (1 s, over a 0.5 s beat): cut; 14-14.3 s (0.3 s): kept
+  const got = A.carveSung([[8, 16]], a).map(([x, y]) => [Math.round(x * 10) / 10, Math.round(y * 10) / 10]);
+  assert.deepEqual(JSON.parse(JSON.stringify(got)), [[8, 10], [11, 16]]);
+  assert.deepEqual(JSON.parse(JSON.stringify(A.carveSung([[8, 16]], song(120, 60)))), [[8, 16]], 'no mask: as the lyrics say');
+});
+
+test('Sung spans: word times run back to back over a silent beat; only the mask carve frees it', () => {
+  // Enhanced LRC times word starts only: each word ends where the next starts, the last at the
+  // next line's start (lyrics.js repairTimings), so the words cover a breath. Poker Face's case, 2026-11-24.
+  const A = loadAutomix('auto', { automixVersion: 3 });
+  const sp = A.sungSpansFromLines([
+    { start: 20, end: 22, words: 4, wordTimes: [[20, 20.4], [20.4, 21], [21, 21.6], [21.6, 22]] },
+    { start: 22, end: 24, words: 3, wordTimes: [[22, 22.5], [22.5, 23.2], [23.2, 24]] },
+  ]);
+  // the voice is silent 21.5-22.3 s (over a 0.5 s beat), the words say sung throughout
+  const covers = (spans, t) => spans.some(([x, y]) => t >= x && t < y);
+  assert.ok(covers(sp, 21.75) && covers(sp, 22.1), 'the words cover the breath');
+  const a = { ...song(120, 60), vocals: [{ startSec: 0, fps: 50, curve: Array.from({ length: 60 * 50 }, (_, i) => (i >= 1075 && i < 1115 ? 0.03 : 0.9)) }] };
+  const carved = A.carveSung(sp, a);
+  assert.ok(!covers(carved, 21.75) && !covers(carved, 22.1), 'the carve frees it');
+  assert.ok(covers(carved, 21) && covers(carved, 23), 'the words around it stay sung');
 });
