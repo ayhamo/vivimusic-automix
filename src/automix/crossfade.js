@@ -813,9 +813,24 @@
       g.gate.gain.linearRampToValueAtTime(0, T + SWITCH);
     }
     src.start(T, idxT / sr);
+    // echo out (automix.js echoOut): the beat before the catch fed to a delay line with feedback,
+    // after the dry fade (which cuts the dry sound on the catch), so the echo rings on under the next song
+    let echo = null;
+    if (mix?.shape === 'echo' && mix.echo) {
+      const t0 = T + (mix.mixOutTrackTime - (p.start + idxT / sr - st.off)), e = mix.echo;
+      const send = new GainNode(ctx, { gain: 0 }), delay = new DelayNode(ctx, { maxDelayTime: 2, delayTime: Math.min(2, e.delaySec) });
+      const fb = new GainNode(ctx, { gain: e.feedback }), wet = new GainNode(ctx, { gain: 1 });
+      srcGain.connect(send); send.connect(delay); delay.connect(fb); fb.connect(delay); delay.connect(wet); wet.connect(bass);
+      const open = Math.max(ctx.currentTime + 0.01, t0 - e.delaySec);
+      send.gain.setValueAtTime(0, open - 0.005); send.gain.linearRampToValueAtTime(1, open);
+      send.gain.setValueAtTime(1, t0 - 0.005); send.gain.linearRampToValueAtTime(0, t0);
+      const D = e.beats * e.delaySec;
+      wet.gain.setValueAtTime(1, t0 + D - 0.05); wet.gain.linearRampToValueAtTime(0, t0 + D);
+      echo = { send, delay, fb, wet };
+    }
 
     const me = {
-      phase: 'asked', oldId: st.id, N, mix, src, srcGain, fade, bass, high, hp, lp, vol, base, muted: false,
+      phase: 'asked', oldId: st.id, N, mix, src, srcGain, fade, bass, high, hp, lp, vol, base, muted: false, echo,
       // the player's volume `base` was measured at, and the level since (the slider moved: k = volume / volRef)
       volRef: v.volume || 1, k: 1, deckBase: base, inBase: base,
       aPos: p.start + idxT / sr - st.off,   // old song's position (s) at T, for the lyrics
@@ -936,6 +951,8 @@
       try { L.src.stop(); } catch { /* already ended */ }
     }
     setTimeout(() => { try { L.vol.disconnect(); } catch { /* gone */ } }, 300);
+    // (the echo's feedback loop keeps itself alive: broken here)
+    if (L.echo) setTimeout(() => { try { L.echo.fb.disconnect(); L.echo.wet.disconnect(); } catch { /* gone */ } }, 300);
   }
 
   // The loop mix's decks fall silent (softly when cut short).
@@ -1920,7 +1937,7 @@
   // the deck's opening.
   function kickLockFor(L, p, off) {
     const A = window.__viviAutomix, m = L.mix;
-    if (A.getVersion() !== 3 || m?.style !== 'blend' || !inPrep.kick || inPrep.key !== m.nextId || !p?.mono) return;
+    if (A.getVersion() !== 3 || m?.style !== 'blend' || m.shape === 'echo' || !inPrep.kick || inPrep.key !== m.nextId || !p?.mono) return;
     try {
       const t = performance.now();
       const k = A.kickLock(m, { data: p.mono, rate: p.rate, origin: p.start - off }, inPrep.kick);

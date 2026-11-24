@@ -85,4 +85,18 @@ for (const f of readdirSync(GOLDEN).filter((x) => x.endsWith('.json')).sort()) {
   const ok = want.startsWith('!') ? plays !== want.slice(1) : plays === want;
   if (!ok) { failed++; console.log('RULE', f, '| v3 plays', plays, '| must', want === '!loop' ? 'never be a loop' : 'be a ' + want); }
 }
+// versions.md "Tempo too far apart": pairs over 8% apart get a filter mix or an echo out, not the hand-over
+for (const [f, want] of [['2-', 'filter'], ['3-', 'echo'], ['5-', 'echo']]) {
+  const name = readdirSync(GOLDEN).find((x) => x.startsWith(f));
+  const b = JSON.parse(readFileSync(new URL(name, GOLDEN), 'utf8')).v3.blend;
+  const got = b.shape === 'echo' ? 'echo' : b.style;
+  if (got !== want) { failed++; console.log('RULE', name, '| v3 blend', got, '| must be', want === 'echo' ? 'an echo out' : 'a filter mix'); }
+}
+// versions.md "Where the blend sits": Vaina Loca's v2 blend ends where its outro begins (163.5 s), starting before Classic's 160.98 s
+{
+  const b = JSON.parse(readFileSync(new URL('1-vaina-loca__si-no-es-contigo.json', GOLDEN), 'utf8')).v3.blend;
+  if (b.anchor?.kind !== 'outro' || !(Math.abs(b.anchor.sec - 163.53) < 0.1) || !(b.mixOutTrackTime < 160.98)) {
+    failed++; console.log('RULE 1-vaina-loca | v3 blend at', b.mixOutTrackTime, b.anchor?.kind, '| must end on the outro (163.5 s), starting before 160.98 s');
+  }
+}
 process.exit(failed ? 1 : 0);

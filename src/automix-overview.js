@@ -378,7 +378,7 @@
     if (m.style === 'loop') return 'Auto · Loop';
     if (m.style === 'filter') return 'Auto · Filter';
     if (m.style === 'crossfade') return m.handoff ? 'Auto · Hand-over' : m.bridge ? 'Auto · Bridge' : 'Auto · Fade';
-    return m.shape === 'dropin' ? 'Auto · Drop-in' : m.shape === 'muffle' ? 'Auto · Muffle' : m.glide ? 'Auto · Glide' : 'Auto · Blend';
+    return m.shape === 'dropin' ? 'Auto · Drop-in' : m.shape === 'muffle' ? 'Auto · Muffle' : m.shape === 'echo' ? 'Auto · Echo out' : m.glide ? 'Auto · Glide' : 'Auto · Blend';
   }
 
   // ───────── the window (editor.md §6) ─────────
@@ -688,7 +688,7 @@
     // (Automix v2 names its ways: the hand-over and bridge of a pair it can't beatmatch, the drop-in, muffle and glide)
     if (m.style === 'crossfade') return `${m.bridge ? 'Beatless bridge' : m.handoff ? 'Hand-over' : 'Fade'} · ${s.D.toFixed(1)} s${m.reason ? ' · ' + m.reason : ''}`;
     const bpm = m.inBpm && Math.round(m.inBpm) !== Math.round(m.bpm) ? `${Math.round(m.outBpm || m.bpm)}→${Math.round(m.inBpm)} BPM` : `${Math.round(m.bpm)} BPM`;
-    const kind = m.style === 'filter' ? 'Filter mix' : m.shape === 'dropin' ? 'Drop-in' : m.shape === 'muffle' ? 'Muffle' : m.glide ? 'Glide blend' : 'Blend';
+    const kind = m.style === 'filter' ? 'Filter mix' : m.shape === 'dropin' ? 'Drop-in' : m.shape === 'muffle' ? 'Muffle' : m.shape === 'echo' ? 'Echo out' : m.glide ? 'Glide blend' : 'Blend';
     return `${kind} · ${m.bars} bars · ${bpm} · ${s.D.toFixed(1)} s`;
   }
 

@@ -546,7 +546,7 @@
     // and never two 808 styles at once; either way it can't beatmatch, so it does nothing
     if (v3 && stretchOf(ratio) > V2_MAX_STRETCH) {
       const why = `tempos ${Math.round(stretchOf(ratio) * 100)}% apart (v2 stretches at most ${Math.round(V2_MAX_STRETCH * 100)}%)`;
-      if (!forced && !pick?.bars) return handoff(cur, next, earliest, why);
+      if (!forced && !pick?.bars) return unmatchedMix(cur, next, fromGrid, toGrid, pos, earliest, why);
       warnings.push(`${why}: plays without beat match`);
       return overlap(cur, next, fromGrid, pick, earliest, why, warnings);
     }
@@ -591,6 +591,9 @@
     const first = earliest + rampSongSec;
     const v2 = adv();
     let mixOut = naturalMixOut(fromGrid, v2 ? musicEnd(cur) : cur, outSpan);
+    // Automix v2: where the blend sits, from the playing song's own shape (versions.md "Where the blend sits")
+    const anchor = v3 && !forced ? anchoredMixOut(cur, fromGrid, outSpan, Math.max(first, pos + rampSongSec)) : null;
+    if (anchor) mixOut = anchor.mixOut;
     if (mixOut < pos + rampSongSec) mixOut = phraseAtOrAfter(fromGrid, first);   // too late for the natural point: the next phrase
     if (mixOut < first) mixOut = downbeatAtOrAfter(fromGrid, first);
     // the editor's window (editor.md §6): A's mix-out on A's end grid, clamped to what can still play
@@ -690,6 +693,7 @@
       style: 'blend', fallback: false, reason: shapeWhy,
       ...(shape ? { shape, muffleLead } : {}),
       v2, clash: dj?.clash ?? 0, rerouted: dj?.rerouted ?? null, vocalsBy: dj?.by ?? null, keyClash,
+      ...(anchor ? { anchor: { kind: anchor.kind, sec: anchor.sec, score: anchor.score } } : {}),
       glide: glide ? { q: glideQ, beats: effBars * 4, beatOutSec: fromGrid.beatSec } : null,
       ...(v3 ? { subBassContrast: contrast, swapAt: swap?.at ?? null, swapMoved: swap?.moved ?? null,
         harmonic, trim: loudnessTrim(cur, mixOut, outSpan, next, mixIn, outSpan * inPerOut) } : {}),
@@ -702,11 +706,14 @@
 
   // The phone's DJ_FILTER: incoming on its own downbeat at its own tempo,
   // low-passed; outgoing drains through a rising high-pass; bass swaps in one bar.
-  function filterMix(cur, next, fromGrid, toGrid, requested, pos, earliest, reason) {
+  function filterMix(cur, next, fromGrid, toGrid, requested, pos, earliest, reason, anchorLo = null) {
     let bars = Math.min(requested, FILTER_MAX_BARS);
     let dur = bars * fromGrid.barSec;
     const v2 = adv();
     let mixOut = naturalMixOut(fromGrid, v2 ? musicEnd(cur) : cur, dur);
+    // Automix v2's own filter mix (a tempo gap): placed as its blend is (versions.md "Where the blend sits")
+    const anchor = anchorLo != null ? anchoredMixOut(cur, fromGrid, dur, anchorLo) : null;
+    if (anchor) mixOut = anchor.mixOut;
     if (mixOut < pos) mixOut = phraseAtOrAfter(fromGrid, earliest);
     if (mixOut < earliest) mixOut = downbeatAtOrAfter(fromGrid, earliest);
     // never past the outgoing song's end: shorten to the bars that still fit
@@ -721,6 +728,7 @@
     const clash = v2 ? vocalOverlap(cur, next, mixOut, dur, mixIn, 1, { out: lyricSpans(cur), in: lyricSpans(next) }) ?? 0 : 0;
     return {
       style: 'filter', fallback: false, reason, v2, clash, rerouted: null,
+      ...(anchor ? { anchor: { kind: anchor.kind, sec: anchor.sec, score: anchor.score } } : {}),
       mixOutTrackTime: mixOut, durationSec: dur, mixInTrackTime: mixIn, rate: 1,
       bars, swapDb: KILL_DB, barSec: fromGrid.barSec, bpm: fromGrid.bpm, inBpm: toGrid?.bpm ?? null,
     };
@@ -1005,6 +1013,112 @@
     return { ...a, durationSec: Math.max(end, a.durationSec - 20) };
   }
 
+  // Automix v2, where the blend sits (versions.md "Where the blend sits"; Orchard
+  // pairTransitionEvidence + track.rs, Prism SongShape.outroStartMs): candidates over
+  // the playing song's last min(60 s, 40%), each a mix-out on its end grid, scored as
+  // Orchard does; null when none fits (the natural point then).
+  const ANCHOR_SEARCH_SEC = 60, ANCHOR_SEARCH_SHARE = 0.4, ANCHOR_SIDE_SEC = 2, ANCHOR_STEP_SEC = 0.5;
+  const NOVELTY_MIN = 0.14, NOVELTY_MERGE_SEC = 4, AUDIBLE_SHARE = 0.1;
+  const OUTRO_BELOW = 0.6, OUTRO_MIN_SEC = 6, OUTRO_NOT_BEFORE = 0.6, OUTRO_MAX_EARLY_SEC = 20;
+  const ANCHOR_SOURCE = { change: 4, outro: 4, end: 3, downbeat: 2 };
+  // the loudness curve as amplitude (0.1 s steps), mean over [from, to)
+  function ampMean(a, from, to) {
+    const c = a?.loudnessCurve;
+    if (!c?.values?.length) return null;
+    const i0 = Math.max(0, Math.floor((from - c.start) / c.step)), i1 = Math.min(c.values.length, Math.ceil((to - c.start) / c.step));
+    if (i1 <= i0) return null;
+    let s = 0;
+    for (let i = i0; i < i1; i++) s += 10 ** (c.values[i] / 20);
+    return s / (i1 - i0);
+  }
+  // the song's 85th-percentile second (amplitude): its usual level
+  const levelCache = new WeakMap();
+  function usualLevel(a) {
+    if (levelCache.has(a.loudnessCurve)) return levelCache.get(a.loudnessCurve);
+    const xs = [];
+    for (let t = 0; t + 1 <= a.durationSec; t += 1) { const v = ampMean(a, t, t + 1); if (v != null) xs.push(v); }
+    xs.sort((x, y) => x - y);
+    const v = xs.length ? xs[Math.min(xs.length - 1, Math.floor(xs.length * 0.85))] : null;
+    levelCache.set(a.loudnessCurve, v);
+    return v;
+  }
+  const meanOf = (xs) => xs.reduce((s, v) => s + v, 0) / xs.length;
+  function anchoredMixOut(cur, g, span, lo) {
+    if (!cur.loudnessCurve?.values?.length || !cur.bassCurve?.values?.length) return null;
+    const level = usualLevel(cur);
+    if (!(level > 0)) return null;
+    const dur = cur.durationSec, sung = lyricSpans(cur);
+    // the audible end: the last half second at a tenth of the usual level, within the music
+    let audible = Math.min(musicEnd(cur).durationSec, dur - 0.3);
+    while (audible > dur / 2 && (ampMean(cur, audible - ANCHOR_STEP_SEC, audible) ?? 0) < AUDIBLE_SHARE * level) audible -= ANCHOR_STEP_SEC;
+    const from = Math.max(dur / 2, audible - Math.min(ANCHOR_SEARCH_SEC, ANCHOR_SEARCH_SHARE * dur));
+    const E = (x, y) => Math.min(1.5, (ampMean(cur, x, y) ?? 0) / level);
+    const L = (x, y) => Math.min(1.5, bassMean(cur, x, y) ?? 0);
+    const V = (x, y) => voiceRisk(cur, x, y, sung) ?? 0;
+    // how steady the energy is over [x, x + 2 s): 1 - 2 x its spread in half seconds
+    const steady = (x) => { const e = [0, 1, 2, 3].map((k) => E(x + k * 0.5, x + k * 0.5 + 0.5)), m = meanOf(e); return clamp(1 - 2 * Math.sqrt(meanOf(e.map((v) => (v - m) ** 2))), 0, 1); };
+    const nearestDownbeat = (t) => g.downbeatSec + Math.round((t - g.downbeatSec) / g.barSec) * g.barSec;
+    const grid = clamp(cur.gridConfidence ?? 0, 0, 1);
+    const cands = [];
+    // a section change: Orchard's novelty (energy 0.55, low end 0.25, voice 0.2), the 2 s after against the 2 s before
+    const frames = [];
+    for (let t = from + ANCHOR_SIDE_SEC; t <= audible - ANCHOR_SIDE_SEC; t += ANCHOR_STEP_SEC) {
+      const a0 = t - ANCHOR_SIDE_SEC, b1 = t + ANCHOR_SIDE_SEC;
+      const n = Math.abs(E(t, b1) - E(a0, t)) / 1.5 * 0.55 + Math.abs(L(t, b1) - L(a0, t)) / 1.5 * 0.25 + Math.abs(V(t, b1) - V(a0, t)) * 0.2;
+      frames.push({ t, n: clamp(n, 0, 1) });
+    }
+    const peaks = [];
+    for (let i = 1; i < frames.length - 1; i++) {
+      const f = frames[i];
+      if (f.n < NOVELTY_MIN || f.n < frames[i - 1].n || f.n < frames[i + 1].n) continue;
+      const last = peaks[peaks.length - 1];
+      if (last && f.t - last.t < NOVELTY_MERGE_SEC) { if (f.n > last.n) peaks[peaks.length - 1] = f; continue; }
+      peaks.push(f);
+    }
+    for (const p of peaks) {
+      const end = nearestDownbeat(p.t), stab = Math.max(steady(p.t - ANCHOR_SIDE_SEC), steady(p.t));
+      cands.push({ kind: 'change', sec: end, end, conf: clamp(p.n * 0.65 + grid * 0.2 + stab * 0.15, 0, 1), stab });
+    }
+    // the outro (Prism's finding): energy over 3 s under 0.6 of the body's median to the end, 6 s or
+    // more; the blend ENDS on the phrase that opens it (else the first beat in it), so the next song
+    // is in by the time the playing one drops. Its music doesn't count as cut.
+    const secs = [];
+    for (let t = 0; t + 1 <= audible; t += 1) secs.push(ampMean(cur, t, t + 1) ?? 0);
+    const body = [...secs].sort((x, y) => x - y)[Math.floor(secs.length / 2)];
+    const smooth = (i) => meanOf(secs.slice(Math.max(0, i - 1), Math.min(secs.length, i + 2)));
+    let o = secs.length - 1;
+    while (o >= 0 && smooth(o) < OUTRO_BELOW * body) o--;
+    o++;
+    let keepUntil = audible;   // the music a blend ending early cuts: up to the outro
+    if (body > 0 && secs.length - o >= OUTRO_MIN_SEC && o >= OUTRO_NOT_BEFORE * dur && o >= audible - OUTRO_MAX_EARLY_SEC) {
+      const phrase = g.downbeatSec + Math.floor((o + 2 * g.beatSec - g.downbeatSec) / g.phraseSec) * g.phraseSec;
+      const start = o - phrase <= g.barSec ? phrase : g.downbeatSec + Math.ceil((o - g.downbeatSec) / g.beatSec) * g.beatSec;
+      const drop = 1 - meanOf(secs.slice(o)) / body, stab = steady(start);
+      cands.push({ kind: 'outro', sec: start, end: start, conf: clamp(drop * 0.65 + grid * 0.2 + stab * 0.15, 0, 1), stab });
+      keepUntil = Math.min(audible, start);
+    }
+    // the end of the music (today's point), and each downbeat in the search as Orchard's downbeat evidence
+    const natural = naturalMixOut(g, musicEnd(cur), span) + span;
+    cands.push({ kind: 'end', sec: natural, end: natural, conf: 0.5, stab: steady(natural - ANCHOR_SIDE_SEC) });
+    for (let t = g.downbeatSec + Math.ceil((from - g.downbeatSec) / g.barSec) * g.barSec; t <= audible; t += g.barSec) {
+      const stab = steady(t - ANCHOR_SIDE_SEC);
+      cands.push({ kind: 'downbeat', sec: t, end: t, conf: Math.min(0.6, grid * 0.35 + stab * 0.35 + (1 - V(t - 1, t + 1)) * 0.3), stab });
+    }
+    // Orchard's score; the blend must fit before the audible end, cut at most 12 s of the music before
+    // the outro (all of it without one), start past half the song
+    let best = null;
+    for (const c of cands) {
+      const start = c.end - span;
+      const cut = Math.max(0, keepUntil - c.end);
+      if (start < lo - 1e-6 || start < dur / 2 || c.end > audible + 1e-6 || c.end > dur - 0.3 || cut > MAX_DISCARD_SEC) continue;
+      const risk = voiceRisk(cur, c.end - 1.5, c.end, sung);
+      const clean = risk == null ? 0.35 : 1 - risk;
+      const score = ANCHOR_SOURCE[c.kind] / 4 * 0.2 + c.conf * 0.55 + c.stab * 0.15 + clean * 0.1 - cut / MAX_DISCARD_SEC * 0.15;
+      if (!best || score > best.score + 1e-9) best = { kind: c.kind, sec: Math.round(c.sec * 1000) / 1000, mixOut: start, score: Math.round(score * 1000) / 1000 };
+    }
+    return best;
+  }
+
   // TP capIncomingSkip: the cue pulled back by whole bars to within a quarter of the song.
   function capIncomingSkip(next, toGrid, mixIn) {
     const cap = next.durationSec > 0 ? next.durationSec * MAX_IN_SKIP : Infinity;
@@ -1125,6 +1239,52 @@
   // beats that can't be matched are never laid over each other. The playing
   // song runs to where its music ends and the next starts from its beginning,
   // with a short fade between (the fallback ladder adds more ways later).
+  // Automix v2, a pair too far apart in tempo to beatmatch (versions.md "Tempo too far
+  // apart"): the beatless bridge, else a filter mix at an anchor, else (both would sing
+  // over the filter mix) an echo out at one, else the hand-over.
+  function unmatchedMix(cur, next, fromGrid, toGrid, pos, earliest, why) {
+    const b = beatlessBridge(cur, next);
+    if (!b.none && b.mixOut >= earliest) return handoff(cur, next, earliest, why);
+    const lo = Math.max(earliest, pos);
+    const f = filterMix(cur, next, fromGrid, toGrid, requestedBars(cur, next, fromGrid, toGrid.downbeatSec, true), pos, earliest, `${why}: a filter mix (no beat match)`, lo);
+    if (f.style === 'filter' && f.clash <= V2_CLASH_MAX) return f;
+    const sang = f.style === 'filter' ? `, both would sing ${Math.round(f.clash * 100)}% of a filter mix` : '';
+    return echoOut(cur, next, fromGrid, toGrid, lo, `${why}${sang}: an echo out (no beat match)`)
+      ?? handoff(cur, next, earliest, `${why}${sang}, and no filter mix or echo out fits`);
+  }
+  // Echo out (Prism MixMoves ECHO_OUT; editor.md §5): the beat before the catch (a bar line,
+  // at an anchor) is fed to a 1-beat delay with feedback 0.53; the playing song's dry sound is
+  // cut on the catch in 10 ms and the next song comes in there at full level on its first
+  // downbeat (its first 10 s; else from its start), at its own speed, under 8 beats of echo.
+  // The repeated beat may not be sung; at most 12 s of music earlier than the anchor.
+  const ECHO_BEATS = 8, ECHO_FEEDBACK = 0.53, ECHO_CUT_SEC = 0.01, ECHO_FIRST_BEAT_MAX_SEC = 10;
+  function echoOut(cur, next, g, toGrid, lo, reason) {
+    const beat = g.beatSec, D = ECHO_BEATS * beat, sung = lyricSpans(cur);
+    const end = Math.min(musicEnd(cur).durationSec, cur.durationSec - 0.3);
+    const a = anchoredMixOut(cur, g, beat, lo);
+    const bar = (t) => g.downbeatSec + Math.floor((t - g.downbeatSec + 1e-6) / g.barSec) * g.barSec;
+    const first = a ? bar(a.mixOut + beat) : bar(end - beat);
+    // the anchor's bar, then the nearest bars either side (earlier first), within 12 s of it
+    for (let j = 0; j <= 2 * Math.floor(MAX_DISCARD_SEC / g.barSec); j++) {
+      const k = j % 2 ? (j + 1) / 2 : -j / 2;   // 0, 1, -1, 2, -2, ...: k bars earlier
+      const c = first - k * g.barSec;
+      if (c - beat < lo - 1e-6 || c < cur.durationSec / 2 || c + D > cur.durationSec - 0.3 || c > end) continue;
+      if ((voiceRisk(cur, c - beat, c, sung) ?? 0) >= SWAP_CLEAR) continue;   // the beat that repeats is sung
+      const mixIn = toGrid && toGrid.downbeatSec <= ECHO_FIRST_BEAT_MAX_SEC ? toGrid.downbeatSec : 0;
+      return {
+        style: 'blend', shape: 'echo', fallback: false,
+        reason: `${reason}${k ? ` (${Math.abs(k)} bar${Math.abs(k) === 1 ? '' : 's'} ${k > 0 ? 'earlier' : 'later'}, off a sung beat)` : ''}`,
+        v2: true, clash: 0, rerouted: null, vocalsBy: null, keyClash: null,
+        ...(a ? { anchor: { kind: a.kind, sec: a.sec, score: a.score } } : {}),
+        echo: { beats: ECHO_BEATS, delaySec: beat, feedback: ECHO_FEEDBACK, cutSec: ECHO_CUT_SEC },
+        glide: null, subBassContrast: null, swapAt: null, swapMoved: null, harmonic: null, trim: null,
+        mixOutTrackTime: c, durationSec: D, mixInTrackTime: mixIn, rate: 1,
+        outRate: 1, rampBeats: 0, rampSongSec: 0, beatSec: beat,
+        bars: ECHO_BEATS / 4, swapDb: 0, barSec: g.barSec, bpm: g.bpm, outBpm: g.bpm, inBpm: toGrid?.bpm ?? null,
+      };
+    }
+    return null;
+  }
   function handoff(cur, next, earliest, reason) {
     // first rung: the two songs' beatless edges, at any tempo
     const b = beatlessBridge(cur, next);
@@ -1253,7 +1413,7 @@
   // sing, from the plan) deepens the filters and moves the fader towards a
   // vocal-safe pair.
   function djShape(m, style, D, n) {
-    if (style === 'blend' && (m.shape === 'dropin' || m.shape === 'muffle')) return ladderShape(m, D, n);
+    if (style === 'blend' && (m.shape === 'dropin' || m.shape === 'muffle' || m.shape === 'echo')) return ladderShape(m, D, n);
     const clash = clamp(m.clash || 0, 0, 1);
     const beat = m.bpm > 0 ? 60 / m.bpm : 0;
     const grid = beat ? D / beat : 0;   // beats in the blend
@@ -1303,7 +1463,16 @@
   function ladderShape(m, D, n) {
     const S = Math.PI / 2, beats = Math.max(1, (m.bars || 1) * 4);
     let gIn, gOut, inHp, outHp, outLp;
-    if (m.shape === 'dropin') {
+    if (m.shape === 'echo') {
+      // echo out: the playing song's dry sound cut on the catch (10 ms), the next song in at full
+      // level with it; the echo (crossfade.js, the outgoing deck's delay line) rings on over it
+      const e = Math.min((m.echo?.cutSec ?? ECHO_CUT_SEC) / D, 0.05);
+      gIn = (p) => clamp(p / e, 0, 1);
+      gOut = (p) => 1 - clamp(p / e, 0, 1);
+      outLp = () => 20000;
+      outHp = () => 20;
+      inHp = () => 20;
+    } else if (m.shape === 'dropin') {
       const e = Math.min(0.02 / D, 0.05);
       gIn = (p) => clamp(p / e, 0, 1);
       gOut = (p) => Math.cos(p * S);

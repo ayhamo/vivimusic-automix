@@ -1717,9 +1717,14 @@
       "reason": null,
       "v2": true,
       "clash": 0.2414,
-      "rerouted": "both sang 48% of it, moved to 24% (exit 0 bars earlier, cue +4 bars)",
+      "rerouted": "both sang 54% of it, moved to 24% (exit 1 bars earlier, cue +4 bars)",
       "vocalsBy": "mask/mask",
       "keyClash": null,
+      "anchor": {
+        "kind": "downbeat",
+        "sec": 131.392,
+        "score": 0.597
+      },
       "glide": {
         "q": 0.9421,
         "beats": 16,

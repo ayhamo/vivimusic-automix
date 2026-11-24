@@ -274,7 +274,9 @@ test('Editor: Glide on Classic glides too (the plan carries it)', () => {
 test('Editor: a preset on a pair too far apart in tempo keeps its length and says why', () => {
   const A = loadAutomix('auto', { automixVersion: 3 });
   const auto = planPick(A, song(100, 200), song(111, 200), null);
-  assert.match(auto.reason, /hand-over/, 'Auto hands over');
+  // versions.md "Tempo too far apart": Auto plays a filter mix there (no beat match), not a hand-over
+  assert.equal(auto.style, 'filter', 'Auto plays a filter mix');
+  assert.match(auto.reason, /11% apart.*a filter mix \(no beat match\)/);
   const p = planPick(A, song(100, 200), song(111, 200), { preset: 'wave', bars: 8 });
   assert.equal(p.style, 'crossfade');
   assert.ok(Math.abs(p.durationSec - 8 * barSec(100)) < 1e-9);

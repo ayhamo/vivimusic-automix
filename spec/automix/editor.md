@@ -182,12 +182,22 @@ lane would be extension-only. It isn't added.
 
 ## 5. Echo out (question 4)
 
-Deferred.
-- It needs a new lane (wet, feedback, and a delay in beats) and a delay line in both engines. Today
-  neither engine has one, and the phone's loop renderer can't take one either.
-- The preset id `echoOut` and the effect id `echoOut` are reserved. Until both apps render it, the UI
-  doesn't show it.
-- It gets its own section here before either app ships it.
+Automix v2 plays an echo out on its own for a pair too far apart in tempo (versions.md "Tempo too
+far apart"). Prism `MixMoves` `ECHO_OUT`.
+1. **[both]** The catch is a bar line of A's end grid. The beat before it is fed to a delay line of
+   one beat (A's beat) with feedback 0.53; the echo is mixed in after A's fader and runs through A's
+   EQ and filters.
+2. **[both]** On the catch A's dry sound is cut in 10 ms and B comes in at full level in the same
+   10 ms, at its own speed, from its first downbeat when that is in its first 10 s, else from its
+   start. Nothing is beatmatched and no filter moves.
+3. **[both]** The mix lasts 8 beats of A (`bars` 2); the echo has died to 0.53^8, about -44 dB, and is
+   faded out over its last 50 ms.
+4. **[both]** The plan: `shape` `echo` on style `blend`, `rate` 1, `outRate` 1, and
+   `echo: {beats: 8, delaySec, feedback: 0.53, cutSec: 0.01}`. The overview names it "Echo out".
+   Kick lock is skipped.
+- Not yet in the editor: the preset id `echoOut` and the effect id `echoOut` stay reserved. A picked
+  echo out needs a lane for the wet level, feedback and delay in beats, and the phone's loop
+  renderer can't take a delay line yet. It gets its own rules here before either app shows it.
 
 ## 6. The window (question 5)
 
