@@ -4,7 +4,7 @@ import vm from 'node:vm';
 import { createHmac, webcrypto } from 'node:crypto';
 
 const chrome = { storage: { local: { get: async () => ({ viviCanvasOrderSet: true }), set: async () => {} } } };
-const ctx = { chrome, crypto: webcrypto, TextEncoder, URL, console: { info() {}, warn() {} }, setTimeout, clearTimeout, AbortController };
+const ctx = { chrome, crypto: webcrypto, TextEncoder, TextDecoder, URL, console: { info() {}, warn() {} }, setTimeout, clearTimeout, AbortController };
 vm.createContext(ctx);
 vm.runInContext(readFileSync(new URL('../src/plus/bg-canvas.js', import.meta.url), 'utf8') + '\nthis.c = viviSpotifyCanvas;', ctx);
 const c = ctx.c;
@@ -37,6 +37,59 @@ ok(!c.trusted('https://scdn.co.evil.com/a.mp4'), 'evil host');
 ok(!c.trusted('https://user@canvaz.scdn.co/a.mp4'), 'user info');
 ok(!c.trusted('https://canvaz.scdn.co:8443/a.mp4'), 'port');
 ok(!c.trusted(null), 'null');
+
+// rule 7: an answer is read up to 256 KB
+const answer = (text, len) => ({ headers: { get: (h) => (h === 'content-length' && len != null ? String(len) : null) }, text: async () => text });
+ok((await c.readJson(answer('{"a":1}'))).a === 1, 'small answer read');
+ok(await c.readJson(answer('"' + 'x'.repeat(300 * 1024) + '"')).then(() => false, () => true), 'answer over 256 KB refused');
+ok(await c.readJson(answer('{}', 300 * 1024)).then(() => false, () => true), 'Content-Length over 256 KB refused');
+const streamed = (bytes) => ({ headers: { get: () => null }, body: new Response(bytes).body });
+ok((await c.readJson(streamed(new TextEncoder().encode('{"b":2}')))).b === 2, 'streamed answer read');
+ok(await c.readJson(streamed(new Uint8Array(300 * 1024).fill(32))).then(() => false, () => true), 'streamed answer over 256 KB refused');
+
+// rule 6 holds for a saved canvas URL too: an untrusted one is dropped, not returned
+{
+  const store = { 'spotify_canvas_A—S': { videoUrl: 'https://evil.example/a.mp4' } };
+  const removed = [];
+  const chrome2 = { storage: { local: { get: async (k) => ({ [k]: store[k] }), set: async () => {}, remove: async (k) => { removed.push(k); } } } };
+  const ctx2 = { chrome: chrome2, crypto: webcrypto, TextEncoder, TextDecoder, URL, console: { info() {}, warn() {} }, setTimeout, clearTimeout, AbortController,
+    fetch: async () => { throw new Error('offline'); }, getSpDc: async () => null, spotifyCanvasForTrack: async () => null };
+  vm.createContext(ctx2);
+  vm.runInContext(readFileSync(new URL('../src/plus/bg-canvas.js', import.meta.url), 'utf8'), ctx2);
+  ok(await ctx2.spotifyCanvasForTrack({ artist: 'A', song: 'S' }) === null, 'untrusted saved canvas not returned');
+  ok(removed.includes('spotify_canvas_A—S'), 'untrusted saved canvas dropped');
+  store['spotify_canvas_A—S'] = { videoUrl: 'https://canvaz.scdn.co/a.mp4' };
+  ok(await ctx2.spotifyCanvasForTrack({ artist: 'A', song: 'S' }) === 'https://canvaz.scdn.co/a.mp4', 'trusted saved canvas returned');
+}
+
+// the signed-in token (bg-plus.js's Sign out block): a request in flight at Sign out is neither stored nor used
+{
+  const lines = readFileSync(new URL('../src/plus/bg-plus.js', import.meta.url), 'utf8').split(/\r?\n/);
+  const a = lines.findIndex((l) => l.startsWith('// ── Sign out and the signed-in token'));
+  let b = a;
+  while (b >= 0 && b < lines.length && lines[b] !== '}') b++;
+  ok(a >= 0 && b < lines.length, "bg-plus.js: the Sign out block's markers");
+  const ctx3 = { chrome: { storage: { local: { remove: async () => {}, set: async () => {} } } } };
+  vm.createContext(ctx3);
+  // upstream's getSpotifyToken, faked: stores its answer when the (held) request lands
+  vm.runInContext(`var spotifyTokenCache = null, spotifyClientTokenCache = null, release;
+    var getSpotifyToken = async function (spDc) {
+      await new Promise((r) => { release = r; });
+      spotifyTokenCache = { spDc, token: 'fake-access', expiresAt: 1 };
+      return spotifyTokenCache;
+    };
+    var clearSpotify = null;`, ctx3);
+  vm.runInContext(lines.slice(a, b + 1).join('\n'), ctx3);
+  const inFlight = ctx3.getSpotifyToken('fake-sp-dc');
+  await ctx3.clearSpotify();
+  ctx3.release();
+  ok(await inFlight.then(() => false, () => true), 'sign-out race: the in-flight token request fails');
+  ok(vm.runInContext('spotifyTokenCache', ctx3) === null, 'sign-out race: the in-flight token is not stored');
+  const after = ctx3.getSpotifyToken('fake-sp-dc');
+  await new Promise((r) => setImmediate(r));
+  ctx3.release();
+  ok((await after).token === 'fake-access', 'a request begun after Sign out is kept');
+}
 
 console.log(`canvas spotify: ${pass}/${pass + fail}`);
 process.exit(fail ? 1 : 0);

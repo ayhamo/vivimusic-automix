@@ -246,7 +246,8 @@
       if (ch.viviLyricsOffsetById) byId = ch.viviLyricsOffsetById.newValue || {};
     });
   } catch { /* no storage: offsets stay 0 */ }
-  const videoId = () => new URLSearchParams(location.search).get('v') || '';
+  // the URL's ?v= (the player page), else the playing song's id lyrics-ui.js resolved (no ?v= under the home page, a playlist, a search)
+  const videoId = () => new URLSearchParams(location.search).get('v') || U?.currentTrack?.()?.videoId || '';
   const globalOffset = () => globalOffsetMs;
   /** The playing song's own offset, or null when none was set for its video id (the older per-provider one then). */
   const songOffset = () => { const v = byId[videoId()]; return Number.isFinite(v) ? v : null; };

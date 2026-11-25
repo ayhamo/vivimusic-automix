@@ -2,7 +2,8 @@
  *
  * BitChord's TrackMatcher (web/app/src/data/match/trackMatcher.ts at a2d886e6,
  * GPL-3.0, by the BitChord authors), types stripped and otherwise unchanged,
- * so spec/addons/matcher-cases.json holds for it as for BitChord. Our own rules
+ * so spec/addons/matcher-cases.json holds for it as for BitChord, except the vivi+
+ * mashup rule (isMashup, protocol.md §7, the (ours, mashups) cases). Our other rules
  * (ISRC first, Atmos rows, the checks before a row plays) are in
  * addons/pick.js, on top of this file.
  *
@@ -183,11 +184,14 @@
     const wanted = parseTitle(target.title, target.artist ?? '');
     const got = parseTitle(candidate.title, candidate.artist);
     if (!wanted.core.trim() || !got.core.trim()) return null;
+    // vivi+ (protocol.md §7, mashups; ours, not in BitChord a2d886e6): a mashup's title holds whole song titles,
+    // so one of them inside it is another song; the whole title must match, and the credit must
+    const mashup = isMashup(target.title, target.artist ?? '');
     const isTitleMatch =
       wanted.core === got.core ||
       romajiOf(wanted.core) === romajiOf(got.core) ||
       isTranslationMatch(wanted, got) ||
-      (!([...wanted.core].length <= 3 || [...got.core].length <= 3) &&
+      (!mashup && !([...wanted.core].length <= 3 || [...got.core].length <= 3) &&
         (wanted.core.includes(got.core) || got.core.includes(wanted.core)));
     if (!isTitleMatch) return null;
 
@@ -200,7 +204,7 @@
     if (duration === null) return null;
     const artist =
       creditedArtist ??
-      (!target.isVideo && withinSeconds(candidate, target, CREDIT_OVERRIDE_SEC) ? CREDITS_DISAGREE : null);
+      (!target.isVideo && !mashup && withinSeconds(candidate, target, CREDIT_OVERRIDE_SEC) ? CREDITS_DISAGREE : null);
     if (artist === null) return null;
     const explicit = explicitScore(target.isExplicit ?? null, candidate.explicit ?? null);
     if (explicit === null) return null;
@@ -339,8 +343,28 @@
     return false;
   }
 
-  function isArtistName(text        , artist        )          {
-    if (!artist.trim()) return false;
+  /**
+   * vivi+ (protocol.md §7, mashups): a mashup or medley, by a "mashup" / "medley" word anywhere, or by two or more
+   * titles joined with " x ", " vs ", " / " or " × " in one part of the title (brackets and dash parts apart).
+   * A side that is the credited artist makes it a credit ("Sigala x Ella Eyre - Came Here For Love"), not a mashup.
+   */
+  const MASHUP_WORD = /(?:^|[^\p{L}\p{N}])(?:mash[\s-]?ups?|medley)(?:$|[^\p{L}\p{N}])/u;
+  const MASHUP_JOIN = /\s+(?:x|×|vs\.?|\/)\s+/u;
+  function isMashup(raw        , artist         = '')          {
+    let text = normalize(raw ?? '');
+    if (MASHUP_WORD.test(text)) return true;
+    for (let pass = 0; pass < BRACKET_PASSES; pass++) text = text.replace(BRACKETED, ' ');   // nested asides too
+    return text
+      .split(DASH)
+      .filter((part) => !isArtistName(part, artist))
+      .some((part) => {
+        const sides = part.split(MASHUP_JOIN).map((s) => s.trim()).filter((s) => wordsOf(s).length);
+        return sides.length >= 2 && sides.every((s) => !isArtistName(s, artist));
+      });
+  }
+
+  function isArtistName(text        , artist         = '')          {
+    if (!String(artist ?? '').trim()) return false;
     const words = wordsOf(text);
     if (!words.length) return false;
     const credited = new Set(wordsOf(normalize(artist)));
@@ -533,7 +557,7 @@
     return [...wanted.context].some((w) => got.context.has(w)) ? CONTEXT_SHARED : 0;
   }
 
-  const api = { DURATION_LIMIT_SEC, normalize, foldLatin, queries, searchableTitle, primaryArtist, sharesArtist, best, ranked, score, matches, hasConflictingAlbums, uniquelyMostCreditedCloseMatch, withinSeconds, isSevereMismatch, parseTitle, isTranslationMatch, hasFilingLatin, scriptMates, romajiOf, artistNames, albumVersionMarkers };
+  const api = { DURATION_LIMIT_SEC, isMashup, normalize, foldLatin, queries, searchableTitle, primaryArtist, sharesArtist, best, ranked, score, matches, hasConflictingAlbums, uniquelyMostCreditedCloseMatch, withinSeconds, isSevereMismatch, parseTitle, isTranslationMatch, hasFilingLatin, scriptMates, romajiOf, artistNames, albumVersionMarkers };
   globalThis.__viviTrackMatcher = api;
   if (typeof module === 'object' && module.exports) module.exports = api;
 })();

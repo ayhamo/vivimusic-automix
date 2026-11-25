@@ -51,6 +51,26 @@ const viviSpotifyCanvas = (() => {
     } finally { clearTimeout(t); }
   }
 
+  // an answer's JSON, read up to 256 KB (rule 7); more is cancelled and fails the lookup
+  const MAX_ANSWER = 256 * 1024;
+  async function readJson(r) {
+    if (Number(r.headers?.get?.('content-length')) > MAX_ANSWER) { try { await r.body?.cancel(); } catch { /* gone */ } throw new Error('answer over 256 KB'); }
+    if (!r.body?.getReader) { const t = await r.text(); if (t.length > MAX_ANSWER) throw new Error('answer over 256 KB'); return JSON.parse(t); }
+    const rd = r.body.getReader(), parts = [];
+    let n = 0;
+    for (;;) {
+      const { done, value } = await rd.read();
+      if (done) break;
+      n += value.byteLength;
+      if (n > MAX_ANSWER) { try { await rd.cancel(); } catch { /* gone */ } throw new Error('answer over 256 KB'); }
+      parts.push(value);
+    }
+    const all = new Uint8Array(n);
+    let o = 0;
+    for (const p of parts) { all.set(p, o); o += p.byteLength; }
+    return JSON.parse(new TextDecoder().decode(all));
+  }
+
   async function auth() {
     if (!accessToken || Date.now() > accessExpires - 60e3) {
       const ask = (code, ver) => get(`${TOKEN_URL}?reason=init&productType=web-player&totp=${code}&totpServer=${code}&totpVer=${ver}`,
@@ -63,7 +83,7 @@ const viviSpotifyCanvas = (() => {
         if (ver) r = await ask(await makeTotp(dict[String(ver)], Math.floor(Date.now() / 1000)), ver);
       }
       if (!r.ok) throw new Error(`/api/token: HTTP ${r.status}`);
-      const t = await r.json();
+      const t = await readJson(r);
       if (!t.accessToken) throw new Error('/api/token: no access token');
       accessToken = t.accessToken;
       accessExpires = t.accessTokenExpirationTimestampMs || Date.now() + 30 * 60e3;
@@ -77,7 +97,7 @@ const viviSpotifyCanvas = (() => {
           device_brand: 'unknown', device_model: 'unknown', os: 'windows', os_version: 'unknown', device_id: deviceId, device_type: 'computer' } } }),
       });
       if (!r.ok) throw new Error(`clienttoken: HTTP ${r.status}`);
-      const token = (await r.json())?.granted_token?.token;
+      const token = (await readJson(r))?.granted_token?.token;
       if (!token) throw new Error('clienttoken: no token');
       clientToken = token;
     }
@@ -100,8 +120,8 @@ const viviSpotifyCanvas = (() => {
       });
       if (r.status === 401 && attempt === 0) { accessToken = clientToken = null; continue; }
       if (r.status >= 400) throw new Error(`${operationName}: HTTP ${r.status}`);
-      const data = await r.json();
-      if (data.errors) throw new Error(`${operationName}: GraphQL errors`);
+      const data = await readJson(r);
+      if (Array.isArray(data.errors) ? data.errors.length : data.errors) throw new Error(`${operationName}: GraphQL errors`);
       return data;
     }
     throw new Error(`${operationName}: session expired`);
@@ -200,7 +220,7 @@ const viviSpotifyCanvas = (() => {
     return url;
   }
 
-  return { find, totp, matches, trusted, canvasOf };
+  return { find, totp, matches, trusted, canvasOf, readJson };
 })();
 globalThis.viviSpotifyCanvas = viviSpotifyCanvas;   // for the test page and the console
 
@@ -212,7 +232,10 @@ if (typeof spotifyCanvasForTrack === 'function') {
   spotifyCanvasForTrack = async function (track) {
     const key = `${track.artist}—${track.song}`;
     const saved = (await chrome.storage.local.get(`spotify_canvas_${key}`))[`spotify_canvas_${key}`];
-    if (saved?.videoUrl) return saved.videoUrl;
+    if (saved?.videoUrl) {
+      if (viviSpotifyCanvas.trusted(saved.videoUrl)) return saved.videoUrl;
+      await chrome.storage.local.remove(`spotify_canvas_${key}`);   // saved before rule 6 or by upstream: not taken
+    }
     let url = null;
     if (await getSpDc()) {
       try {

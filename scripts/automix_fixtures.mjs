@@ -55,25 +55,31 @@ const round = (v) => (typeof v === 'number' ? Math.round(v * 1e4) / 1e4 : Array.
 // A's line shapes under the current rule.
 function planPair(pair, version, lyrics = null, mixed = false) {
   const A = loadAutomix(version);
-  const [a, b] = pair.songs;
+  // each analysis as the extension keeps it (automix.js withBarPhase, analysis-cases.md "The bar")
+  const [a, b] = pair.songs.map((s) => ({ ...s, analysis: A.withBarPhase(s.analysis) }));
   const pos = Math.max(30, a.analysis.durationSec - 95), earliest = pos + HAND_LEAD + 0.5;
-  const spans = (s) => {
+  // (the loop mix reads lines as the baseline does: automix.js loopSpansFromLines)
+  const spans = (s, read = A.sungSpansFromLines) => {
     if (!lyrics) return s.sung;
     if (!s.lines) return null;
     const shapes = lyrics === 'lrc' ? s.lines.map((l) => ({ start: l.start, end: null, words: l.words, wordTimes: null })) : s.lines;
-    const sp = A.sungSpansFromLines(shapes);
+    const sp = read(shapes);
     return sp.length ? sp : null;
   };
   const sung = mixed ? { out: lyrics === 'old' ? a.sung ?? null : spans(a), in: null } : { out: spans(a), in: spans(b) };
+  const loopSung = lyrics && lyrics !== 'old' ? (mixed ? { out: spans(a, A.loopSpansFromLines), in: null } : { out: spans(a, A.loopSpansFromLines), in: spans(b, A.loopSpansFromLines) }) : sung;
   if (lyrics) { A.primeSung(a.id, sung.out); A.primeSung(b.id, sung.in); }
-  const blend = A.plan({ fromId: a.id, toId: b.id, from: a.analysis, to: b.analysis, durationSec: a.analysis.durationSec, pos, earliest });
+  let blend = A.plan({ fromId: a.id, toId: b.id, from: a.analysis, to: b.analysis, durationSec: a.analysis.durationSec, pos, earliest });
   const cur = A.asOutgoing(a.analysis), nxt = b.analysis;
   const loop = A.gridOk(cur) && A.gridOk(nxt)
-    ? A.planLoopMix(cur, bufferOf(a), nxt, bufferOf(b), pos + A.LOOP.LOOP_SETUP_SEC, sung)
+    ? A.planLoopMix(cur, bufferOf(a), nxt, bufferOf(b), pos + A.LOOP.LOOP_SETUP_SEC, loopSung)
     : { none: 'beat grid too weak' };
   // what the extension plays: the loop mix when it found bars (Automix v2: and it
   // scores over the blend, automix.js loopOrBlend), else the blend plan
   const pick = A.loopOrBlend(blend, loop);
+  // Automix v2 with no loop mix: the curator blend (analysis-cases.md "The curator blend"), chosen after
+  // the loop-or-blend score, which keeps the usual blend's numbers
+  if (version === 3 && !pick.loop) blend = A.plan({ fromId: a.id, toId: b.id, from: a.analysis, to: b.analysis, durationSec: a.analysis.durationSec, pos, earliest, curator: true });
   return round({ pos, earliest, plays: pick.loop ? 'loop' : blend.style, ...(pick.why ? { choice: pick.why } : {}), loop, blend });
 }
 
@@ -129,20 +135,14 @@ for (const f of ['3-', '5-']) {
     if (b.handoff || b.shape !== 'echo') { failed++; console.log('RULE', name, v, '| plays', b.handoff ? 'a hand-over' : b.shape || b.style, '|', b.reason, '| must be an echo out'); }
   }
 }
-// versions.md "Loop on the blend's bars": each loop starts a whole number of bars on the grids the blend uses
+// versions.md "The loop mix's baseline" rule 2: Vaina Loca's loop as the user's baseline (d26dc16) plans it, by itself
 {
-  const PAIRS = new URL('../spec/automix/pairs/', import.meta.url);
-  const onBars = (t, g) => { const k = (t - g.down) / (4 * g.beat); return Math.abs(k - Math.round(k)) * 4 <= 0.25; };
-  for (const f of readdirSync(GOLDEN).filter((x) => x.endsWith('.json')).sort()) {
-    const [a, b] = JSON.parse(readFileSync(new URL(f, PAIRS), 'utf8')).songs.map((s) => s.analysis);
-    const ga = a.tailGrid ? { down: a.tailGrid.firstDownbeatSec, beat: a.tailGrid.beatIntervalSec } : { down: a.firstDownbeatSec, beat: a.beatIntervalSec };
-    const gb = { down: b.firstDownbeatSec, beat: b.beatIntervalSec };
-    const g = JSON.parse(readFileSync(new URL(f, GOLDEN), 'utf8'));
-    for (const v of ['v2', 'v3']) {
-      const l = g[v].loop;
-      if (!l?.out) continue;
-      if (!onBars(l.out.loop[0], ga) || !onBars(l.in.loop[0], gb)) { failed++; console.log('RULE', f, v, '| loop at', l.out.loop[0], '/', l.in.loop[0], '| must start on the bar lines the blend uses'); }
-    }
+  const g = JSON.parse(readFileSync(new URL('1-vaina-loca__si-no-es-contigo.json', GOLDEN), 'utf8'));
+  for (const v of ['v2', 'v3', 'v3lyrics', 'v3lrc']) {
+    const l = g[v].loop;
+    const ok = g[v].plays === 'loop' && l?.totalBars === 12 && l.rampBars === 3 && l.out.bars === 4 && l.in.bars === 4
+      && Math.abs(l.out.loop[0] - 153.31) < 0.02 && Math.abs(l.in.loop[0] - 9.6) < 0.02;
+    if (!ok) { failed++; console.log('RULE 1-vaina-loca', v, '| plays', g[v].plays, l?.out?.loop?.[0], '/', l?.in?.loop?.[0], l?.totalBars, 'bars | must be the baseline: 4-bar loops at 153.31 / 9.60 s, ramp 3, 12 bars'); }
   }
 }
 // versions.md "Where the blend sits": Vaina Loca's v2 blend ends where its outro begins (163.5 s), starting before Classic's 160.98 s

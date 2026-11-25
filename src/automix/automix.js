@@ -97,16 +97,24 @@
   function ensureFrame() {
     if (frameDead) return Promise.reject(new Error('analysis host unavailable'));
     if (frame && frame.isConnected) return frameReady.promise;
-    frameReady = {};
-    frameReady.promise = new Promise((resolve, reject) => { frameReady.resolve = resolve; frameReady.reject = reject; });
-    frame = document.createElement('iframe');
+    const ready = frameReady = { done: false };
+    ready.promise = new Promise((resolve, reject) => {
+      ready.resolve = (v) => { ready.done = true; resolve(v); };
+      ready.reject = (e) => { ready.done = true; reject(e); };
+    });
+    const f = frame = document.createElement('iframe');
     frame.src = chrome.runtime.getURL('src/automix/host.html');
     frame.setAttribute('aria-hidden', 'true');
     frame.tabIndex = -1;
     frame.style.cssText = 'position:fixed;width:0;height:0;border:0;opacity:0;pointer-events:none;left:-9999px;top:0';
     (document.body || document.documentElement).appendChild(frame);
-    setTimeout(() => frameReady.reject(new Error('analysis host timed out')), 15000);
-    return frameReady.promise;
+    // a host that never said ready is removed, so the next request builds a new one
+    setTimeout(() => {
+      if (ready.done) return;
+      if (frame === f) { f.remove(); frame = null; }
+      ready.reject(new Error('analysis host timed out'));
+    }, 15000);
+    return ready.promise;
   }
 
   // ───────── the downloaded songs (crossfade-page.js) ─────────
@@ -198,7 +206,7 @@
           log(`analysis of ${id}: too long (${Math.round(a.durationSec)} s, over ${ANALYSIS_MAX_SEC} s), not analysed`);
           continue;
         }
-        results.set(id, a);
+        results.set(id, withBarPhase(a));
         while (results.size > KEEP_RESULTS) {
           const old = results.keys().next().value;
           results.delete(old);
@@ -269,6 +277,29 @@
     const beatSec = a.beatIntervalSec;
     return { beatSec, barSec: beatSec * BEATS_PER_BAR, phraseSec: beatSec * BEATS_PER_PHRASE, downbeatSec: a.firstDownbeatSec, bpm: a.bpm };
   }
+  // Bar phase (analysis-cases.md "The bar"): a grid's bars start where most of the beat model's
+  // downbeats fall (each counted at its grid beat's place in the bar, k mod 4 from the first
+  // downbeat, when within a quarter beat of it), not at its first downbeat, which is often a lone
+  // pickup. A tie keeps the first downbeat's place. Moving it again changes nothing, so a saved
+  // analysis is phased on load.
+  function votedDownbeat(beatSec, fd, downs) {
+    if (!(beatSec > 0) || fd == null || !downs?.length) return fd;
+    const votes = [0, 0, 0, 0];
+    for (const d of downs) {
+      const k = Math.round((d - fd) / beatSec);
+      if (Math.abs(fd + k * beatSec - d) <= beatSec / 4) votes[((k % 4) + 4) % 4]++;
+    }
+    let best = 0;
+    for (let p = 1; p < 4; p++) if (votes[p] > votes[best]) best = p;
+    return fd + best * beatSec;
+  }
+  function withBarPhase(a) {
+    if (!a || a.tooLong) return a;
+    const fd = votedDownbeat(a.beatIntervalSec, a.firstDownbeatSec, a.headBeats?.downbeats);
+    const t = a.tailGrid, tfd = t ? votedDownbeat(t.beatIntervalSec, t.firstDownbeatSec, a.tailBeats?.downbeats) : null;
+    if (fd === a.firstDownbeatSec && (!t || tfd === t.firstDownbeatSec)) return a;
+    return { ...a, firstDownbeatSec: fd, ...(t ? { tailGrid: { ...t, firstDownbeatSec: tfd } } : {}) };
+  }
   // The analysis as the outgoing side sees it: its grid fields swapped for the tail grid.
   function asOutgoing(a) {
     if (a.tailGrid === undefined) return a;
@@ -333,6 +364,13 @@
   // The bars asked for: the "Up to N bars" setting, or the Auto pick for this pair.
   // A length picked for this pair in the Automix overview comes first.
   let pinnedBars = null;
+  let planSpeed = null;   // { out, in } while plan() runs with song speeds (spotify-mixes.md rule 10)
+  // The curator blend (analysis-cases.md "The curator blend"): Automix v2's blend when Auto didn't pick
+  // the loop mix, placed as Spotify's playlist editors place theirs: 8 bars, starting on the downbeat
+  // nearest 31 s before the music ends. plan()'s `curator` asks for it; planFor falls back to the
+  // usual blend when the keys aren't trusted or clash, both would sing over it, or the song is short.
+  const CURATOR_BARS = 8, CURATOR_LEAD_SEC = 31, CURATOR_MIN_SONG_SEC = 120;
+  let curatorAsk = false;
   const requestedBars = (cur, next, g, entrySec, filter) => pinnedBars || (barsSetting === 'auto' ? autoBars(cur, next, g, entrySec, filter) : barsSetting);
 
   // ───────── transition planner (BitChord engine/transition-scheduler.ts) ─────────
@@ -392,6 +430,10 @@
   // more than this share of, after the re-route, is not played as a blend.
   const V2_CLASH_MAX = 0.3;
   const DROP_IN_BARS = 2;              // a drop-in's overlap (pairTransitionEvidence: two bars)
+  // a drop-in trims the playing song at least this much (versions.md "The mix's ceiling"): B lands at
+  // full level over A's first beats, and on a loud entry the sum alone tripped the limiter more than either song
+  const DROP_IN_OUT_DB = -1.5;
+  const dropInTrim = (t) => (t && t.outDb <= DROP_IN_OUT_DB ? t : { ...(t || { diffDb: null, inDb: 0 }), outDb: DROP_IN_OUT_DB });
   const MUFFLE_LEAD_BEATS = 8, MUFFLE_MIN_LEAD_BEATS = 4, MUFFLE_EXIT_BEATS = 2, MUFFLE_MIN_BODY = 0.3, MUFFLE_MIN_OPENING_SEC = 2;
   const BRIDGE_MIN_SEC = 4, BRIDGE_MAX_SEC = 12, BRIDGE_MAX_SKIP_SEC = 16, BEATLESS = 0.3;
   const stretchAllowed = (rate) => (rate >= 1 ? rate - 1 <= MAX_SPEED_UP : 1 - rate <= MAX_SLOW_DOWN);
@@ -416,13 +458,20 @@
   // [pick]: what the Automix overview asked for this pair, { style, bars }
   // (style 'blend', 'filter' or 'crossfade'; either may be null: Auto).
   // (an editor override, editor.md §9, or a pick from before the editor: migratePick)
-  function plan({ fromId, toId, from, to, durationSec, pos, earliest, pick = null, fadeSec = null }) {
+  // speed: { out, in }, each song's speed in its playlist (spotify-mixes.md rule 10), or null (x1)
+  function plan({ fromId, toId, from, to, durationSec, pos, earliest, pick = null, fadeSec = null, speed = null, curator = false }) {
     let ov = migratePick(pick);
     const notes = [];
     // a preset no longer offered plays as Automatic, and says so (editor.md §6)
     if (ov?.preset && ov.preset !== 'auto' && !PRESET_NAMES.includes(ov.preset)) {
       notes.push(`the preset "${ov.preset}" is no longer offered: Automatic plays`);
       ov = { ...ov, preset: 'auto' };
+    }
+    // beats counted on another app's grid at half or double time: on this one's (mix-file.md rule 4)
+    if (ov?.gridBpm) {
+      const f = foldOverride(ov, editorGrid(from, 'out')?.bpm);
+      if (f.note) notes.push(f.note);
+      ov = f.ov;
     }
     // an overlap is never longer than a third of either song: a longer length picked is shortened (editor.md §6)
     const pickedBars = ov?.preset !== 'loop' ? ov?.bars || PRESET_BARS[ov?.preset] || null : null;
@@ -437,6 +486,9 @@
     }
     fallbackSec = fadeSec > 0 ? Math.min(FALLBACK_SEC, Math.max(1, Math.round(fadeSec))) : FALLBACK_SEC;
     pinnedBars = (ov?.preset !== 'loop' && (ov?.bars || PRESET_BARS[ov?.preset])) || null;
+    const sOut = speed?.out > 0 ? speed.out : 1, sIn = speed?.in > 0 ? speed.in : 1;
+    planSpeed = Math.abs(sOut - 1) >= 1e-4 || Math.abs(sIn - 1) >= 1e-4 ? { out: sOut, in: sIn } : null;
+    curatorAsk = !!curator;
     try {
       const warnings = [...notes];
       const p = planFor({ fromId, toId, from, to, durationSec, pos, earliest, pick: ov, warnings });
@@ -456,14 +508,42 @@
           for (const side of ['out', 'in']) { if (p.curves[side].rate) pc[side].rate = p.curves[side].rate; }
           p.curves = pc;
           p.preset = ov.preset;
+          // the Looping lane (editor.md §13): N of A's beats, in A's song seconds
+          if (pc.loopBeats) p.loopSec = pc.loopBeats * (p.beatSec > 0 ? p.beatSec : editorGrid(from, 'out')?.beatSec || 0.5);
         }
       }
+      // each song's speed (spotify-mixes.md rule 10): A plays at its own from before the mix (the blend's
+      // outRate is it), B at its own, through the mix and after it
+      if (planSpeed) {
+        p.speedOut = planSpeed.out;
+        p.speedIn = planSpeed.in;
+        if (p.style !== 'blend') p.rate = planSpeed.in;
+      }
       return p;
-    } finally { pinnedBars = null; fallbackSec = FALLBACK_SEC; }
+    } finally { pinnedBars = null; planSpeed = null; fallbackSec = FALLBACK_SEC; curatorAsk = false; }
   }
   // An override as saved (editor.md §1, override.schema.json): Auto fields dropped, null when nothing
   // but Auto is left (Auto is the reset). Picking a preset drops a migrated pick's family.
   const nudge = (ms) => (Number.isFinite(ms) ? clamp(Math.round(ms / 10) * 10, -2000, 2000) || 0 : 0);
+  // { out, in }: A's and B's speed, 0.5..2 to 0.00001; a 1 left out; null when both are 1
+  function normalizeSpeed(sp) {
+    if (!sp || typeof sp !== 'object') return null;
+    const r = {};
+    for (const k of ['out', 'in']) {
+      const v = sp[k];
+      if (Number.isFinite(v) && v >= 0.5 && v <= 2 && Math.abs(v - 1) >= 1e-4) r[k] = Math.round(v * 1e5) / 1e5;
+    }
+    return Object.keys(r).length ? r : null;
+  }
+  // A song's speed while it plays (spotify-mixes.md rule 10): the speed the mix that brought it in
+  // gives it (prev → id), else the one the mix taking it out gives it (id → next), else 1.
+  // overrideOf(key) → the saved override of that pair, or null.
+  function songSpeed(id, prevId, nextId, overrideOf) {
+    const inn = prevId ? overrideOf(`${prevId}>${id}`)?.speed?.in : null;
+    if (Number.isFinite(inn)) return inn;
+    const out = nextId ? overrideOf(`${id}>${nextId}`)?.speed?.out : null;
+    return Number.isFinite(out) ? out : 1;
+  }
   function normalizeOverride(o) {
     o = migratePick(o);
     if (!o) return null;
@@ -473,25 +553,361 @@
       // each lane a shape name (§3) or a drawing (§10 rule 2)
       const l = {};
       for (const k of Object.keys(LANE_VALUES)) {
-        const v = o.lanes[k];
+        // (the Effects and Looping lanes may be missing: none, editor.md §12 rule 1, §13)
+        const v = OPTIONAL_LANES.includes(k) && o.lanes[k] == null ? 'none' : o.lanes[k];
         l[k] = typeof v === 'string' ? (LANE_VALUES[k].includes(v) ? v : null) : normalizeDrawing(k, v);
       }
-      if (Object.values(l).every((v) => v)) n.lanes = l;
+      if (Object.values(l).every((v) => v)) { for (const k of OPTIONAL_LANES) if (l[k] === 'none') delete l[k]; n.lanes = l; }
     }
     if (n.preset === 'custom' && !n.lanes) delete n.preset;
     if (!n.preset && (o.family === 'blend' || o.family === 'filter')) n.family = o.family;
     if (n.preset !== 'loop') {
       if ([2, 4, 8, 16, 32].includes(o.bars)) n.bars = o.bars;
-      const pos = (p) => p && Number.isFinite(p.sec) && Number.isInteger(p.bar)
-        ? { bar: p.bar, ...([1, 2, 3].includes(p.beat) ? { beat: p.beat } : {}), ...(nudge(p.nudgeMs) ? { nudgeMs: nudge(p.nudgeMs) } : {}), sec: Math.round(p.sec * 1e3) / 1e3 } : null;
+      // (no bar: a position in seconds only, as a mix file from another app gives it: editor.md §6)
+      const pos = (p) => p && Number.isFinite(p.sec) && (Number.isInteger(p.bar) || p.bar == null)
+        ? { ...(Number.isInteger(p.bar) ? { bar: p.bar, ...([1, 2, 3].includes(p.beat) ? { beat: p.beat } : {}) } : {}), ...(nudge(p.nudgeMs) ? { nudgeMs: nudge(p.nudgeMs) } : {}), sec: Math.round(p.sec * 1e3) / 1e3 } : null;
       const w = { out: pos(o.window?.out), in: pos(o.window?.in) };
       if (w.out || w.in) n.window = Object.fromEntries(Object.entries(w).filter(([, v]) => v));
       // (Loop: the loop decks do their own tempo ramp, editor.md §2)
       if (['sync', 'glide', 'off'].includes(o.beatMatch)) n.beatMatch = o.beatMatch;
     }
+    // each song's speed in the playlist it came from (editor.md §1, spotify-mixes.md rule 10)
+    const sp = normalizeSpeed(o.speed);
+    if (sp) n.speed = sp;
     if (!Object.keys(n).length) return null;
     if (o.lock) n.lock = true;
+    // the tempo of A the beats count on (mix-file.md rule 2): not an edit on its own
+    if (Number.isFinite(o.gridBpm) && o.gridBpm >= 20 && o.gridBpm <= 400) n.gridBpm = Math.round(o.gridBpm * 100) / 100;
     return { v: 1, ...n, ...(o.engine ? { engine: o.engine } : {}), ...(o.savedAt ? { savedAt: o.savedAt } : {}) };
+  }
+  // Mix files (spec/automix/mix-file.md): pairs' overrides in one JSON file, to move mixes between
+  // the apps and to import ready-made ones. readMixFile → { mixes: [{ key, from, to, override }],
+  // skipped: [{ n, why }] } or { refused }; writeMixFile → the file's object; importPlan sorts the
+  // mixes against the saved overrides; mixChanges says what a replacement changes.
+  const MIX_FORMAT = 'vivi-mix', MIX_VERSION = 1, MIX_MAX = 300, MIX_FILE_MAX_BYTES = 2 * 1024 * 1024;
+  const VIDEO_ID = /^[A-Za-z0-9_-]{11}$/;
+  const textOf = (t) => (typeof t === 'string' && t.trim() ? t.trim().slice(0, 200) : null);
+  function mixSong(s) {
+    if (!s || typeof s !== 'object' || !VIDEO_ID.test(s.videoId)) return null;
+    const title = textOf(s.title), artist = textOf(s.artist);
+    return { videoId: s.videoId, ...(title ? { title } : {}), ...(artist ? { artist } : {}) };
+  }
+  // the override as a mix file carries it: normalized, without this app's engine and savedAt
+  function mixOverride(o) {
+    const n = normalizeOverride(o);
+    if (!n) return null;
+    const { engine, savedAt, ...rest } = n;
+    return rest;
+  }
+  // Half and double time (mix-file.md rule 4): an override's beats (bars, drawings in beats) count on
+  // A's grid at gridBpm. An app that reads A at half or double that tempo (within 4%) counts its beats
+  // x2 or x1/2, so the mix plays the same seconds. k: the factor, or null when the tempos don't fold.
+  const FOLD_TOL = 0.04;
+  function foldFactor(gridBpm, bpm) {
+    if (!(gridBpm > 0) || !(bpm > 0)) return null;
+    const r = bpm / gridBpm;
+    for (const k of [1, 2, 0.5]) if (Math.abs(r / k - 1) <= FOLD_TOL) return k;
+    return null;
+  }
+  const countsBeats = (o) => !!o && (!!o.bars || (o.preset === 'custom' && Object.values(o.lanes || {}).some((d) => d && typeof d === 'object' && d.unit === 'beat')));
+  // -> { ov, k, note }: the override on this app's grid (gridBpm then this app's tempo)
+  function foldOverride(o, bpm) {
+    if (!o || !countsBeats(o) || !(o.gridBpm > 0) || !(bpm > 0)) return { ov: o, k: 1, note: null };
+    const k = foldFactor(o.gridBpm, bpm);
+    if (k === null) return { ov: o, k: null, note: `drawn at ${Math.round(o.gridBpm)} BPM, this song reads ${Math.round(bpm)} BPM: its beats are taken as they are` };
+    if (k === 1) return { ov: o, k, note: null };
+    const ov = JSON.parse(JSON.stringify(o));
+    const r3 = (v) => Math.round(v * 1e3) / 1e3;
+    const scale = (pts) => (Array.isArray(pts) ? pts.map(([x, v]) => [r3(x * k), v]) : pts);
+    for (const d of Object.values(ov.lanes || {})) {
+      if (!d || typeof d !== 'object' || d.unit !== 'beat') continue;
+      for (const side of ['out', 'in']) {
+        if (Array.isArray(d[side])) d[side] = scale(d[side]);
+        else if (d[side]) for (const c of Object.keys(d[side])) d[side][c] = scale(d[side][c]);
+      }
+    }
+    let note = null;
+    if (ov.bars) {
+      const want = ov.bars * k;
+      ov.bars = [2, 4, 8, 16, 32].includes(want) ? want : want > 32 ? 32 : 2;
+      if (ov.bars !== want) note = `${want} bars on this song's grid: ${ov.bars} play`;
+    }
+    ov.gridBpm = Math.round(o.gridBpm * k * 100) / 100;
+    return { ov, k, note };
+  }
+  // the import summary's note for one mix (mix-file.md rule 7): no tempo, or one that doesn't fold
+  function foldNote(o, bpm) {
+    if (!countsBeats(o)) return null;
+    if (!(o.gridBpm > 0)) return 'no gridBpm: its beats are taken as they are';
+    return foldOverride(o, bpm).note;
+  }
+  const stable = (v) => (Array.isArray(v) ? `[${v.map(stable).join(',')}]`
+    : v && typeof v === 'object' ? `{${Object.keys(v).sort().map((k) => JSON.stringify(k) + ':' + stable(v[k])).join(',')}}` : JSON.stringify(v));
+  const noGrid = (o) => { if (!o) return o; const { gridBpm, ...rest } = o; return rest; };
+  const sameMix = (a, b) => stable(noGrid(mixOverride(a))) === stable(noGrid(mixOverride(b)));
+  function readMixFile(text) {
+    if (typeof text !== 'string') return { refused: 'not a Vivimusic mix file' };
+    if (text.length > MIX_FILE_MAX_BYTES) return { refused: 'the file is over 2 MB: not a Vivimusic mix file' };
+    let j;
+    try { j = JSON.parse(text.replace(/^\uFEFF/, '')); } catch { return { refused: 'not a Vivimusic mix file: it is not JSON' }; }
+    if (j && typeof j === 'object' && j.format === SPOTIFY_FORMAT) return readSpotifyMixes(j);
+    if (!j || typeof j !== 'object' || j.format !== MIX_FORMAT) return { refused: 'not a Vivimusic mix file' };
+    if (!Number.isInteger(j.version) || j.version < 1) return { refused: 'the mix file has no valid version' };
+    if (j.version > MIX_VERSION) return { refused: `this mix file is version ${j.version}, newer than this app reads (${MIX_VERSION}): update the app to import it` };
+    if (!Array.isArray(j.mixes) || !j.mixes.length) return { refused: 'the mix file has no mixes' };
+    if (j.mixes.length > MIX_MAX) return { refused: `the mix file has ${j.mixes.length} mixes: ${MIX_MAX} is the most` };
+    return collectMixes(j.mixes.map((m, i) => ({ n: i + 1, from: m?.from, to: m?.to, override: m?.override })));
+  }
+  // items: [{ n, from, to, override, why? }] → { mixes, skipped } (mix-file.md rule 4); why: skipped as is
+  function collectMixes(items) {
+    const mixes = [], skipped = [], at = new Map();
+    items.forEach((m) => {
+      const n = m.n;
+      if (m.why) { skipped.push({ n, why: m.why }); return; }
+      const from = mixSong(m.from), to = mixSong(m.to);
+      if (!from || !to) { skipped.push({ n, why: 'a song has no valid videoId' }); return; }
+      if (from.videoId === to.videoId) { skipped.push({ n, why: 'the same song on both sides' }); return; }
+      const o = m.override;
+      const ov = mixOverride(o);
+      // a preset or a lane this app doesn't know is not dropped quietly
+      if (o?.preset && o.preset !== 'auto' && ov?.preset !== o.preset) {
+        skipped.push({ n, why: o.preset === 'custom' ? 'its lanes are not valid' : `the preset "${o.preset}" is unknown here` });
+        return;
+      }
+      if (!ov) { skipped.push({ n, why: 'nothing but Auto in it' }); return; }
+      const key = from.videoId + '>' + to.videoId;
+      const mix = { key, from, to, override: ov };
+      if (at.has(key)) { skipped.push({ n: at.get(key).n, why: `the same pair again in mix ${n}: the later one is used` }); mixes[at.get(key).i] = mix; at.set(key, { i: at.get(key).i, n }); return; }
+      at.set(key, { i: mixes.length, n });
+      mixes.push(mix);
+    });
+    return { mixes, skipped };
+  }
+  // A Spotify mix export (spec/automix/spotify-mixes.md): "spotify-mix-export" version 3, the songs'
+  // YouTube ids in youtubeVideoId. Each Spotify mix becomes a custom override; the queue is the
+  // playlist's tracks in order. → { mixes, skipped, queue, notes, name } or { refused }
+  const SPOTIFY_FORMAT = 'spotify-mix-export', SPOTIFY_VERSION = 3;
+  // (the names as Spotify's editor shows them: research/spotify-mixes/tools/style_names.json)
+  const SP_VOLUME = { 1: 'centerCut', 2: 'crossfade', 5: 'fadeInFadeOut', 6: 'smooth', 7: 'overlap', 9: 'fadeInCutOut', 10: 'cutInFadeOut', 11: 'fadeInFastOut', 12: 'fadeIn1BarCutOut', 13: 'overlap1BarCutOut' };
+  const SP_EQ = { 0: 'none', 1: 'threeBandFade', 4: 'centerBassSwap', 10: 'endBassSwap', 11: 'startBassSwap', 12: 'quickBassCut', 13: 'longBassCut', 15: 'bassFadeOut' };
+  const SP_FILTER = { 0: 'none', 5: 'hpIn', 6: 'hpOut', 7: 'hpBoth', 9: 'lpIn', 10: 'lpOut', 11: 'lpBoth', 12: 'hpInLpOut', 13: 'lpInHpOut', 14: 'hpHalfOut', 15: 'noiseOutEnd' };
+  // (Spotify 9.2.2's names; a drawn lane still carries its drawing, the name its echo or delay time)
+  const SP_FX = { 0: 'none', 1: 'reverbOutCenter', 2: 'reverbCutEnd', 3: 'reverbOutEnd', 4: 'echoHalfCutEnd', 5: 'echoHalfOutEnd', 6: 'echo34CutEnd',
+    7: 'echo34OutEnd', 8: 'delayHalfCutEnd', 9: 'delay34CutEnd', 10: 'echo1CutEnd', 11: 'echo1OutEnd' };
+  const SP_LOOP = { 0: 'none', 1: 'loop2', 2: 'loop4', 3: 'loop8', 4: 'loop16', 8: 'loop1' };
+  const SP_DEFAULT = { volume: 'overlap', eq: 'centerBassSwap', effect: 'none', fx: 'none', looping: 'none' };
+  // a lane Spotify leaves unset plays its base preset's own (spotify-mixes.md rule 4): style.basePresetId's
+  // lanes, the ones of today's presets as editor.md §2; any other id: SP_DEFAULT
+  // (ids from Spotify 9.2.2's preset enum; 5, 10 and 19 are older presets, seen in its editor)
+  const SP_BASE = { 1: 'smooth', 2: 'blend', 3: 'rise', 4: 'melt', 11: 'slam', 17: 'wave', 20: 'dissolve', 21: 'surge', 22: 'afterglow',
+    5: { volume: 'fadeInCutOut' }, 10: { eq: 'centerBassSwap', effect: 'hpBoth' }, 19: { volume: 'overlap', eq: 'centerBassSwap', effect: 'lpBoth' } };
+  const spBase = (id) => (typeof SP_BASE[id] === 'string' ? PRESET_LANES[SP_BASE[id]] : SP_BASE[id]) || {};
+  function readSpotifyMixes(j) {
+    if (!Number.isInteger(j.version) || j.version < 1) return { refused: 'the Spotify mix file has no valid version' };
+    if (j.version > SPOTIFY_VERSION) return { refused: `this Spotify mix file is version ${j.version}, newer than this app reads (${SPOTIFY_VERSION}): update the app to import it` };
+    if (j.version < SPOTIFY_VERSION) return { refused: `this Spotify mix file is version ${j.version}: it has no YouTube ids yet (version ${SPOTIFY_VERSION} has them)` };
+    if (!Array.isArray(j.mixes) || !j.mixes.length) return { refused: 'the mix file has no mixes' };
+    if (j.mixes.length > MIX_MAX) return { refused: `the mix file has ${j.mixes.length} mixes: ${MIX_MAX} is the most` };
+    const song = (t) => (t && VIDEO_ID.test(t.youtubeVideoId || '') ? { videoId: t.youtubeVideoId, title: t.title, artist: Array.isArray(t.artists) ? t.artists.join(', ') : undefined } : null);
+    const lost = { unnamed: 0, notCarried: new Set(), late: 0, lateMs: 0 };
+    const items = j.mixes.map((m, i) => {
+      const n = Number.isInteger(m?.index) ? m.index : i + 1;
+      const from = song(m?.from), to = song(m?.to);
+      if (!from || !to) return { n, why: `no YouTube id for ${(!from ? m?.from?.title : m?.to?.title) || 'a song'}` };
+      // (a mix of a millisecond with no start: Spotify's straight cut, its No transition: rule 3)
+      if (!(m.durationMs >= 100) && !Number.isFinite(m.fromStartMs)) return { n, from, to, override: { v: 1, preset: 'none' } };
+      const override = spotifyOverride(m, lost);
+      return override ? { n, from, to, override } : { n, why: 'its timing is not valid' };
+    });
+    const r = collectMixes(items);
+    const queue = [];
+    for (const t of j.playlist?.tracks || []) { const id = song(t)?.videoId; if (id && queue[queue.length - 1] !== id) queue.push(id); }
+    const notes = [];
+    if (lost.unnamed) notes.push(`${lost.unnamed} lane${lost.unnamed === 1 ? '' : 's'} in a Spotify style with no match here play the default shape`);
+    if (lost.notCarried.size) notes.push(`not carried: ${[...lost.notCarried].join(', ')}`);
+    // (rule 10: saved with the mix; this app doesn't play a song's speed yet)
+    if (lost.late) notes.push(`${lost.late} mix${lost.late === 1 ? '' : 'es'} bring${lost.late === 1 ? 's' : ''} B in late in Spotify (up to ${(lost.lateMs / 1000).toFixed(1)} s): here B starts with the mix`);
+    return { ...r, queue, notes, name: textOf(j.playlist?.name) };
+  }
+  // One Spotify mix as an override (spotify-mixes.md rules 3 to 6)
+  function spotifyOverride(m, lost) {
+    const r3 = (v) => Math.round(v * 1000) / 1000;
+    const D = m.durationMs / 1000;
+    // (an older export carries a negative time read as unsigned, 2^64 − x: negative too)
+    const ms = (v) => (Number.isFinite(v) && v >= 0 && v < 2 ** 53 ? v : null);
+    // a negative B start: B's 0:00 comes in that long after the mix starts (spotify-mixes.md rule 3)
+    if (m.toStartMs < 0 || m.toStartMs >= 2 ** 53) { lost.late++; if (m.toStartMs < 0) lost.lateMs = Math.max(lost.lateMs, -m.toStartMs); }
+    if (!(D > 0) || ms(m.fromStartMs) === null) return null;
+    const bars = [2, 4, 8, 16, 32].includes(m.bars) ? m.bars : null;
+    const unit = bars ? 'beat' : 'sec', N = bars ? bars * 4 : r3(D);
+    const st = m.style || {};
+    const c = m.curves || {};
+    // (a number with no name here counts only on a lane with no drawing: a drawing carries it)
+    const base = { ...SP_DEFAULT, ...spBase(st.basePresetId) };
+    const pick = (map, k, lane) => {
+      if (st[k] == null) return base[lane] ?? SP_DEFAULT[lane];
+      if (st[k] in map) return map[st[k]];
+      if (!c[k]) lost.unnamed++;
+      return base[lane] ?? SP_DEFAULT[lane];
+    };
+    const lanes = { volume: pick(SP_VOLUME, 'volume', 'volume'), eq: pick(SP_EQ, 'eq', 'eq'), effect: pick(SP_FILTER, 'filter', 'effect'), fx: pick(SP_FX, 'fx', 'fx'), looping: pick(SP_LOOP, 'looping', 'looping') };
+    // a Spotify curve (segments of fractions, lines or cubic Beziers) as [x, v] points in N units
+    const points = (segs, f) => {
+      const pts = [];
+      for (const s of Array.isArray(segs) ? segs : []) {
+        const P = Array.isArray(s?.points) ? s.points : [];
+        if (P.length < 2) continue;
+        const at = (px) => (s.start + px * (s.end - s.start)) * N;
+        if (P.length === 4) {
+          for (let k = 0; k <= 8; k++) {
+            const t = k / 8, u = 1 - t, w = [u * u * u, 3 * u * u * t, 3 * u * t * t, t * t * t];
+            pts.push([at(w.reduce((a, c, i) => a + c * P[i][0], 0)), f(w.reduce((a, c, i) => a + c * P[i][1], 0))]);
+          }
+        } else if (f.linear) {
+          for (const p of P) pts.push([at(p[0]), f(p[1])]);
+        } else {
+          const [a, b] = [P[0], P[P.length - 1]];
+          for (let k = 0; k <= 4; k++) { const t = k / 4; pts.push([at(a[0] + t * (b[0] - a[0])), f(a[1] + t * (b[1] - a[1]))]); }
+        }
+      }
+      return pts.map(([x, v]) => [r3(clamp(x, 0, N)), r3(v)]).filter((p, i, a) => !i || p[0] !== a[i - 1][0] || p[1] !== a[i - 1][1]);
+    };
+    const gain = Object.assign((y) => clamp(y, 0, 1), { linear: true });
+    const amount = gain, amountAbove = Object.assign((y) => clamp((y - 0.5) / 0.5, 0, 1), { linear: true });
+    const db = Object.assign((y) => (y >= 0.5 ? 0 : (EDITOR_CUT_DB * (0.5 - y)) / 0.5), { linear: true });
+    const cutoff = (y) => (y >= 0.5 ? { hp: 20 * Math.pow(HP_CLOSED / 20, (y - 0.5) / 0.5) } : { lp: 20000 * Math.pow(LP_CLOSED / 20000, (0.5 - y) / 0.5) });
+    // a lane's shape as a drawing (the deck a curve leaves out, and the shapes drawn here)
+    const shape = (lane, v) => {
+      const d = shapeDrawing(lane, v, D, unit === 'beat' ? D / N : 0.5, null, unit);
+      return d && d !== 'none' ? d : { unit, out: {}, in: {} };
+    };
+    if (c.volume) {
+      const base = shape('volume', lanes.volume);
+      lanes.volume = { unit, out: c.volume.from?.curve ? points(c.volume.from.curve, gain) : base.out, in: c.volume.to?.curve ? points(c.volume.to.curve, gain) : base.in };
+    }
+    if (c.eq) {
+      const base = shape('eq', lanes.eq);
+      const deck = (dk, b) => {
+        const e = c.eq[dk];
+        if (!e?.low && !e?.mid && !e?.high) return b;
+        const out = {};
+        for (const [k, ours] of [['low', 'bass'], ['mid', 'mid'], ['high', 'high']]) {
+          const pts = e[k] ? points(e[k], db) : null;
+          if (pts?.some(([, v]) => v < 0)) out[ours] = pts;
+        }
+        return out;
+      };
+      lanes.eq = { unit, out: deck('from', base.out), in: deck('to', base.in) };
+    }
+    if (c.filter) {
+      const base = shape('effect', lanes.effect);
+      const deck = (dk, b) => {
+        const segs = c.filter[dk]?.cutoff, ns = c.filter[dk]?.noiseColor;
+        if (!segs && !ns) return b;
+        const d = {};
+        if (segs) {
+          const lp = [], hp = [];
+          for (const [x, y] of points(segs, (y) => y)) { const v = cutoff(y); lp.push([x, r3(v.lp ?? 20000)]); hp.push([x, r3(v.hp ?? 20)]); }
+          if (lp.some(([, v]) => v < 20000)) d.lp = lp;
+          if (hp.some(([, v]) => v > 20)) d.hp = hp;
+        } else {
+          if (b.lp) d.lp = b.lp;
+          if (b.hp) d.hp = b.hp;
+        }
+        // noiseColor 0.5 is no noise; above it, the noise's level up to 1 (rule 5)
+        const noise = ns ? points(ns, amountAbove) : null;
+        if (noise?.some(([, v]) => v > 0)) d.noise = noise;
+        return d;
+      };
+      lanes.effect = { unit, out: deck('from', base.out), in: deck('to', base.in) };
+      if (c.filter.from?.resonance || c.filter.to?.resonance) lost.notCarried.add('filter resonance');
+    }
+    if (c.fx) {
+      const base = shape('fx', lanes.fx);
+      const deck = (dk, b) => {
+        const e = c.fx[dk];
+        if (!e?.echo && !e?.reverb && !e?.delay) return b;
+        const out = {};
+        for (const k of ['echo', 'reverb', 'delay']) {
+          const pts = e[k] ? points(e[k], amount) : null;
+          if (pts?.some(([, v]) => v > 0)) out[k] = pts;
+        }
+        return out;
+      };
+      const t = FX_SHAPES[lanes.fx];
+      lanes.fx = { unit, out: deck('from', base.out), in: deck('to', base.in), ...(t?.send === 'echoSend' ? { echoBeats: t.beats } : t?.send === 'delaySend' ? { delayBeats: t.beats } : {}) };
+    }
+    for (const k of OPTIONAL_LANES) if (lanes[k] === 'none') delete lanes[k];
+    const gridBpm = m.fromBpm > 0 ? m.fromBpm : bars ? (bars * 4 * 60) / D : null;
+    // each song's speed in the playlist (rule 10: f18 A's, f19 B's; missing is 1)
+    const speed = normalizeSpeed({ out: m.f18, in: m.f19 });
+
+    return mixOverride({
+      v: 1, preset: 'custom', lanes,
+      ...(bars ? { bars } : { beatMatch: 'off' }),
+      // B's start: none or a negative one → from 0, with the mix (rule 3)
+      window: { out: { sec: r3(m.fromStartMs / 1000) }, in: { sec: r3((ms(m.toStartMs) ?? 0) / 1000) } },
+      ...(gridBpm ? { gridBpm } : {}),
+      ...(speed ? { speed } : {}),
+    });
+  }
+  // entries: [{ from: { videoId, title?, artist? }, to, override }] (an invalid one is left out)
+  function writeMixFile(entries) {
+    const mixes = [];
+    for (const e of entries || []) {
+      const from = mixSong(e?.from), to = mixSong(e?.to), override = mixOverride(e?.override);
+      if (from && to && override) mixes.push({ from, to, override });
+    }
+    return { format: MIX_FORMAT, version: MIX_VERSION, mixes };
+  }
+  const speedText = (sp) => (sp ? `A x${sp.out ?? 1} B x${sp.in ?? 1}` : 'x1');
+  // What replacing a saved override with another changes, one line per field
+  function mixChanges(was, now) {
+    const a = mixOverride(was) || {}, b = mixOverride(now) || {};
+    const lane = (o, k) => (o.preset !== 'custom' ? (o.preset === 'loop' ? 'loop' : o.preset ? o.preset + "'s" : 'auto') : o.lanes?.[k] == null ? 'none' : typeof o.lanes[k] === 'string' ? o.lanes[k] : 'drawn');
+    // (a position in seconds only, editor.md §6, as its time: "218.142 s")
+    const pos = (p) => (p ? `${Number.isInteger(p.bar) ? `bar ${p.bar}${p.beat ? '.' + (p.beat + 1) : ''}` : `${p.sec} s`}${p.nudgeMs ? ` ${p.nudgeMs > 0 ? '+' : ''}${p.nudgeMs} ms` : ''}` : null);
+    const rows = [
+      ['preset', a.preset || 'auto', b.preset || 'auto'],
+      ...['volume', 'eq', 'effect', 'fx', 'looping'].map((k) => [k === 'fx' ? 'effects' : k, lane(a, k), lane(b, k)]),
+      ['length', a.bars ? a.bars + ' bars' : 'auto', b.bars ? b.bars + ' bars' : 'auto'],
+      ['beat match', a.beatMatch || 'auto', b.beatMatch || 'auto'],
+      ['speed', speedText(a.speed), speedText(b.speed)],
+      ['mix-out', pos(a.window?.out) || 'auto', pos(b.window?.out) || 'auto'],
+      ['mix-in', pos(a.window?.in) || 'auto', pos(b.window?.in) || 'auto'],
+      ['lock', a.lock ? 'on' : 'off', b.lock ? 'on' : 'off'],
+    ];
+    const out = [];
+    for (const [k, x, y] of rows) {
+      // (the Effects lane only when a side has one: most mixes have none)
+      if (k === 'effects' && !a.lanes?.fx && !b.lanes?.fx) continue;
+      if (k === 'looping' && !a.lanes?.looping && !b.lanes?.looping) continue;
+      const lk = k === 'effects' ? 'fx' : k;
+      const same = x === y && !(x === 'drawn' && stable(a.lanes?.[lk]) !== stable(b.lanes?.[lk]));
+      if (!same) out.push(`${k}: ${x} → ${x === 'drawn' && y === 'drawn' ? 'another drawing' : y}`);
+    }
+    return out;
+  }
+  // The file's mixes against the saved overrides (key → override): new, replacing one (with its
+  // changes), or the same as saved
+  function importPlan(mixes, saved) {
+    const add = [], replace = [], same = [];
+    for (const m of mixes || []) {
+      const was = saved?.[m.key] ? migratePick(saved[m.key]) : null;
+      if (!was || !normalizeOverride(was)) add.push(m);
+      else if (sameMix(was, m.override)) same.push(m);
+      else replace.push({ ...m, changes: mixChanges(was, m.override) });
+    }
+    return { add, replace, same };
+  }
+  // "Play these mixes" (mix-file.md rule 7): the file's songs in its order, each mix's from then to; a
+  // song that is already next in line isn't added twice (A→B, B→C plays A, B, C)
+  function mixQueue(mixes) {
+    const ids = [];
+    for (const m of mixes || []) {
+      for (const id of [m?.from?.videoId, m?.to?.videoId]) if (VIDEO_ID.test(id || '') && ids[ids.length - 1] !== id) ids.push(id);
+    }
+    return ids;
   }
   // The window's limits as the planner clamps them (editor.md §6), in song seconds: A's mix-out from
   // the earliest it can still start (with the tempo ramp before a blend) to where the window ends with
@@ -505,6 +921,22 @@
     const lo = Math.max(0, earliest || 0) + (blend ? m.rampSongSec || 0 : 0);
     const hi = blend ? Math.min(end, dur - 0.3) - outSpan : end - 0.3 - outSpan;
     return { out: [lo, Math.max(lo, hi)], in: [0, Math.max(0, (to?.durationSec || 0) - 10 - inSpan)] };
+  }
+  // A 10 ms nudge of one side's window position (editor.md §6): { pos } or { refused: 'max' | 'lo' | 'hi' }.
+  // A nudge stops at ±2 s of nudges and at the window's limits ([lo, hi] from windowLimits), as a drag
+  // does: past a limit the planner clamps it back, so the nudge would save a position that never plays.
+  // A nudge back towards the limits from outside them is allowed.
+  const NUDGE_STEP_MS = 10, NUDGE_MAX_MS = 2000;
+  function nudgeWindow(pos, dir, limits) {
+    const n = (pos.nudgeMs || 0) + dir * NUDGE_STEP_MS;
+    if (Math.abs(n) > NUDGE_MAX_MS) return { refused: 'max' };
+    const sec = Math.round((pos.sec + dir * NUDGE_STEP_MS / 1000) * 1000) / 1000;
+    const [lo, hi] = limits || [-Infinity, Infinity];
+    if (dir < 0 && sec < lo - 1e-6) return { refused: 'lo' };
+    if (dir > 0 && sec > hi + 1e-6) return { refused: 'hi' };
+    const out = { ...pos, nudgeMs: n, sec };
+    if (!out.nudgeMs) delete out.nudgeMs;
+    return { pos: out };
   }
   // A song's grid as the editor snaps to it: the playing song's end grid ('out'), the next song's opening ('in')
   function editorGrid(a, side) {
@@ -574,8 +1006,10 @@
       warnings.push('the next song has no beat grid: plays without beat match');
       return overlap(cur, next, fromGrid, pick, earliest, 'next song has no beat grid', warnings);
     }
+    // the tempos as they play: each BPM x its song's speed (spotify-mixes.md rule 10)
+    const playedRatio = (g1, g2) => foldRate((g1.bpm * (planSpeed?.out || 1)) / (g2.bpm * (planSpeed?.in || 1)));
     if (bm === 'sync' || bm === 'glide') {
-      const st = stretchOf(foldRate(fromGrid.bpm / toGrid.bpm));
+      const st = stretchOf(playedRatio(fromGrid, toGrid));
       if (st > V2_MAX_STRETCH) {
         const why = `tempos ${Math.round(st * 100)}% apart: ${bm === 'sync' ? 'Sync' : 'Glide'} stretches at most ${Math.round(V2_MAX_STRETCH * 100)}%, so this plays without beat match`;
         warnings.push(why);
@@ -589,7 +1023,7 @@
     if (v3 && (!toGrid || next.gridConfidence < MIN_GRID_CONFIDENCE)) return handoff(cur, next, earliest, 'next song has no beat grid');
     if (!toGrid || next.gridConfidence < MIN_GRID_CONFIDENCE) return filterMix(cur, next, fromGrid, null, requestedBars(cur, next, fromGrid, 0, true), pos, earliest, 'next song has no beat grid');
 
-    const ratio = foldRate(fromGrid.bpm / toGrid.bpm);
+    const ratio = playedRatio(fromGrid, toGrid);
     // v2: never more than V2_MAX_STRETCH of speed-up (Orchard: 6% fine, 11.8% forced),
     // and never two 808 styles at once; either way it can't beatmatch, so it does nothing
     if (v3 && stretchOf(ratio) > V2_MAX_STRETCH) {
@@ -620,15 +1054,24 @@
     // is brought up to its tempo over its last beats before the blend and the
     // next song plays at its own speed. The next song slower: it is sped up.
     // Automix v2: over 4% apart, a glide on both songs instead (glideSteps)
-    const glideQ = bm === 'sync' ? null : bm === 'glide' ? (Math.abs(ratio - 1) > 1e-4 ? 1 / ratio : null) : v3 && stretchOf(ratio) > V2_MAX_CONSTANT ? 1 / ratio : null;
-    const rate = glideQ ? 1 : ratio < 1 ? 1 : ratio;               // the next song's
-    const outRate = glideQ ? 1 : ratio < 1 ? 1 / ratio : 1;        // the playing song's, from the blend on
-    const rampBeats = outRate > 1.0001 ? Math.ceil((outRate - 1) / TEMPO_STEP_PER_BEAT) : 0;
+    // (each song's speed from its playlist, spotify-mixes.md rule 10: A at its speed with no ramp or glide,
+    // B at its speed times what is left between the played tempos, gliding back to its speed after the
+    // mix; this one may slow a song)
+    const sp = planSpeed;
+    const glideQ = sp ? null : bm === 'sync' ? null : bm === 'glide' ? (Math.abs(ratio - 1) > 1e-4 ? 1 / ratio : null) : v3 && stretchOf(ratio) > V2_MAX_CONSTANT ? 1 / ratio : null;
+    const rate = sp ? sp.in * ratio : glideQ ? 1 : ratio < 1 ? 1 : ratio;               // the next song's
+    const outRate = sp ? sp.out : glideQ ? 1 : ratio < 1 ? 1 / ratio : 1;        // the playing song's, from the blend on
+    const rampBeats = !sp && outRate > 1.0001 ? Math.ceil((outRate - 1) / TEMPO_STEP_PER_BEAT) : 0;
     const rampSongSec = rampBeats * fromGrid.beatSec;  // song time the ramp covers, ending at the mix-out
     // AutoDJ's key-aware length (its own toggle): keys that clash get a short blend
     // (Automix v2: Orchard's key score, always on: under 0.55 with both keys trusted)
     const keyClash = v3 ? (harmonic.short ? `${cur.keyName} → ${next.keyName}, ${harmonic.score}` : null) : adv() && keyAware ? keysClash(cur, next) : null;
-    const bars = keyClash && !pinnedBars ? keyClashBars(fromGrid) : requestedBars(cur, next, fromGrid, toGrid.downbeatSec, false);
+    // the curator blend: only Auto's own blend on Automix v2, nothing picked or set for its length,
+    // keys both trusted and not clashing, a song of 2 min or more (fallbacks 1 and 3; 2 is below)
+    const curator = curatorAsk && v3 && !forced && !pinnedBars && barsSetting === 'auto' && !pick?.window?.out && !pick?.window?.in
+      && !keyClash && (harmonic?.confidence ?? 0) >= TRUSTED_KEY && musicEnd(cur).durationSec >= CURATOR_MIN_SONG_SEC;
+    const usual = () => { curatorAsk = false; return planFor({ fromId, toId, from, to, durationSec, pos, earliest, pick, warnings }); };
+    const bars = curator ? CURATOR_BARS : keyClash && !pinnedBars ? keyClashBars(fromGrid) : requestedBars(cur, next, fromGrid, toGrid.downbeatSec, false);
     const effBars = effectiveBlendBars(bars, cur.gridConfidence, next.gridConfidence);
     const outSpan = effBars * fromGrid.barSec;        // the playing song's seconds the blend covers
     const glide = glideQ ? glideSteps(glideQ, effBars * 4, fromGrid.beatSec) : null;
@@ -640,8 +1083,14 @@
     const v2 = adv();
     let mixOut = naturalMixOut(fromGrid, v2 ? musicEnd(cur) : cur, outSpan);
     // Automix v2: where the blend sits, from the playing song's own shape (versions.md "Where the blend sits")
-    const anchor = v3 && !forced ? anchoredMixOut(cur, fromGrid, outSpan, Math.max(first, pos + rampSongSec)) : null;
+    const anchor = v3 && !forced && !curator ? anchoredMixOut(cur, fromGrid, outSpan, Math.max(first, pos + rampSongSec)) : null;
     if (anchor) mixOut = anchor.mixOut;
+    if (curator) {
+      // the downbeat (on the song's end grid) nearest 31 s before its music ends; too early to reach: the usual blend
+      const t = musicEnd(cur).durationSec - CURATOR_LEAD_SEC;
+      mixOut = fromGrid.downbeatSec + Math.round((t - fromGrid.downbeatSec) / fromGrid.barSec) * fromGrid.barSec;
+      if (mixOut < Math.max(first, pos + rampSongSec)) return usual();
+    }
     if (mixOut < pos + rampSongSec) mixOut = phraseAtOrAfter(fromGrid, first);   // too late for the natural point: the next phrase
     if (mixOut < first) mixOut = downbeatAtOrAfter(fromGrid, first);
     // the editor's window (editor.md §6): A's mix-out on A's end grid, clamped to what can still play
@@ -670,7 +1119,14 @@
       mixIn = clampWindow(wIn.sec, 0, Math.max(0, next.durationSec - 10 - outSpan * inPerOut), 'the mix-in', warnings, toGrid);
       if (wIn.moved) warnings.push('the mix-in moved with a new beat grid');
     }
-    if (v2 && !wIn && !wOut) {
+    if (curator) {
+      // B comes in as the planner places it (its cue, at most a quarter in); both singing over more
+      // than V2_CLASH_MAX of the 8 bars, or no intro to blend over: the usual blend (fallback 2)
+      mixIn = capIncomingSkip(next, toGrid, mixIn);
+      const clash = vocalOverlap(cur, next, mixOut, outSpan, mixIn, inPerOut, { out: lyricSpans(cur), in: lyricSpans(next) }) ?? 0;
+      if (introShort || clash > V2_CLASH_MAX) return usual();
+      dj = { clash, rerouted: null, by: null, mixOut, mixIn };
+    } else if (v2 && !wIn && !wOut) {
       mixIn = capIncomingSkip(next, toGrid, mixIn);
       dj = rerouteForVocals(cur, next, fromGrid, toGrid, mixOut, mixIn, outSpan, inPerOut, Math.max(first, pos + rampSongSec));
       mixOut = dj.mixOut;
@@ -712,7 +1168,7 @@
           reason: `${why}: a drop-in on the next song's first beat${k ? ` (exit ${k} bar${k === 1 ? '' : 's'} earlier, off a sung line)` : ''}`,
           v2, clash: both ?? 0, rerouted: null, vocalsBy: dj?.by ?? null, keyClash,
           subBassContrast: contrast, swapAt: null, swapMoved: null, glide: dGlide ? { q: glideQ, beats: DROP_IN_BARS * 4, beatOutSec: fromGrid.beatSec } : null,
-          harmonic, trim: loudnessTrim(cur, o, dSpan, next, toGrid.downbeatSec, dSpan * inPerOut),
+          harmonic, trim: dropInTrim(loudnessTrim(cur, o, dSpan, next, toGrid.downbeatSec, dSpan * inPerOut)),
           mixOutTrackTime: o, durationSec: dDur, mixInTrackTime: toGrid.downbeatSec, rate: dGlide ? dGlide.inRate[0] : rate,
           outRate, rampBeats, rampSongSec, beatSec: fromGrid.beatSec,
           bars: DROP_IN_BARS, swapDb: SHORT_BLEND_KILL_DB,
@@ -743,6 +1199,7 @@
       ...(shape ? { shape, muffleLead } : {}),
       v2, clash: dj?.clash ?? 0, rerouted: dj?.rerouted ?? null, vocalsBy: dj?.by ?? null, keyClash,
       ...(anchor ? { anchor: { kind: anchor.kind, sec: anchor.sec, score: anchor.score } } : {}),
+      ...(curator ? { curator: true } : {}),
       glide: glide ? { q: glideQ, beats: effBars * 4, beatOutSec: fromGrid.beatSec } : null,
       ...(v3 ? { subBassContrast: contrast, swapAt: swap?.at ?? null, swapMoved: swap?.moved ?? null,
         harmonic, trim: loudnessTrim(cur, mixOut, outSpan, next, mixIn, outSpan * inPerOut) } : {}),
@@ -1042,7 +1499,6 @@
   // loop): the blend has to win by about as much as a fifth of a blend sung by
   // both songs, or a key score 0.19 worse on the loop's side.
   const LOOP_MARGIN = 0.02;
-  const LOOP_PHRASE_BONUS = 0.01;   // B's loop starts on a 4-bar phrase line (versions.md "Loop on the blend's bars")
   function loopOrBlend(blend, loop) {
     if (version !== 3 || !loop || loop.none) return { loop: !!loop && !loop.none };
     if (!blend || blend.fallback || blend.style !== 'blend' || blend.shape) return { loop: true, why: 'the blend fell back' };
@@ -1050,7 +1506,7 @@
     const length = (beats) => (beats === 16 ? 1 : beats === 8 ? 0.85 : beats === 32 ? 0.75 : 0.65);
     const score = (clash, keys, beats) => 0.82 * (0.15 * vocal(clash) + 0.13 * keys + 0.02 * length(beats));
     const b = score(blend.clash || 0, blend.harmonic?.score ?? 0.5, blend.bars * 4);
-    const l = score(Math.min(loop.out.vocal ?? 0, loop.in.vocal ?? 0), 1, loop.totalBars * 4) + (loop.in.phrase ? LOOP_PHRASE_BONUS : 0);
+    const l = score(Math.min(loop.out.vocal ?? 0, loop.in.vocal ?? 0), 1, loop.totalBars * 4);
     const r = (v) => Math.round(v * 1e4) / 1e4;
     return { loop: b < l + LOOP_MARGIN, why: `loop ${r(l)} vs blend ${r(b)} (the blend needs ${LOOP_MARGIN} more)` };
   }
@@ -1210,12 +1666,13 @@
 
   // Sung or not at song second t: 1/0 from lyric lines when the song has
   // them, else the vocal mask (open-unmix, 0..1 per ~23 ms frame); null
-  // where neither knows.
+  // where neither knows. A mask value that isn't a number doesn't know either
+  // (NaN gets past clamp's Math.min/Math.max, and voiceRisk read it as sung).
   function vocalAt(a, t, spans = null) {
     if (spans) return spans.some(([x, y]) => t >= x && t < y) ? 1 : 0;
     for (const w of a.vocals ?? []) {
       const i = Math.round((t - w.startSec) * w.fps);
-      if (i >= 0 && i < w.curve.length) return w.curve[i];
+      if (i >= 0 && i < w.curve.length) return Number.isFinite(w.curve[i]) ? w.curve[i] : null;
     }
     return null;
   }
@@ -1355,7 +1812,7 @@
     return true;
   }
   // Prism MixMoves.pick: an effect move isn't heard a third time running (versions.md "No effect
-  // three times in a row"). The mixes as heard (crossfade.js reports each at its hand-over), the last 16.
+  // three times in a row"). The mixes as heard (crossfade.js finishLive reports each mix that played, at its end), the last 16.
   const RECENT_MOVES = 16, EFFECT_MOVES = ['filter', 'echo', 'dropin', 'muffle'];
   const recentMoves = [];
   const moveOf = (p) => (!p ? null : p.style === 'filter' ? 'filter' : p.style === 'loop' ? 'loop' : p.style === 'blend' ? p.shape || 'blend' : 'crossfade');
@@ -1486,7 +1943,8 @@
   // the mix-out, or the outgoing loop's start), held before its first point and
   // after its last; linear between points (Hz: geometric), a step is two
   // points at one t. A curve that is absent stays neutral.
-  const clamp = (x, lo, hi) => Math.min(hi, Math.max(lo, x));
+  // (a value that is not a number reads as lo: Math.max/min let NaN through, and a NaN filter aim throws in setValueAtTime)
+  const clamp = (x, lo, hi) => (Number.isNaN(x) ? lo : Math.min(hi, Math.max(lo, x)));
   const glideTo = (a, b, x) => a * Math.pow(b / a, clamp(x, 0, 1));
   const bassCutHz = (x) => glideTo(20, 200, x);
   const entryHp = (p, top, openBy) => (p >= openBy ? 20 : glideTo(20, top, Math.pow(1 - p / openBy, 0.35)));
@@ -1643,20 +2101,45 @@
   // A preset's (or custom lanes') curves over a window of D seconds, editor.md §3: points at a
   // fraction x of the window, given here in seconds. beatSec: the beat (null with beat match Off).
   const EDITOR_CUT_DB = -18 /* BASS_CUT_DB, declared further down */, LP_CLOSED = 400, HP_CLOSED = 1000, CUT_RAMP_SEC = 0.008;
+  // Spotify's presets, as its mix editor shows them (editor.md §2); `smooth` is Spotify's Fade
   const PRESET_LANES = {
     smooth: { volume: 'smooth', eq: 'centerBassSwap', effect: 'none' },
     rise: { volume: 'overlap', eq: 'endBassSwap', effect: 'lpInHpOut' },
-    blend: { volume: 'overlap', eq: 'threeBandFade', effect: 'none' },
     wave: { volume: 'overlap', eq: 'centerBassSwap', effect: 'lpBoth' },
-    melt: { volume: 'crossfade', eq: 'centerBassSwap', effect: 'hpBoth' },
+    blend: { volume: 'overlap', eq: 'threeBandFade', effect: 'none' },
     slam: { volume: 'centerCut', eq: 'none', effect: 'none' },
+    melt: { volume: 'fadeInFadeOut', eq: 'centerBassSwap', effect: 'hpBoth' },
+    afterglow: { volume: 'smooth', eq: 'centerBassSwap', effect: 'none', fx: 'reverbOutCenter' },
+    surge: { volume: 'fadeInCutOut', eq: 'endBassSwap', effect: 'hpHalfOut', fx: 'reverbOutEnd' },
+    dissolve: { volume: 'fadeInCutOut', eq: 'endBassSwap', effect: 'hpHalfOut', fx: 'echoHalfOutEnd' },
   };
-  const PRESET_BARS = { slam: 2 };
-  const PRESET_NAMES = ['smooth', 'rise', 'blend', 'wave', 'melt', 'slam', 'loop', 'custom'];
+  const PRESET_BARS = {};   // (no preset sets a length: Spotify's show the pair's own)
+  // none: Spotify's No transition, the playing song to its end and the next from its start
+  const PRESET_NAMES = ['smooth', 'rise', 'wave', 'blend', 'slam', 'melt', 'afterglow', 'surge', 'dissolve', 'none', 'loop', 'custom'];
   const LANE_VALUES = {
-    volume: ['smooth', 'crossfade', 'overlap', 'cutInFadeOut', 'fadeInCutOut', 'centerCut'],
-    eq: ['centerBassSwap', 'endBassSwap', 'threeBandFade', 'quickBassCut', 'none'],
-    effect: ['none', 'lpOut', 'hpIn', 'lpBoth', 'hpBoth', 'lpInHpOut'],
+    volume: ['smooth', 'crossfade', 'overlap', 'cutInFadeOut', 'fadeInCutOut', 'centerCut', 'fadeInFadeOut', 'fadeInFastOut', 'fadeIn1BarCutOut', 'overlap1BarCutOut'],
+    eq: ['centerBassSwap', 'endBassSwap', 'threeBandFade', 'quickBassCut', 'none', 'startBassSwap', 'longBassCut', 'bassFadeOut'],
+    effect: ['none', 'lpOut', 'hpIn', 'lpBoth', 'hpBoth', 'lpInHpOut', 'hpOut', 'lpIn', 'hpInLpOut', 'hpHalfOut', 'noiseOutEnd'],
+    // editor.md §13: A loops its first N beats of the window (a shape only, never drawn)
+    looping: ['none', 'loop1', 'loop2', 'loop4', 'loop8', 'loop16'],
+    fx: ['none', 'echo1CutEnd', 'echo34CutEnd', 'echoHalfCutEnd', 'echo1OutEnd', 'echo34OutEnd', 'echoHalfOutEnd', 'delay34CutEnd', 'delayHalfCutEnd', 'reverbCutEnd', 'reverbOutEnd', 'reverbOutCenter'],
+  };
+  // editor.md §12 rule 4: the Effects shapes, a send on the outgoing deck (x a fraction of the window)
+  const FX_CUT = [[0.75, 0], [1, 0.5]], FX_OUT = [[0.5, 0], [1, 0.5]];
+  const FX_SHAPES = {
+    echo1CutEnd: { send: 'echoSend', curve: FX_CUT, beats: 1 }, echo34CutEnd: { send: 'echoSend', curve: FX_CUT, beats: 0.75 }, echoHalfCutEnd: { send: 'echoSend', curve: FX_CUT, beats: 0.5 },
+    echo1OutEnd: { send: 'echoSend', curve: FX_OUT, beats: 1 }, echo34OutEnd: { send: 'echoSend', curve: FX_OUT, beats: 0.75 }, echoHalfOutEnd: { send: 'echoSend', curve: FX_OUT, beats: 0.5 },
+    delay34CutEnd: { send: 'delaySend', curve: FX_CUT, beats: 0.75 }, delayHalfCutEnd: { send: 'delaySend', curve: FX_CUT, beats: 0.5 },
+    reverbCutEnd: { send: 'reverbSend', curve: FX_CUT }, reverbOutEnd: { send: 'reverbSend', curve: FX_OUT },
+    reverbOutCenter: { send: 'reverbSend', curve: [[0.25, 0], [0.5, 0.5], [0.75, 0]] },
+  };
+  const FX_ECHO_BEATS = 0.75, FX_DELAY_BEATS = 0.5;
+  const OPTIONAL_LANES = ['fx', 'looping'];
+  const LOOP_BEATS = { loop1: 1, loop2: 2, loop4: 4, loop8: 8, loop16: 16 };
+  // the echo's and the delay's time in seconds (§12 rule 3)
+  const fxTime = (echoBeats, delayBeats, beatSec) => {
+    const b = beatSec > 0 ? beatSec : 0.5, r6 = (v) => Math.round(v * 1e6) / 1e6;
+    return { echoSec: r6((echoBeats || FX_ECHO_BEATS) * b), delaySec: r6((delayBeats || FX_DELAY_BEATS) * b) };
   };
   // draw: { beatSec, glide } for drawn lanes (editor.md §10 rule 4; default: beatSec, no glide)
   function presetCurves(override, D, beatSec, draw = null) {
@@ -1674,6 +2157,7 @@
         if (!drawn(k)) continue;
         for (const side of ['out', 'in']) for (const key of DRAW_KEYS[k]) { if (pc[side][key]) base[side][key] = pc[side][key]; else delete base[side][key]; }
       }
+      if (drawn('fx')) base.fxTime = fxTime(lanes.fx.echoBeats, lanes.fx.delayBeats, draw?.beatSec ?? beatSec);
       return base;
     }
     const e = CUT_RAMP_SEC / D, hb = beatSec > 0 ? (0.5 * beatSec) / D : 0.02, C = EDITOR_CUT_DB;
@@ -1681,6 +2165,8 @@
     const at = (pts) => pts.map(([x, v]) => [r4(x * D), r4(v)]);
     const out = {}, inn = {};
     const ramp17 = (f) => Array.from({ length: 17 }, (_, i) => [i / 16, f((i / 16) * Math.PI / 2)]);
+    // §3: the "1 bar cut out" shapes cut A one bar (4 beats) before the end; no beat known: at 7/8
+    const bar1 = beatSec > 0 ? Math.max(0.5, 1 - (4 * beatSec) / D) : 0.875;
     switch (lanes.volume) {
       case 'smooth': out.gain = at(ramp17(Math.cos)); inn.gain = at(ramp17(Math.sin)); break;
       case 'crossfade': out.gain = at([[0, 1], [1, 0]]); inn.gain = at([[0, 0], [1, 1]]); break;
@@ -1688,6 +2174,11 @@
       case 'cutInFadeOut': out.gain = at([[0, 1], [1, 0]]); inn.gain = at([[0, 0], [e, 1]]); break;
       case 'fadeInCutOut': out.gain = at([[0, 1], [1 - e, 1], [1, 0]]); inn.gain = at([[0, 0], [1, 1]]); break;
       case 'centerCut': out.gain = at([[0, 1], [0.5, 1], [0.5 + e, 0]]); inn.gain = at([[0, 0], [0.5, 0], [0.5 + e, 1]]); break;
+      // (Spotify's names, editor.md §3: its own shapes aren't known, these are this app's)
+      case 'fadeInFadeOut': out.gain = at([[0, 1], [0.5, 1], [1, 0]]); inn.gain = at([[0, 0], [0.5, 1]]); break;
+      case 'fadeInFastOut': out.gain = at([[0, 1], [0.75, 1], [1, 0]]); inn.gain = at([[0, 0], [0.75, 1]]); break;
+      case 'fadeIn1BarCutOut': out.gain = at([[0, 1], [bar1, 1], [bar1 + e, 0]]); inn.gain = at([[0, 0], [0.5, 1]]); break;
+      case 'overlap1BarCutOut': out.gain = at([[0, 1], [bar1, 1], [bar1 + e, 0]]); inn.gain = at([[0, 0], [e, 1]]); break;
       default: return null;
     }
     const swap = (c) => { out.bassDb = at([[c - hb, 0], [c + hb, C]]); inn.bassDb = at([[0, C], [c - hb, C], [c + hb, 0]]); };
@@ -1696,6 +2187,10 @@
       case 'endBassSwap': swap(0.875); break;
       case 'threeBandFade': swap(0.5); out.highDb = at([[0.5, 0], [1, C]]); inn.highDb = at([[0, C], [0.5, 0]]); break;
       case 'quickBassCut': out.bassDb = at([[0, 0], [2 * hb, C]]); break;
+      case 'startBassSwap': swap(0.125); break;
+      case 'longBassCut': out.bassDb = at([[0, 0], [0.5, C]]); break;
+      // A's bass eases out over the first half (an S-curve), B's stays full
+      case 'bassFadeOut': out.bassDb = at(Array.from({ length: 17 }, (_, i) => [i / 32, (C * (1 - Math.cos((i / 16) * Math.PI))) / 2])); break;
       case 'none': break;
       default: return null;
     }
@@ -1706,21 +2201,40 @@
       case 'lpBoth': out.lowpassHz = at([[0.5, 20000], [1, LP_CLOSED]]); inn.lowpassHz = at([[0, LP_CLOSED], [0.5, 20000]]); break;
       case 'hpBoth': out.highpassHz = at([[0.5, 20], [1, HP_CLOSED]]); inn.highpassHz = at([[0, HP_CLOSED], [0.5, 20]]); break;
       case 'lpInHpOut': out.highpassHz = at([[0, 20], [1, HP_CLOSED]]); inn.lowpassHz = at([[0, LP_CLOSED], [1, 20000]]); break;
+      case 'hpOut': out.highpassHz = at([[0, 20], [1, HP_CLOSED]]); break;
+      case 'lpIn': inn.lowpassHz = at([[0, LP_CLOSED], [1, 20000]]); break;
+      case 'hpInLpOut': out.lowpassHz = at([[0, 20000], [1, LP_CLOSED]]); inn.highpassHz = at([[0, HP_CLOSED], [1, 20]]); break;
+      case 'hpHalfOut': out.highpassHz = at([[0.5, 20], [1, HP_CLOSED]]); break;
+      case 'noiseOutEnd': out.noise = at([[0.5, 0], [1, 1]]); break;
       default: return null;
     }
-    return { durationSec: r4(D), out, in: inn };
+    // the Effects lane (§12; missing: none)
+    const fx = lanes.fx ?? 'none';
+    if (fx !== 'none' && !FX_SHAPES[fx]) return null;
+    const fs = FX_SHAPES[fx];
+    if (fs) out[fs.send] = at(fs.curve);
+    // the Looping lane (§13; missing: none): N beats of A, looped by the engine
+    const lo = lanes.looping ?? 'none';
+    if (lo !== 'none' && !LOOP_BEATS[lo]) return null;
+    return { durationSec: r4(D), out, in: inn, ...(fs ? { fxTime: fxTime(fs.send === 'echoSend' ? fs.beats : 0, fs.send === 'delaySend' ? fs.beats : 0, beatSec) } : {}),
+      ...(LOOP_BEATS[lo] ? { loopBeats: LOOP_BEATS[lo] } : {}) };
   }
 
   // ───────── drawn curves (editor.md §10) ─────────
   const DRAW_MAX_POINTS = 128;   // 20 gates of 4 points (a stutter) fit
   // a lane's plan curves, and each drawn curve's name in the stored deck and its range
-  const DRAW_KEYS = { volume: ['gain'], eq: ['bassDb', 'highDb'], effect: ['lowpassHz', 'highpassHz'] };
+  const DRAW_KEYS = { volume: ['gain'], eq: ['bassDb', 'midDb', 'highDb'], effect: ['lowpassHz', 'highpassHz', 'noise'], fx: ['echoSend', 'reverbSend', 'delaySend'] };
   const DRAW_CURVES = {
     gain: { lane: 'volume', name: null, lo: 0, hi: 1, hz: false },
     bassDb: { lane: 'eq', name: 'bass', lo: EDITOR_CUT_DB, hi: 0, hz: false },
     highDb: { lane: 'eq', name: 'high', lo: EDITOR_CUT_DB, hi: 0, hz: false },
     lowpassHz: { lane: 'effect', name: 'lp', lo: 20, hi: 20000, hz: true },
     highpassHz: { lane: 'effect', name: 'hp', lo: 20, hi: 20000, hz: true },
+    midDb: { lane: 'eq', name: 'mid', lo: EDITOR_CUT_DB, hi: 0, hz: false },
+    noise: { lane: 'effect', name: 'noise', lo: 0, hi: 1, hz: false },
+    echoSend: { lane: 'fx', name: 'echo', lo: 0, hi: 1, hz: false },
+    reverbSend: { lane: 'fx', name: 'reverb', lo: 0, hi: 1, hz: false },
+    delaySend: { lane: 'fx', name: 'delay', lo: 0, hi: 1, hz: false },
   };
   const deckCurve = (drawing, side, key) => { const c = DRAW_CURVES[key], d = drawing?.[side]; return c.name ? d?.[c.name] : d; };
   // rule 4: x (beats of A, or seconds) -> seconds of the mix. glide: the plan's { q, beats, beatOutSec }.
@@ -1812,12 +2326,16 @@
         out[side] = deck;
       }
     }
+    if (lane === 'fx') {
+      if ([1, 0.75, 0.5].includes(d.echoBeats)) out.echoBeats = d.echoBeats;
+      if ([0.75, 0.5].includes(d.delayBeats)) out.delayBeats = d.delayBeats;
+    }
     return any ? out : 'none';
   }
   // rule 6: a named shape as a drawing, so "Draw" starts from the shape. The shape's curves read
   // back to x; an 8 ms ramp read back as a step (two points at one x).
   function shapeDrawing(lane, shape, D, beatSec, glide, unit) {
-    const pc = presetCurves({ preset: 'custom', lanes: { volume: 'crossfade', eq: 'none', effect: 'none', [lane]: shape } }, D, beatSec);
+    const pc = presetCurves({ preset: 'custom', lanes: { volume: 'crossfade', eq: 'none', effect: 'none', fx: 'none', [lane]: shape } }, D, beatSec);
     if (!pc) return null;
     const r3 = (v) => Math.round(v * 1e3) / 1e3;
     const toX = (pts) => {
@@ -1833,6 +2351,9 @@
         for (const key of DRAW_KEYS[lane]) if (pc[side][key]) d[side][DRAW_CURVES[key].name] = toX(pc[side][key]);
       }
     }
+    const fs = lane === 'fx' ? FX_SHAPES[shape] : null;
+    if (fs?.send === 'echoSend') d.echoBeats = fs.beats;
+    if (fs?.send === 'delaySend') d.delayBeats = fs.beats;
     return normalizeDrawing(lane, d);
   }
 
@@ -1843,6 +2364,11 @@
     if (!pos) return null;
     const nudge = (pos.nudgeMs || 0) / 1000;
     if (!grid || !(grid.beatSec > 0) || !Number.isFinite(grid.downbeatSec)) return { sec: pos.sec, moved: false, snapped: false };
+    // seconds only (no bar): the song's nearest beat, the nudges on top
+    if (!Number.isInteger(pos.bar)) {
+      const j = Math.round((pos.sec - nudge - grid.downbeatSec) / grid.beatSec);
+      return { sec: Math.round((grid.downbeatSec + j * grid.beatSec + nudge) * 1e6) / 1e6, moved: false, snapped: true };
+    }
     const bar = 4 * grid.beatSec;
     const t = grid.downbeatSec + pos.bar * bar + (pos.beat || 0) * grid.beatSec + nudge;
     if (!Number.isFinite(pos.sec) || Math.abs(t - pos.sec) <= grid.beatSec) return { sec: Math.round(t * 1e6) / 1e6, moved: false, snapped: true };
@@ -1850,7 +2376,8 @@
     return { sec: Math.round((grid.downbeatSec + k * bar) * 1e6) / 1e6, moved: true, snapped: true, bar: k };
   }
 
-  // A loop mix's curves (crossfade.js scheduleLoopMix), from its loopSchedule.
+  // A loop mix's curves (crossfade.js scheduleLoopMix), from its loopSchedule: the
+  // baseline's (versions.md "The loop mix's baseline"), no trim.
   function loopCurves(plan) {
     const x = loopSchedule(plan, 0), half = x.bar / 2;
     const steps = (changes, until) => {
@@ -1932,13 +2459,11 @@
     // outgoing: the latest instrumental loop that ends before the song does
     const outEnd = Math.min(out.durationSec - 0.5, outBuffer.duration - 0.1);
     const outFirst = Math.max(earliestOutSec, out.durationSec - OUT_SEARCH_SEC);
-    // the bar lines the blend uses: A's end grid (editorGrid 'out'), B's main grid (versions.md "Loop on the blend's bars")
-    const outGrid = editorGrid(out, 'out');
-    const outPick = firstClean((bars) => loopsBetween(out.tailBeats, outGrid?.downbeatSec ?? out.firstDownbeatSec, outGrid ? outGrid.beatSec * 4 : outBar, outFirst, outEnd, bars).reverse(), outBuffer, out.vocals ?? [], carveSung(sung.out ?? null, out), out.beatIntervalSec);
+    const outPick = firstClean((bars) => loopsBetween(out.tailBeats, out.firstDownbeatSec, outBar, outFirst, outEnd, bars).reverse(), outBuffer, out.vocals ?? [], sung.out ?? null, out.beatIntervalSec);
     if (!outPick) return { none: 'no instrumental bars near the end of the playing song' };
     // incoming: the earliest instrumental loop in its opening
     const inEnd = Math.min(IN_SEARCH_SEC + LOOP_BARS * inBar, inBuffer.duration - 20);
-    const inPick = firstClean((bars) => loopsBetween(inn.headBeats, inn.firstDownbeatSec, inBar, 0, inEnd, bars), inBuffer, inn.vocals ?? [], carveSung(sung.in ?? null, inn), inn.beatIntervalSec);
+    const inPick = firstClean((bars) => loopsBetween(inn.headBeats, inn.firstDownbeatSec, inBar, 0, inEnd, bars), inBuffer, inn.vocals ?? [], sung.in ?? null, inn.beatIntervalSec);
     if (!inPick) return { none: 'no instrumental bars in the opening of the next song' };
     // a loop's own length is its tempo: its beats exactly, bar line to bar line
     const outBeat = (outPick.end - outPick.start) / (outPick.bars * 4);
@@ -1958,12 +2483,9 @@
     const inLoopOutBars = inPick.bars / fold;
     const totalBars = Math.ceil((ENTER_BARS + rampBars + 2) / inLoopOutBars) * inLoopOutBars;
     const pick = (key, p, beatSec, bpm) => ({ key, loop: [p.start, p.end], bars: p.bars, beatSec, bpm, vocal: p.vocal, checkedBy: p.checkedBy });
-    // B's loop on a 4-bar phrase line, counted from B's first downbeat (a quarter beat either side):
-    // a small bonus in loopOrBlend (versions.md "Loop on the blend's bars" rule 3)
-    const phraseK = (inPick.start - inn.firstDownbeatSec) / (4 * inBar);
     const plan = {
       out: pick(out.fileKey, outPick, outBeat, outBpm),
-      in: { ...pick(inn.fileKey, inPick, inBeat, inBpm), phrase: Math.abs(phraseK - Math.round(phraseK)) * 16 <= 0.25 },
+      in: pick(inn.fileKey, inPick, inBeat, inBpm),
       fold, enterBars: ENTER_BARS, rampBars, exitBars: totalBars - ENTER_BARS - rampBars, totalBars,
     };
     plan.curves = loopCurves(plan);
@@ -1971,17 +2493,12 @@
   }
 
   // [bars]-bar loops in [from, to]: on the model's own downbeats where it has
-  // them (the seam is the music's bar line), else AutoMix's constant grid. A
-  // model downbeat off the grid's bar lines (over a quarter beat) isn't used:
-  // the loop starts on the same bar lines as the blend, so it can't bring the
-  // next song in half a bar off (Vaina Loca: B's model downbeats from 7.17 s on
-  // sit 2 beats after the grid's; versions.md "Loop on the blend's bars").
+  // them (the seam is the music's bar line), else AutoMix's constant grid.
   function loopsBetween(side, anchor, bar, from, to, bars) {
     const loops = [];
-    const onGrid = (t) => { const k = (t - anchor) / bar; return Math.abs(k - Math.round(k)) * bar <= bar / 16; };
-    const downs = side?.downbeats?.filter(onGrid) ?? [];
-    if (side && downs.length >= bars + 1) {
+    if (side && side.downbeats.length >= bars + 1) {
       const beat = 60 / side.bpm;
+      const downs = side.downbeats;
       for (const start of downs) {
         if (start < from) continue;
         const target = start + bars * 4 * beat;
@@ -2026,23 +2543,26 @@
   }
 
   // How much of [from, to) the vocal mask calls sung, and its longest sung run; null when it covers under 80%.
+  // (a frame that isn't a number covers nothing: NaN isn't over VOCAL_ACTIVE, so it read as instrumental)
   function maskStats(windows, from, to) {
     let sung = 0, n = 0, covered = 0, run = 0, longest = 0, fps = 1;
     for (const w of windows) {
       const a = Math.max(0, Math.ceil((from - w.startSec) * w.fps));
       const b = Math.min(w.curve.length, Math.floor((to - w.startSec) * w.fps));
+      let k = 0;
       for (let i = a; i < b; i++) {
-        n++;
+        if (!Number.isFinite(w.curve[i])) { run = 0; continue; }
+        n++; k++;
         if (w.curve[i] > VOCAL_ACTIVE) { sung++; run++; longest = Math.max(longest, run); } else run = 0;
       }
-      if (b > a) { covered += (b - a) / w.fps; fps = w.fps; }
+      if (b > a) { covered += k / w.fps; fps = w.fps; }
     }
     return n && covered >= (to - from) * 0.8 ? { share: sung / n, longestRunSec: longest / fps } : null;
   }
 
   // A synced line's shape, without its text: start and end (s; end null when the
   // provider gives none), its word count, and its words' [start, end] when timed.
-  function lineShapes(lines) {
+  function lineShapes(lines, meta = null) {
     const shapes = [];
     for (const l of lines) {
       if (!Number.isFinite(l?.start)) continue;
@@ -2053,6 +2573,7 @@
         start: l.start / 1000,
         end: Number.isFinite(l.end) && l.end > l.start ? l.end / 1000 : null,
         words: text ? text.split(/\s+/).length : timed.length,
+        ...(notSung(text, l.start / 1000, meta) ? { notSung: true } : {}),
         wordTimes: timed.length ? timed.map((w) => [w.start / 1000, w.end / 1000]) : null,
       });
     }
@@ -2064,7 +2585,8 @@
   // 0.35 s + 0.5 s, its own end when the provider gives one, and 10 s. (Until then a
   // line without word times was sung up to the next line, 10 s at most: nearly
   // every second of a song counted as sung, and Automix v2's ladder fell to the
-  // hand-over.)
+  // hand-over.) A line with no words (0, or no count at all) and no word times is
+  // a gap, as lineShapes skips it: no span (a NaN count made a NaN span).
   const LINE_WORD_SEC = 0.35, LINE_PAD_SEC = 0.5, LINE_MAX_SEC = 10, WORD_TAIL_SEC = 0.3;
   function sungSpansFromLines(shapes) {
     const spans = [];
@@ -2073,6 +2595,7 @@
         spans.push([Math.min(...l.wordTimes.map((w) => w[0])), Math.max(...l.wordTimes.map((w) => w[1])) + WORD_TAIL_SEC]);
         return;
       }
+      if (!(l.words > 0) || !Number.isFinite(l.start)) return;
       const next = shapes.slice(i + 1).find((n) => n.start > l.start)?.start ?? Infinity;
       const end = Math.min(next, l.start + l.words * LINE_WORD_SEC + LINE_PAD_SEC, l.end ?? Infinity, l.start + LINE_MAX_SEC);
       spans.push([l.start, Math.max(end, l.start)]);
@@ -2096,7 +2619,7 @@
       const last = runs[runs.length - 1];
       if (last && x <= last[1]) last[1] = Math.max(last[1], y); else runs.push([x, y]);
     }
-    const mask = (t) => { for (const w of a.vocals) { const i = Math.round((t - w.startSec) * w.fps); if (i >= 0 && i < w.curve.length) return w.curve[i]; } return null; };
+    const mask = (t) => { for (const w of a.vocals) { const i = Math.round((t - w.startSec) * w.fps); if (i >= 0 && i < w.curve.length) return Number.isFinite(w.curve[i]) ? w.curve[i] : null; } return null; };
     for (const [x, y] of runs) {
       let from = x, gapAt = null;
       for (let t = x; t < y; t += 0.02) {
@@ -2153,13 +2676,49 @@
         new Promise((r) => setTimeout(() => r(null), LYRICS_WAIT_MS)),
       ]);
       if (!found || found.mode === 'plain' || !Array.isArray(found.lines) || !found.lines.length) return null;
-      const shapes = lineShapes(found.lines);
+      const shapes = lineShapes(found.lines, meta);
       return shapes.length ? shapes : null;
     } catch { return null; }
   }
   async function sungSpans(id) {
     const shapes = await lyricLines(id);
     const spans = shapes ? sungSpansFromLines(shapes) : [];
+    return spans.length ? spans : null;
+  }
+  // A timed line that isn't sung (versions.md "The loop mix's baseline" rule 6): a credit
+  // ("作曲: …", "Letra: …", "Lyrics by …", "Prod. …"), the song's title or artist alone,
+  // symbols only, or a start before 0. NetEase sends credits as timed lines, with no end.
+  const CREDIT_LINE = /^\s*(?:作词|作詞|作曲|编曲|編曲|词|詞|曲|制作人|製作人|监制|監製|混音|母带|母帶|和声|和聲|录音|錄音|出品|发行|發行|letra|m[uú]sica|compositor(?:es)?|autor(?:es)?|lyrics?|lyricist|written|writers?|words|music|composed|composer|composition|arranged|arrangement|arranger|produced|producers?|prod\.?|mixed|mixing|mastered|mastering|recorded|engineer(?:ed)?)\s*(?:by\b|[:：]|\s-\s)/iu;
+  const plainOf = (x) => String(x ?? '').toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+  function notSung(text, startSec, meta) {
+    if (!(startSec >= 0)) return true;
+    if (!text) return false;
+    if (!/[\p{L}\p{N}]/u.test(text)) return true;
+    if (CREDIT_LINE.test(text) || /^\s*prod\.\s/i.test(text)) return true;
+    const t = plainOf(text);
+    const names = [meta?.song, meta?.artist].map(plainOf).filter(Boolean);
+    return names.some((n) => t === n) || (names.length === 2 && t.includes(names[0]) && t.includes(names[1]));
+  }
+
+  // The loop mix's sung spans, as the baseline (d26dc16, BitChord sungSpansFromLines) reads
+  // them: each line padded 0.15 s before and 0.35 s after; a line with word times ends at its
+  // last word, one without at its own end, else at the next line, 10 s at most.
+  const LOOP_LYRIC_LEAD_SEC = 0.15, LOOP_LYRIC_TAIL_SEC = 0.35;
+  function loopSpansFromLines(shapes) {
+    const spans = [];
+    shapes.forEach((l, i) => {
+      if (!Number.isFinite(l?.start) || l.notSung) return;
+      const next = shapes.slice(i + 1).find((n) => n.start > l.start && !n.notSung)?.start;
+      const end = l.wordTimes?.length
+        ? Math.max(...l.wordTimes.map((w) => w[1]))
+        : Math.min(l.start + LINE_MAX_SEC, l.end ?? next ?? l.start + LINE_MAX_SEC);
+      spans.push([l.start - LOOP_LYRIC_LEAD_SEC, Math.max(end, l.start) + LOOP_LYRIC_TAIL_SEC]);
+    });
+    return spans;
+  }
+  async function loopSungSpans(id) {
+    const shapes = await lyricLines(id);
+    const spans = shapes ? loopSpansFromLines(shapes) : [];
     return spans.length ? spans : null;
   }
 
@@ -2242,6 +2801,7 @@
     statusOf: (id) => status.get(id) ?? null,
     progressOf,
     plan,
+    withBarPhase,
     heard,
     recentMoves: () => [...recentMoves],
     singsOut,
@@ -2253,6 +2813,9 @@
     lyricLines,
     sungSpansFromLines,
     carveSung,
+    loopSpansFromLines,
+    lineShapes,
+    loopSungSpans,
     // fixtures and tests: a song's sung spans as if its lyrics had come in (null: none)
     primeSung: (id, spans) => sungCache.set(id, { spans: Array.isArray(spans) ? spans : null, at: Date.now(), tries: 2 }),
     meta: songMeta,
@@ -2261,14 +2824,18 @@
     glideBack,
     glideSteps,
     trimmed,
+    dropInTrim,
+    DROP_IN_OUT_DB,
     kickLock,
     kickSource,
     loopOrBlend,
-    presetCurves, migratePick, normalizeOverride, editorGrid, windowLimits,
-    pointCurves, drawSec, drawX, shapeDrawing, normalizeDrawing, DRAW_MAX_POINTS,
+    presetCurves, migratePick, normalizeOverride, readMixFile, writeMixFile, mixChanges, importPlan, mixQueue, foldOverride, foldNote, MIX_FORMAT, MIX_VERSION, SPOTIFY_FORMAT, SPOTIFY_VERSION, editorGrid, windowLimits, nudgeWindow,
+    pointCurves, drawSec, drawX, shapeDrawing, normalizeDrawing, DRAW_MAX_POINTS, songSpeed, normalizeSpeed,
     resolveWindow,
     PRESET_LANES,
     PRESET_BARS,
+    LANE_VALUES,
+    FX_SHAPES,
     LOOP: { OUT_REGION_SEC, IN_REGION_SEC, LOOP_SETUP_SEC },
     warmup,
     setStatus,

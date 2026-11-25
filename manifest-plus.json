@@ -20,6 +20,13 @@
     "add": ["webRequest", "webRequestBlocking"]
   },
   "host_permissions": {
+    "_about_remove": "Upstream's self-updater downloads (src/smooth-update.js, not loaded here) and Musixmatch's retired desktop API host.",
+    "remove": [
+      "https://codeload.github.com/*",
+      "https://objects.githubusercontent.com/*",
+      "https://release-assets.githubusercontent.com/*",
+      "https://apic-desktop.musixmatch.com/*"
+    ],
     "add": [
       "https://lyricsplus.prjktla.my.id/*",
       "https://lyricsplus.binimum.org/*",
@@ -39,7 +46,6 @@
       "https://www.last.fm/*",
       "https://*.scdn.co/*",
       "https://*.spotifycdn.com/*",
-      "https://spotify-canva.vercel.app/*",
       "https://*.ggpht.com/*",
       "https://*.ytimg.com/*"
     ]
@@ -103,6 +109,6 @@
   ],
   "web_accessible_resources": {
     "remove": ["icons/custom-logo-full.png", "icons/custom-logo-icon.png"],
-    "add": ["src/vendor/automix/*", "src/vendor/signalsmith-stretch.js", "src/addons/tap-worklet.js", "src/automix/*"]
+    "add": ["src/vendor/automix/*", "src/vendor/signalsmith-stretch.js", "src/addons/tap-worklet.js", "src/automix/host.html", "src/automix/limiter-worklet.js"]
   }
 }

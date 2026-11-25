@@ -14,6 +14,8 @@
   let shownFor = '';    // the page and settings the layer was made (or is being looked up) for
   let layerEl = null;   // the layer made for shownFor (YT Music may re-render the header)
   let seq = 0;
+  let frameMsg = null;  // the video frame's message listener, until it reports 'playing' or 'error'
+  const EXT_ORIGIN = chrome.runtime.getURL('').replace(/\/$/, '');
 
   const read = (s) => {
     const image = s.appleArtistImages === true;
@@ -37,6 +39,8 @@
 
   function clear() {
     layerEl = null;
+    if (frameMsg) window.removeEventListener('message', frameMsg);
+    frameMsg = null;
     document.querySelectorAll('.' + LAYER).forEach((el) => el.remove());
   }
 
@@ -79,12 +83,15 @@
       frame.style.cssText = 'position:absolute; inset:0; width:100%; height:100%; border:0; background:transparent; color-scheme:light; opacity:0; transition:opacity .4s;';
       const onMsg = (e) => {
         const m = e.data;
+        if (e.origin !== EXT_ORIGIN || e.source !== frame.contentWindow) return;
         if (!m || !m.__viviAppleCanvas || m.id !== id) return;
         if (m.type === 'playing') frame.style.opacity = '1';
         else if (m.type === 'error') frame.remove();
         window.removeEventListener('message', onMsg);
+        if (frameMsg === onMsg) frameMsg = null;
       };
       window.addEventListener('message', onMsg);
+      frameMsg = onMsg;
       layer.append(frame);
     }
     if (getComputedStyle(h.box).position === 'static') h.box.style.position = 'relative';

@@ -27,16 +27,30 @@
   const FR = 40;                   // waveform columns per second of song
   const DECODE_SR = 22050;
   // editor.md §2-§4, §7
-  const PRESETS = [['auto', 'Auto'], ['smooth', 'Smooth'], ['rise', 'Rise'], ['blend', 'Blend'], ['wave', 'Wave'], ['melt', 'Melt'], ['slam', 'Slam'], ['loop', 'Loop'], ['custom', 'Custom']];
+  // Spotify's preset row in its order (editor.md §2), then this app's Loop
+  const PRESETS = [['auto', 'Auto'], ['custom', 'Custom'], ['smooth', 'Fade'], ['rise', 'Rise'], ['wave', 'Wave'], ['blend', 'Blend'], ['slam', 'Slam'], ['melt', 'Melt'],
+    ['afterglow', 'Afterglow'], ['surge', 'Surge'], ['dissolve', 'Dissolve'], ['none', 'No transition'], ['loop', 'Loop']];
   const BEAT_MATCH = [['auto', 'Auto'], ['sync', 'Sync'], ['glide', 'Glide'], ['off', 'Off']];
   const BARS = [[0, 'Auto'], [2, '2'], [4, '4'], [8, '8'], [16, '16'], [32, '32']];
   const LANE_OPTIONS = {
-    volume: [['smooth', 'Smooth'], ['crossfade', 'Crossfade'], ['overlap', 'Overlap'], ['cutInFadeOut', 'Cut in, fade out'], ['fadeInCutOut', 'Fade in, cut out'], ['centerCut', 'Cut at the centre']],
-    eq: [['centerBassSwap', 'Bass swap at the centre'], ['endBassSwap', 'Bass swap at the end'], ['threeBandFade', 'Three-band fade'], ['quickBassCut', 'Quick bass cut'], ['none', 'None']],
-    effect: [['none', 'None'], ['lpOut', 'Low-pass out'], ['hpIn', 'High-pass in'], ['lpBoth', 'Low-pass both'], ['hpBoth', 'High-pass both'], ['lpInHpOut', 'Low-pass in, high-pass out']],
+    // (Spotify's names for its shapes, spotify-mixes.md rule 4)
+    volume: [['smooth', 'Smooth crossfade'], ['crossfade', 'Crossfade'], ['overlap', 'Overlap'], ['cutInFadeOut', 'Cut in fade out'], ['fadeInCutOut', 'Fade in cut out'], ['centerCut', 'Center cut'],
+      ['fadeInFadeOut', 'Fade in fade out'], ['fadeInFastOut', 'Fade in fast out'], ['fadeIn1BarCutOut', 'Fade in 1 bar cut out'], ['overlap1BarCutOut', 'Overlap 1 bar cut out']],
+    eq: [['centerBassSwap', 'Center bass swap'], ['endBassSwap', 'End bass swap'], ['startBassSwap', 'Start bass swap'], ['threeBandFade', '3-band fade'],
+      ['quickBassCut', 'Quick bass cut'], ['longBassCut', 'Long bass cut'], ['bassFadeOut', 'Bass fade out'], ['none', 'None']],
+    effect: [['none', 'None'], ['hpIn', 'High pass filter in'], ['hpOut', 'High pass filter out'], ['hpBoth', 'High pass filter in high pass filter out'],
+      ['lpIn', 'Low pass filter in'], ['lpOut', 'Low pass filter out'], ['lpBoth', 'Low pass filter in low pass filter out'],
+      ['hpInLpOut', 'High pass filter in low pass filter out'], ['lpInHpOut', 'Low pass filter in high pass filter out'], ['hpHalfOut', 'High-pass filter half out'], ['noiseOutEnd', 'Noise out end']],
+    // editor.md §12: Spotify's Effects list
+    fx: [['none', 'None'], ['echo1CutEnd', 'Echo 1 cut end'], ['echo34CutEnd', 'Echo ¾ cut end'], ['echoHalfCutEnd', 'Echo ½ cut end'],
+      ['echo1OutEnd', 'Echo 1 out end'], ['echo34OutEnd', 'Echo ¾ out end'], ['echoHalfOutEnd', 'Echo ½ out end'],
+      ['delay34CutEnd', 'Delay ¾ cut end'], ['delayHalfCutEnd', 'Delay ½ cut end'],
+      ['reverbCutEnd', 'Reverb cut end'], ['reverbOutEnd', 'Reverb out end'], ['reverbOutCenter', 'Reverb out center']],
   };
   for (const k of Object.keys(LANE_OPTIONS)) LANE_OPTIONS[k].push(['draw', 'Draw…']);
-  const LANE_COLORS = { volume: '#4C8DFF', eq: '#F5C542', effect: '#A779FF' };
+  // editor.md §13: the playing song loops its first N beats of the window (a shape only, never drawn)
+  LANE_OPTIONS.looping = [['none', 'None'], ['loop1', '1 beat loop'], ['loop2', '2 beat loop'], ['loop4', '4 beat loop'], ['loop8', '8 beat loop'], ['loop16', '16 beat loop']];
+  const LANE_COLORS = { volume: '#4C8DFF', eq: '#F5C542', effect: '#A779FF', fx: '#E8E8E8', looping: '#5FD39A' };
   const NUDGE_MS = 10, NUDGE_MAX_MS = 2000;
   // editor.md §10: the drawable curves: plan key, chip, lane, name in the stored deck, and the
   // lane's height (0 at the bottom, 1 at the top) as the canvas draws it
@@ -47,9 +61,15 @@
     highDb: { chip: 'High', lane: 'eq', name: 'high', norm: (v) => 1 + v / 18, value: (n) => 18 * n - 18 },
     lowpassHz: { chip: 'Lowpass', lane: 'effect', name: 'lp', norm: (v) => Math.log(v / 20) / LOG1K, value: (n) => 20 * Math.pow(1000, n) },
     highpassHz: { chip: 'Highpass', lane: 'effect', name: 'hp', norm: (v) => 1 - Math.log(v / 20) / LOG1K, value: (n) => 20 * Math.pow(1000, 1 - n) },
+    // editor.md §12
+    midDb: { chip: 'Mid', lane: 'eq', name: 'mid', norm: (v) => 1 + v / 18, value: (n) => 18 * n - 18 },
+    noise: { chip: 'Noise', lane: 'effect', name: 'noise', norm: (v) => v, value: (n) => n },
+    echoSend: { chip: 'Echo', lane: 'fx', name: 'echo', norm: (v) => v, value: (n) => n },
+    reverbSend: { chip: 'Reverb', lane: 'fx', name: 'reverb', norm: (v) => v, value: (n) => n },
+    delaySend: { chip: 'Delay', lane: 'fx', name: 'delay', norm: (v) => v, value: (n) => n },
   };
-  // a new curve in an empty deck: open (0 dB, the filter open)
-  const OPEN = { bassDb: 0, highDb: 0, lowpassHz: 20000, highpassHz: 20 };
+  // a new curve in an empty deck: open (0 dB, the filter open, no noise, nothing sent)
+  const OPEN = { bassDb: 0, midDb: 0, highDb: 0, lowpassHz: 20000, highpassHz: 20, noise: 0, echoSend: 0, reverbSend: 0, delaySend: 0 };
   const MAX_POINTS = 128, UNDO_MAX = 50, HIT_PX = 7;
 
   const xf = () => window.__viviCrossfade;
@@ -223,7 +243,7 @@
     prog.append(progText, progBar);
     prog.hidden = true;
     const legend = el('div', 'vivi-amx-ov-legend');
-    for (const [k, t] of [['low', 'Low'], ['mid', 'Mid'], ['high', 'High'], ['volume', 'Volume'], ['eq', 'EQ'], ['effect', 'Effect']]) {
+    for (const [k, t] of [['low', 'Low'], ['mid', 'Mid'], ['high', 'High'], ['volume', 'Volume'], ['eq', 'EQ'], ['effect', 'Filter'], ['fx', 'Effects']]) {
       const i = el('span', 'vivi-amx-ov-key');
       const sw = el('i');
       sw.style.background = COLORS[k] || LANE_COLORS[k];
@@ -233,17 +253,23 @@
     const clock = el('span', 'vivi-amx-ov-clock', '');
     legend.append(clock);
     const controls = el('div', 'vivi-amx-ov-controls');
-    const presetRow = chipRow('Preset', PRESETS, (v) => pick(v === 'custom' ? { preset: 'custom', lanes: lanesNow() } : { preset: v }));
+    // a shape or preset over a drawing asks first, and Undo brings the drawing back (editor.md §10 rule 7)
+    const presetRow = chipRow('Preset', PRESETS, (v) => { if (v !== 'custom' && !replaceDrawing(null)) { sig = ''; return; } pick(v === 'custom' ? { preset: 'custom', lanes: lanesNow() } : { preset: v }); });
     const custom = el('details', 'vivi-amx-ov-custom');
     custom.append(el('summary', '', 'Customize'));
     const laneSel = {};
-    for (const [k, label] of [['volume', 'Volume'], ['eq', 'EQ'], ['effect', 'Effect']]) {
+    // Spotify's lane names: the `effect` lane is its Filter (editor.md §2)
+    for (const [k, label] of [['volume', 'Volume'], ['eq', 'EQ'], ['effect', 'Filter'], ['fx', 'Effects'], ['looping', 'Looping']]) {
       const lab = el('label', 'vivi-amx-ov-lane');
       const sw = el('i');
       sw.style.background = LANE_COLORS[k];
       const sel = el('select');
       for (const [v, t] of LANE_OPTIONS[k]) { const o = el('option', '', t); o.value = v; sel.append(o); }
-      sel.addEventListener('change', () => (sel.value === 'draw' ? startDraw(k) : pick({ preset: 'custom', lanes: { ...lanesNow(), [k]: sel.value } })));
+      sel.addEventListener('change', () => {
+        if (sel.value === 'draw') { startDraw(k); return; }
+        if (!replaceDrawing(k)) { sig = ''; return; }
+        pick({ preset: 'custom', lanes: { ...lanesNow(), [k]: sel.value } });
+      });
       lab.append(sw, document.createTextNode(label), sel);
       custom.append(lab);
       laneSel[k] = sel;
@@ -302,20 +328,43 @@
     const note = el('span', 'vivi-amx-ov-note', '');
     const badge = el('span', 'vivi-amx-ov-badge', 'Custom');
     badge.hidden = true;
-    actions.append(preview, lock, reset, badge, note);
-    controls.append(presetRow.row, custom, drawRow, matchRow.row, barsRow.row, winRow, actions);
+    // Undo outside the drawing's tools: a drawing replaced by a shape or preset comes back
+    const undoReplace = el('button', 'vivi-amx-ov-btn', 'Undo');
+    undoReplace.type = 'button';
+    undoReplace.title = 'Bring the drawing back (Ctrl+Z)';
+    undoReplace.hidden = true;
+    undoReplace.addEventListener('click', undoDraw);
+    actions.append(preview, lock, reset, undoReplace, badge, note);
+    // mix files (spec/automix/mix-file.md rule 9): import ready-made mixes, export this pair's or all
+    const files = el('div', 'vivi-amx-ov-row vivi-amx-ov-files');
+    files.append(el('span', 'vivi-amx-ov-label', 'Mix files'));
+    const fileChips = el('div', 'vivi-amx-ov-chips');
+    const fileBtn = (text, title, fn) => { const b = el('button', 'vivi-amx-ov-chip', text); b.type = 'button'; b.title = title; b.addEventListener('click', () => { if (!b.disabled) fn(); }); fileChips.append(b); return b; };
+    const fileInput = el('input');
+    fileInput.type = 'file';
+    fileInput.accept = '.json,.vivimix,application/json';
+    fileInput.hidden = true;
+    fileInput.addEventListener('change', () => { const f = fileInput.files?.[0]; fileInput.value = ''; if (f) importFile(f); });
+    const importBtn = fileBtn('Import…', 'Add the mixes of a .vivimix.json file or a Spotify mix export (spotify-mix-export)', () => fileInput.click());
+    const exportPair = fileBtn('Export this pair', "Save these two songs' edit as a mix file", () => exportMixes(true));
+    const exportAll = fileBtn('Export all', 'Save every edited pair as one mix file', () => exportMixes(false));
+    const playMixes = fileBtn('Play these mixes', "Queue the last imported file's songs in its order and play them", playImported);
+    playMixes.disabled = !lastImport?.ids.length;
+    const fileNote = el('span', 'vivi-amx-ov-note', '');
+    files.append(fileChips, fileInput, fileNote);
+    controls.append(presetRow.row, custom, drawRow, matchRow.row, barsRow.row, winRow, actions, files);
     card.append(head, songsRow, well, prog, legend, controls);
     root.append(card);
     root.addEventListener('pointerdown', (e) => { if (e.target === root) hide(); });
     document.body.append(root);
     ui = { root, card, sub, songsRow, canvas, msg, clock, prog, progText, progFill, presetRow, custom, laneSel, matchRow, barsRow, nudgeBtns, winReset, preview, lock, reset, badge, note,
-      drawRow, curveChips, repUnit, repBtn, undoBtn, drawHint };
+      drawRow, curveChips, repUnit, repBtn, undoBtn, undoReplace, drawHint, importBtn, exportPair, exportAll, playMixes, fileNote };
     canvas.addEventListener('dblclick', (e) => pointDelete(e));
     canvas.addEventListener('contextmenu', (e) => { if (drawOn(xf()?.overview?.())) { e.preventDefault(); pointDelete(e); } });
     canvas.addEventListener('pointerdown', dragStart);
     canvas.addEventListener('pointermove', dragMove);
     canvas.addEventListener('pointerup', dragEnd);
-    canvas.addEventListener('pointercancel', () => { drag = null; sig = ''; });
+    canvas.addEventListener('pointercancel', () => { drag = null; pdrag = null; sig = ''; });
     document.addEventListener('keydown', onKey, true);
     sig = ''; songsSig = ''; staticLayer = null;
     requestAnimationFrame(() => root.classList.add('vivi-open'));
@@ -411,7 +460,9 @@
   }
   const barNo = (p) => p.bar + 1;   // on screen bars count from 1
   function readout(s, out, inn) {
-    return `A mixes out at ${fmtSec(out.sec)} (bar ${barNo(out)}) · B enters at ${fmtSec(inn.sec)} (bar ${barNo(inn)})`;
+    // (a position in seconds only, from a mix file, has no bar until it is moved here)
+    const bar = (p) => (Number.isInteger(p.bar) ? ` (bar ${barNo(p)})` : '');
+    return `A mixes out at ${fmtSec(out.sec)}${bar(out)} · B enters at ${fmtSec(inn.sec)}${bar(inn)}`;
   }
   function windowEditable(s) {
     const ov = A().migratePick(s?.pick);
@@ -480,18 +531,18 @@
     const ov = A().migratePick(d.s.pick);
     pick({ window: windowWith(d.s, ov, d.side, d.pos) });
   }
-  // A 10 ms step of one song's position (from where the plan has it, when nothing is saved yet)
+  // A 10 ms step of one song's position (from where the plan has it, when nothing is saved yet),
+  // held at the drag's limits (automix.js nudgeWindow, editor.md §6)
   function nudge(side, dir) {
     const s = xf()?.overview?.();
     if (!windowEditable(s)) return;
     const ov = A().migratePick(s.pick);
     const grid = gridFor(s, side);
     const now = ov?.window?.[side] || positionOf(side === 'out' ? s.mix.mixOutTrackTime : s.mix.mixInTrackTime, grid, false, false);
-    const n = (now.nudgeMs || 0) + dir * NUDGE_MS;
-    if (Math.abs(n) > NUDGE_MAX_MS) { refused = { pair: s.pairKey, text: `Nudges reach ${NUDGE_MAX_MS / 1000} s at most: drag the song instead` }; return; }
-    const pos = { ...now, nudgeMs: n, sec: Math.round((now.sec + dir * NUDGE_MS / 1000) * 1000) / 1000 };
-    if (!pos.nudgeMs) delete pos.nudgeMs;
-    pick({ window: windowWith(s, ov, side, pos) });
+    const r = A().nudgeWindow(now, dir, limitsOf(s, side));
+    if (r.refused === 'max') { refused = { pair: s.pairKey, text: `Nudges reach ${NUDGE_MAX_MS / 1000} s at most: drag the song instead` }; return; }
+    if (r.refused) { refused = { pair: s.pairKey, text: `Held: ${LIMIT_WHY[side][r.refused === 'lo' ? 0 : 1]}` }; return; }
+    pick({ window: windowWith(s, ov, side, r.pos) });
   }
 
   // ───────── drawn curves (editor.md §10) ─────────
@@ -544,11 +595,25 @@
     if (undo.length > UNDO_MAX) undo.shift();
     pick({ preset: 'custom', lanes: { ...lanesNow(), [lane]: d }, ...(bars ? { bars } : {}) });
   }
+  // A shape (lane: its name) or a preset (lane: null) over a drawing: "Replace the drawing?" first;
+  // on yes the whole override goes on the undo list. false: declined, nothing changes.
+  function replaceDrawing(lane) {
+    const s = xf()?.overview?.();
+    const ov = A().migratePick(s?.pick);
+    if (!s?.pairKey || ov?.preset !== 'custom' || !ov.lanes) return true;
+    const drawn = Object.keys(ov.lanes).filter((k) => typeof ov.lanes[k] === 'object' && (lane == null || k === lane));
+    if (!drawn.length) return true;
+    if (!window.confirm(drawn.length > 1 ? 'Replace the drawings?' : 'Replace the drawing?')) return false;
+    undo.push({ pair: s.pairKey, whole: JSON.parse(JSON.stringify(ov)) });
+    if (undo.length > UNDO_MAX) undo.shift();
+    return true;
+  }
   function undoDraw() {
     const s = xf()?.overview?.();
     while (undo.length && undo[undo.length - 1].pair !== s?.pairKey) undo.pop();   // another pair's edits are gone with it
     const u = undo.pop();
     if (!u) return;
+    if (u.whole) { const r = xf().setPairPick(u.pair, u.whole); refused = r?.refused ? { pair: u.pair, text: r.refused } : null; sig = ''; return; }
     // the length goes back only if this edit set it (one picked by hand since stays)
     const now = A().migratePick(s.pick)?.bars || null;
     pick({ ...(u.lanes && u.preset === 'custom' ? { preset: 'custom', lanes: u.lanes } : { preset: u.preset || 'auto' }), bars: now === u.barsAfter ? u.bars : now });
@@ -646,6 +711,8 @@
       for (let a = from + len; a < end - 1e-9; a += len) {
         out = out.filter(([x]) => x < a);
         out.push(...part.map(([x, v]) => [Math.round((x - from + a) * 1000) / 1000, v]));
+        // (a tiny interval would copy without end: refused as soon as it is over)
+        if (out.length > MAX_POINTS) { refused = { pair: s.pairKey, text: `${MAX_POINTS} points is the most for one line` }; return; }
       }
       out.push(...pts.filter(([x]) => x >= end - 1e-9 && x > out[out.length - 1][0]));
       if (out.length > MAX_POINTS) { refused = { pair: s.pairKey, text: `${MAX_POINTS} points is the most for one line` }; return; }
@@ -725,9 +792,92 @@
     setIf(progFill.style, 'width', pct == null ? '' : pct + '%');
   }
 
+  // ───────── mix files (spec/automix/mix-file.md) ─────────
+  function fileSay(text) { if (ui) ui.fileNote.textContent = text; }
+  // the last imported file's songs (rule 7: "Play these mixes"), kept while the page is open
+  let lastImport = null;   // { ids, n }
+  let queuing = false;     // a queue request on its way (Play these mixes)
+  async function playImported() {
+    if (!lastImport?.ids.length || queuing) return;
+    queuing = true;
+    fileSay('Queuing…');
+    const r = await xf().queueSongs(lastImport.ids);
+    queuing = false;
+    fileSay(r.ok ? `Playing ${lastImport.n === 1 ? 'the mix' : 'the ' + lastImport.n + ' mixes'}: ${lastImport.ids.length} songs in the queue, in the ${lastImport.playlist ? 'playlist' : "file"}'s order.` : 'Not queued: ' + r.why + '.');
+    sig = '';
+  }
+  async function importFile(f) {
+    if (f.size > 2 * 1024 * 1024) { fileSay('Not imported: the file is over 2 MB, not a mix file.'); return; }
+    let text;
+    try { text = await f.text(); } catch { fileSay('Not imported: the file could not be read.'); return; }
+    const r = A().readMixFile(text);
+    if (r.refused) { fileSay('Not imported: ' + r.refused + '.'); return; }
+    const plan = A().importPlan(r.mixes, xf().pairPicksAll());
+    const name = (m) => `${m.from.title || m.from.videoId} → ${m.to.title || m.to.videoId}`;
+    // rule 5: a saved edit is replaced only after a confirm that lists what changes
+    if (plan.replace.length) {
+      const lines = plan.replace.map((m) => `${name(m)}:\n  ${m.changes.join('\n  ')}`);
+      const ask = `${plan.replace.length === 1 ? 'One pair already has' : plan.replace.length + ' pairs already have'} an edit. Replace with the file's?\n\n${lines.join('\n\n')}`
+        + (plan.add.length ? `\n\n(${plan.add.length} new pair${plan.add.length === 1 ? '' : 's'} are added either way.)` : '');
+      if (!window.confirm(ask)) plan.replace.length = 0;
+    }
+    const r2 = xf().importPairPicks([...plan.add, ...plan.replace]);
+    const parts = [];
+    parts.push(`Imported ${r2.saved.length} mix${r2.saved.length === 1 ? '' : 'es'}`);
+    if (plan.same.length) parts.push(`${plan.same.length} already saved as they are`);
+    const kept = r.mixes.length - plan.add.length - plan.replace.length - plan.same.length;
+    if (kept > 0) parts.push(`${kept} kept as saved`);
+    for (const x of r2.refused) parts.push(`${x.key}: ${x.why}`);
+    for (const x of r.skipped) parts.push(`mix ${x.n} skipped: ${x.why}`);
+    for (const x of r.notes || []) parts.push(x);   // (a Spotify export: what didn't carry over)
+    r.mixes.forEach((m) => {
+      const why = A().foldNote(m.override, A().editorGrid?.(A().get(m.from.videoId), 'out')?.bpm);
+      if (why && r2.saved.includes(m.key)) parts.push(`${m.from.title || m.from.videoId}: ${why}`);
+    });
+    // a Spotify export queues its playlist in order, songs in no mix too (spotify-mixes.md rule 8)
+    const ids = r.queue || A().mixQueue(r.mixes);
+    lastImport = ids.length ? { ids, n: r.mixes.length, playlist: !!r.queue } : lastImport;
+    fileSay(parts.join(' · ') + '.' + (ids.length ? ' Play these mixes queues them.' : ''));
+    sig = '';
+  }
+  async function exportMixes(onlyThis) {
+    const s = xf()?.overview?.();
+    const picks = xf().pairPicksAll();
+    const keys = onlyThis ? (s?.pairKey && picks[s.pairKey] ? [s.pairKey] : []) : Object.keys(picks);
+    if (!keys.length) { fileSay(onlyThis ? 'These two songs have no edit to export.' : 'No edited pairs to export.'); return; }
+    const song = async (id) => {
+      let meta = null;
+      try { meta = await Promise.race([A().meta?.(id), new Promise((res) => setTimeout(res, 3000))]); } catch { meta = null; }
+      return { videoId: id, ...(meta?.song ? { title: meta.song } : {}), ...(meta?.artist ? { artist: meta.artist } : {}) };
+    };
+    const entries = [];
+    for (const k of keys) {
+      const [from, to] = k.split('>');
+      // the tempo the beats count on (mix-file.md rule 8): as saved, else this app's for A
+      const ov = A().migratePick(picks[k]);
+      const bpm = ov?.gridBpm || A().editorGrid?.(A().get(from), 'out')?.bpm;
+      entries.push({ from: await song(from), to: await song(to), override: bpm ? { ...ov, gridBpm: bpm } : ov });
+    }
+    const file = A().writeMixFile(entries);
+    if (!file.mixes.length) { fileSay('Nothing to export: no valid edit.'); return; }
+    const slug = (t) => String(t || '').toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '').slice(0, 24) || 'song';
+    const one = file.mixes.length === 1 ? file.mixes[0] : null;
+    const fname = (one ? `${slug(one.from.title || one.from.videoId)}-${slug(one.to.title || one.to.videoId)}` : `vivimusic-mixes-${new Date().toISOString().slice(0, 10)}`) + '.vivimix.json';
+    const url = URL.createObjectURL(new Blob([JSON.stringify(file, null, 2) + '\n'], { type: 'application/json' }));
+    const a = el('a');
+    a.href = url;
+    a.download = fname;
+    document.body.append(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+    fileSay(`Exported ${file.mixes.length} mix${file.mixes.length === 1 ? '' : 'es'} as ${fname}.`);
+  }
+
   function render() {
     let s = xf()?.overview?.();
     progressRow(s);
+    ui.playMixes.disabled = !lastImport?.ids.length || queuing;   // (with or without a mix on screen)
     if (!s || s.why) {
       ui.sub.textContent = s?.why || 'Automix is not running';
       ui.msg.textContent = s?.why || '';
@@ -735,7 +885,8 @@
       ui.canvas.hidden = true;
       ui.songsRow.replaceChildren();
       songsSig = '';
-      setControls(null);
+      // (No transition: the presets stay, to pick another)
+      setControls(s?.noTransition ? s : null);
       ui.clock.textContent = '';
       // an edit for these two songs, with no mix to show: Reset can still clear it
       if (s?.pick) {
@@ -776,8 +927,9 @@
     // (Auto: Smooth's, the lanes a first change starts from: lanesNow)
     const lanes = preset === 'loop' ? null : preset === 'custom' && ov.lanes ? ov.lanes : A()?.PRESET_LANES?.[preset] || A()?.PRESET_LANES?.smooth || null;
     for (const [k, sel] of Object.entries(laneSel)) {
-      sel.disabled = !s?.toId || preset === 'loop';
-      const v = lanes?.[k] ? (typeof lanes[k] === 'object' ? 'draw' : lanes[k]) : '';
+      sel.disabled = !s?.toId || preset === 'loop' || preset === 'none';
+      // (no Effects or Looping lane: none, editor.md §12 rule 1, §13)
+      const v = lanes?.[k] ? (typeof lanes[k] === 'object' ? 'draw' : lanes[k]) : lanes && (k === 'fx' || k === 'looping') ? 'none' : '';
       if (v && sel.value !== v) sel.value = v;
     }
     // the drawing's tools: shown while a lane is drawn; the chips of the drawn lanes' curves
@@ -785,6 +937,7 @@
     const canDraw = !!s?.toId && !!s.mix && s.mix.style !== 'loop' && drawnLanes.length > 0;
     if (drawKey && !(canDraw && drawnLanes.includes(CURVES[drawKey].lane))) { drawKey = null; pdrag = null; }
     ui.drawRow.hidden = !canDraw;
+    ui.undoReplace.hidden = canDraw || !undo.some((u) => u.pair === s?.pairKey);
     for (const b of ui.curveChips.chips) {
       const key = b.dataset.v;
       b.hidden = !!key && !drawnLanes.includes(CURVES[key].lane);
@@ -816,6 +969,7 @@
     lock.classList.toggle('vivi-on', !!ov.lock);
     setIf(lock, 'textContent', ov.lock ? 'Locked' : 'Lock');
     reset.disabled = !has;
+    ui.exportPair.disabled = !has;
     badge.hidden = !has;   // any saved override is an edit (a lone lock is never saved: editor.md §1, §2)
     const left = s && s.editable && s.at != null ? -s.at : null;
     preview.disabled = !s?.editable || !(s.previewAt > 0) || left == null || left < 25;
@@ -1000,6 +1154,12 @@
         lane(side.highDb, k, LANE_COLORS.eq + 'aa', false, db);
         lane(side.lowpassHz, k, LANE_COLORS.effect, true, hzLp);
         lane(side.highpassHz, k, LANE_COLORS.effect, true, hzHp);
+        // editor.md §12: the mid band as the other EQ curves; noise and the sends 0 at the bottom, 1 at the top
+        lane(side.midDb, k, LANE_COLORS.eq + '77', false, db);
+        lane(side.noise, k, LANE_COLORS.effect + 'aa', false, (v) => v);
+        lane(side.echoSend, k, LANE_COLORS.fx, false, (v) => v);
+        lane(side.reverbSend, k, LANE_COLORS.fx + 'bb', false, (v) => v);
+        lane(side.delaySend, k, LANE_COLORS.fx + '88', false, (v) => v);
       }
       g.setLineDash([]);
     }

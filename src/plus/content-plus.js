@@ -104,6 +104,8 @@
   // pause with the song and resume with it. While the tab is hidden,
   // updateBackgroundTabMode owns their playback instead.
   let canvasSongPlaying = true;
+  // The frames are our apple-canvas-player.html; a frame that went elsewhere does not get the message.
+  const EXT_ORIGIN = chrome.runtime.getURL('').replace(/\/$/, '');
   function syncCanvasWithSong(playing) {
     if (document.hidden) return;
     const changed = playing !== canvasSongPlaying;
@@ -112,7 +114,7 @@
       if (media.tagName === 'IFRAME') {
         // Pause is re-sent while paused so a frame created meanwhile stops too.
         if (!playing || changed) {
-          try { media.contentWindow?.postMessage({ __viviAppleCanvasControl: playing ? 'resume' : 'pause' }, '*'); } catch (_) {}
+          try { media.contentWindow?.postMessage({ __viviAppleCanvasControl: playing ? 'resume' : 'pause' }, EXT_ORIGIN); } catch (_) {}
         }
         return;
       }
@@ -405,7 +407,7 @@
   // ───────────────────────── Apple Artist Hero Art & Palette (from BitChord) ─────────────────────────
   let appleArtistArtEnabled = true;
   let currentAppleArtistArt = null;
-  const appleArtistArtCache = new Map();   // artist -> pending/finished lookup
+  const appleArtistArtCache = new Map();   // artist -> pending/finished lookup, the newest 200 artists
 
   async function applyAppleArtistArtForTrack(track) {
     if (!appleArtistArtEnabled || !track?.artist) return;
@@ -413,9 +415,10 @@
     try {
       if (!appleArtistArtCache.has(cleanArtist)) {
         appleArtistArtCache.set(cleanArtist, chrome.runtime.sendMessage({ type: 'VIVI_APPLE_ARTIST_ART', artist: cleanArtist }).catch(() => null));
+        if (appleArtistArtCache.size > 200) appleArtistArtCache.delete(appleArtistArtCache.keys().next().value);
       }
       const res = await appleArtistArtCache.get(cleanArtist);
-      if (!res?.ok || !res.art) return;
+      if (!res?.ok || !res.art || !appleArtistArtEnabled) return;
       currentAppleArtistArt = res.art;
 
       const root = document.documentElement;
@@ -527,6 +530,11 @@
       appleArtistArtEnabled = msg.appleArtistArtEnabled !== false;
       const track = C.getCurrentTrack();
       if (track && appleArtistArtEnabled) applyAppleArtistArtForTrack(track);
+      if (!appleArtistArtEnabled) {   // switched off from the popup: drop the colours already set
+        currentAppleArtistArt = null;
+        for (const v of ['--vivi-apple-bg', '--vivi-apple-accent', '--vivi-apple-key']) document.documentElement.style.removeProperty(v);
+        document.querySelector('ytmusic-player#player, #main-panel')?.style.removeProperty('--ytmusic-player-background-color');
+      }
     }
     if ('nerdStatsEnabled' in msg) {
       nerdStatsEnabled = msg.nerdStatsEnabled === true;

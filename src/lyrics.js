@@ -74,8 +74,8 @@
   const sanitizeOrder = (arr) => mapLegacyOrder(arr)
     .filter((k, i, a) => PRIORITY_ELIGIBLE_KEYS.includes(k) && a.indexOf(k) === i)
     .slice(0, 3);
-  // Defaults: lrc.red first, then BiniLyrics, then BetterLyrics (word-sync).
-  const DEFAULT_PRIORITY_ORDER = ['lrcred', 'binilyrics', 'musixmatch'];
+  // Defaults: lrc.red first, then Better Lyrics Unison, then Better Lyrics (vivi+).
+  const DEFAULT_PRIORITY_ORDER = ['lrcred', 'unison', 'betterlyrics']; // vivi+ the user's order (2026-11-24)
   let priorityEnabled = true;
   let priorityOrder = DEFAULT_PRIORITY_ORDER.slice();
   // When true, a lower-priority reply waits up to PRIORITY_WAIT_MS to see if
@@ -254,9 +254,10 @@
   function repairTimings(words, lineEnd) {
     const flat = [];
     words.forEach((w) => w.syllables.forEach((sy) => flat.push(sy)));
+    const bgOf = new Map(words.flatMap((w) => w.syllables.map((sy) => [sy, !!w.bg]))); // vivi+ (audit 2026-11-24)
     for (let i = 0; i < flat.length; i++) {
       const sy = flat[i];
-      const next = flat[i + 1];
+      const next = flat.slice(i + 1).find((n) => bgOf.get(n) === bgOf.get(sy)); // vivi+ (audit 2026-11-24): the next syllable of the same voice (lyrics.md §5.6)
       if (sy.end == null || !(sy.end > sy.start)) {
         sy.end = next ? Math.max(next.start, sy.start + 1) : Math.max(lineEnd || 0, sy.start + 300);
       }

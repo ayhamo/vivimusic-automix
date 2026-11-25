@@ -45,8 +45,10 @@ for (const c of spec.windows) {
 }
 for (const c of spec.plans) {
   const P = load(c.engine), from = song(c.out), to = song(c.in);
-  const p = P.plan({ fromId: 'a', toId: 'b', from, to, durationSec: from.durationSec, pos: c.pos, earliest: c.pos + 4.5, pick: c.override });
+  const p = P.plan({ fromId: 'a', toId: 'b', from, to, durationSec: from.durationSec, pos: c.pos, earliest: c.pos + 4.5, pick: c.override, speed: c.override?.speed || null });
   const got = { style: p.style, bars: p.bars, durationSec: r6(p.durationSec), mixOutTrackTime: r6(p.mixOutTrackTime), mixInTrackTime: r6(p.mixInTrackTime), glide: !!p.glide, kickLock: c.engine === 3 && P.kickLockAllowed(p), warnings: p.warnings || [] };
+  // songs at a speed (the override's speed, spotify-mixes.md rule 10): the decks' rates too
+  if (c.override?.speed) Object.assign(got, { outRate: r6(p.outRate || 1), rate: r6(p.rate), speedOut: p.speedOut ?? 1, speedIn: p.speedIn ?? 1 });
   if (update) { c.expect = got; continue; }
   const ok = same(got, c.expect);
   if (!ok) failed++;

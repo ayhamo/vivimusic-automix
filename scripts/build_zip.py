@@ -8,18 +8,22 @@ service worker only, declarativeNetRequest instead of blocking webRequest,
 no Firefox settings and no upstream extension key (so the ID never clashes
 with upstream's store add-on).
 Zip entries always use forward slashes (AMO rejects backslash paths).
-Usage: python scripts/build_zip.py
+Only the allowlisted files and folders below go in: the manifest loads only
+src/ and icons/, the rest is the licence and the notices. Specs, scripts,
+local caches and reports stay out even when they sit in the repo root.
+Usage: python scripts/build_zip.py [--out-dir DIR]   (default: the repo root)
 """
+import argparse
 import json
 import os
 import zipfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-OUT_FIREFOX = os.path.join(ROOT, 'vivimusic-automix-firefox.zip')
-OUT_CHROMIUM = os.path.join(ROOT, 'vivimusic-automix-edge-chrome.zip')
-SKIP_DIRS = {'.git', '.github', '.claude', 'scripts', 'upstream-amo', 'dist', 'bitchrod extesnion'}
-SKIP_FILES = {os.path.basename(OUT_FIREFOX), os.path.basename(OUT_CHROMIUM),
-              'README_CUSTOM.md', 'TESTING.md', '.gitignore', 'manifest-plus.json'}
+ZIP_FIREFOX = 'vivimusic-automix-firefox.zip'
+ZIP_CHROMIUM = 'vivimusic-automix-edge-chrome.zip'
+SHIP_FILES = ['manifest.json', 'LICENSE', 'THIRD_PARTY_NOTICES.md', 'NOTICES-PLUS.md', 'readme.md']
+SHIP_DIRS = ['src', 'icons']
+SKIP_DIRS = {'__pycache__'}
 
 
 def chromium_manifest(manifest):
@@ -36,13 +40,19 @@ def chromium_manifest(manifest):
 
 
 def files():
-    for d, dirs, names in os.walk(ROOT):
-        dirs[:] = sorted(x for x in dirs if x not in SKIP_DIRS)
-        for f in sorted(names):
-            if f in SKIP_FILES or f.endswith('.tmp'):
-                continue
-            p = os.path.join(d, f)
-            yield p, os.path.relpath(p, ROOT).replace(os.sep, '/')
+    for f in SHIP_FILES:
+        p = os.path.join(ROOT, f)
+        if not os.path.isfile(p):
+            raise SystemExit(f'missing {f}')
+        yield p, f
+    for top in SHIP_DIRS:
+        for d, dirs, names in os.walk(os.path.join(ROOT, top)):
+            dirs[:] = sorted(x for x in dirs if x not in SKIP_DIRS)
+            for f in sorted(names):
+                if f.endswith(('.tmp', '.orig')):
+                    continue
+                p = os.path.join(d, f)
+                yield p, os.path.relpath(p, ROOT).replace(os.sep, '/')
 
 
 def build(out, manifest_text):
@@ -57,7 +67,10 @@ def build(out, manifest_text):
     print(out, os.path.getsize(out), 'bytes')
 
 
+ap = argparse.ArgumentParser()
+ap.add_argument('--out-dir', default=ROOT, help='where the two zips go (default: the repo root)')
+out_dir = ap.parse_args().out_dir
 with open(os.path.join(ROOT, 'manifest.json'), encoding='utf-8') as fh:
     manifest = json.load(fh)
-build(OUT_FIREFOX, None)
-build(OUT_CHROMIUM, json.dumps(chromium_manifest(manifest), indent=2, ensure_ascii=False) + '\n')
+build(os.path.join(out_dir, ZIP_FIREFOX), None)
+build(os.path.join(out_dir, ZIP_CHROMIUM),json.dumps(chromium_manifest(manifest), indent=2, ensure_ascii=False) + '\n')

@@ -25,6 +25,16 @@
   const PREFIX = 'https://vivi-addon-cache.invalid/';
   const urlOf = (key) => PREFIX + encodeURIComponent(key);
 
+  // §8.1.6: an HLS playlist or a DASH manifest is never kept and never served (Laya 33a710d1: a manifest read
+  // through the audio cache came back as another copy's audio). By its type or its first bytes: the MPD tag
+  // in any case, after a BOM, an XML header, comments or a doctype. bg-addons' FETCH asks it too.
+  const MANIFEST_MIME = /mpegurl|dash\+xml/i;
+  function isManifest(bytes, mime) {
+    if (MANIFEST_MIME.test(String(mime || ''))) return true;
+    const head = new TextDecoder().decode(new Uint8Array(bytes, 0, Math.min(bytes?.byteLength || 0, 512))).replace(/^﻿/, '').trimStart();
+    return head.startsWith('#EXTM3U') || /^(?:<\?xml[^>]*>\s*|<!--[\s\S]*?-->\s*|<!DOCTYPE[^>]*>\s*)*<MPD[\s>]/i.test(head);
+  }
+
   function create({ open = () => globalThis.caches.open('vivi-addon-files'), storage, maxBytes = async () => 512e6, now = () => Date.now() } = {}) {
     let store = null;
     const files = () => (store ??= Promise.resolve(open()));
@@ -33,15 +43,6 @@
     const inTurn = (f) => { const p = turn.then(f); turn = p.catch(() => {}); return p; };
     const index = async () => (await storage.get({ [INDEX]: {} }))[INDEX] || {};
     const save = (ix) => storage.set({ [INDEX]: ix });
-
-    // §8.1.6: an HLS playlist or a DASH manifest is never kept and never served (Laya 33a710d1: a manifest read
-    // through the audio cache came back as another copy's audio). By its type or its first bytes.
-    const MANIFEST_MIME = /mpegurl|dash\+xml/i;
-    function isManifest(bytes, mime) {
-      if (MANIFEST_MIME.test(String(mime || ''))) return true;
-      const head = new TextDecoder().decode(new Uint8Array(bytes, 0, Math.min(bytes?.byteLength || 0, 512))).replace(/^﻿/, '').trimStart();
-      return head.startsWith('#EXTM3U') || /^(<\?xml[^>]*>\s*)?<MPD[\s>]/.test(head);
-    }
 
     const keyOf = (addonId, rowId, quality) => [addonId, rowId, quality || ''].map((x) => String(x ?? '')).join('|');
 
@@ -129,7 +130,7 @@
     return { keyOf, has, get, put, drop, trim, stats, clear };
   }
 
-  const api = { create, INDEX };
+  const api = { create, INDEX, isManifest };
   globalThis.__viviAddonFileCache = api;
   if (typeof module === 'object' && module.exports) module.exports = api;
 })();

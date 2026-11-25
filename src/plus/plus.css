@@ -3,6 +3,28 @@
    The first part overrides upstream rules; the rest are our own rules. */
 
 /* ── Overrides of upstream rules ── */
+/* vivi+ (canvas.md §8 rule 4, readable over any art): upstream's pill player is white
+   glass that brightens what is behind it, so over a light cover backdrop (Kawarp) its white
+   time and controls fell to about 3.3:1 (Taylor Swift, Fortnight). Its backing is darkened
+   instead: a darker backdrop and a dark tint, with a faint glass sheen kept on top. Even over
+   white the backing stays near 0.45 sRGB, about 5:1 for white text. Shape, rim and shadows
+   stay upstream's. */
+html.vivi-pill-player ytmusic-player-bar:not([hidden]),
+html.vivi-pill-player #layout ytmusic-player-bar:not([hidden]) {
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.08) 0%, rgba(255,255,255,0.02) 50%, rgba(255,255,255,0.04) 100%),
+    rgba(0,0,0,0.40) !important;
+  -webkit-backdrop-filter: blur(32px) saturate(1.5) brightness(0.75) !important;
+  backdrop-filter: blur(32px) saturate(1.5) brightness(0.75) !important;
+}
+@media (prefers-reduced-transparency: reduce) {   /* (upstream's opaque pill, which the rule above would out-rank) */
+  html.vivi-pill-player ytmusic-player-bar:not([hidden]),
+  html.vivi-pill-player #layout ytmusic-player-bar:not([hidden]) {
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+    background: rgba(28,28,32,0.92) !important;
+  }
+}
 
 /* Right-to-left lyric lines: the gap after a word goes on the line's end side.
    The physical margin is reset first and the logical one set after it: within

@@ -21,7 +21,7 @@
     },
     "deckCurves": {
       "type": "object",
-      "description": "One song's moves. An absent curve stays neutral: lowpassHz 20000, highpassHz 20, bassDb 0, highDb 0, rate 1.",
+      "description": "One song's moves. An absent curve stays neutral: lowpassHz 20000, highpassHz 20, bassDb 0, midDb 0, highDb 0, noise 0, sends 0, rate 1.",
       "required": ["gain"],
       "additionalProperties": false,
       "properties": {
@@ -30,6 +30,11 @@
         "highpassHz": { "$ref": "#/$defs/points" },
         "bassDb": { "$ref": "#/$defs/points", "description": "Low-shelf gain, dB (the bass swap)." },
         "highDb": { "$ref": "#/$defs/points", "description": "High-shelf gain, dB." },
+        "midDb": { "$ref": "#/$defs/points", "description": "Peaking band at 1 kHz (Q 0.7), dB (editor.md §12)." },
+        "noise": { "$ref": "#/$defs/points", "description": "White noise through a 1.5 kHz high-pass, 0..1 (editor.md §12)." },
+        "echoSend": { "$ref": "#/$defs/points", "description": "The deck's send to the echo return, 0..1 (editor.md §12)." },
+        "reverbSend": { "$ref": "#/$defs/points", "description": "The deck's send to the reverb return, 0..1 (editor.md §12)." },
+        "delaySend": { "$ref": "#/$defs/points", "description": "The deck's send to the delay return, 0..1 (editor.md §12)." },
         "rate": { "$ref": "#/$defs/points", "description": "Playback rate (tempo and pitch together, or time-stretched on a stretch deck)." }
       }
     },
@@ -41,7 +46,10 @@
       "properties": {
         "durationSec": { "type": "number", "minimum": 0 },
         "out": { "$ref": "#/$defs/deckCurves" },
-        "in": { "$ref": "#/$defs/deckCurves" }
+        "in": { "$ref": "#/$defs/deckCurves" },
+        "loopBeats": { "enum": [1, 2, 4, 8, 16], "description": "editor.md §13: the Looping lane's length in beats (with a Looping lane only)" },
+        "fxTime": { "type": "object", "additionalProperties": false, "description": "editor.md §12: the echo's and the delay's time, set at the mix's start (with an Effects lane only)",
+          "properties": { "echoSec": { "type": "number", "exclusiveMinimum": 0 }, "delaySec": { "type": "number", "exclusiveMinimum": 0 } } }
       }
     },
     "loopSide": {
@@ -54,8 +62,7 @@
         "beatSec": { "type": "number" },
         "bpm": { "type": "number" },
         "vocal": { "type": "number", "minimum": 0, "maximum": 1, "description": "Share of the loop that is sung (must stay under 0.03, no sung run over 0.2 s)." },
-        "checkedBy": { "enum": ["lyrics", "mask"], "description": "Sung spans from synced lyrics, or the open-unmix mask when the song has none." },
-        "phrase": { "type": "boolean", "description": "The incoming side only: its loop starts on a 4-bar phrase line counted from the song's first downbeat (within a quarter beat). Adds 0.01 to the loop's score in loopOrBlend (versions.md \"Loop on the blend's bars\")." }
+        "checkedBy": { "enum": ["lyrics", "mask"], "description": "Sung spans from synced lyrics, or the open-unmix mask when the song has none." }
       }
     },
     "loopPlan": {
@@ -103,13 +110,17 @@
         "swapAt": { "type": ["number", "null"], "description": "Version 3: the bass swap's bar line as a fraction of the blend (default: the bar nearest the middle)." },
         "swapMoved": { "type": ["string", "null"], "description": "Version 3: why the bass swap left the middle bar (the playing song sings there), or why it could not." },
         "harmonic": { "type": ["object", "null"], "description": "Version 3: the key score (keyScore 0.7, chromaScore 0.3), its confidence, severeClash (under 0.2: no blend) and short (under 0.55: a short blend)." },
-        "trim": { "type": ["object", "null"], "properties": { "diffDb": { "type": "number" }, "outDb": { "type": "number" }, "inDb": { "type": "number" } }, "description": "Version 3: loudness trim. diffDb: the playing region's R128 loudness against its song minus the next region's against its song. outDb: the playing song's gain reached by the end; inDb: the next song's gain at the start, back to 0 by the end (smoothstep). null: not measured." },
+        "trim": { "type": ["object", "null"], "properties": { "diffDb": { "type": ["number", "null"] }, "outDb": { "type": "number" }, "inDb": { "type": "number" } }, "description": "Version 3: loudness trim. diffDb: the playing region's R128 loudness against its song minus the next region's against its song. outDb: the playing song's gain reached by the end; inDb: the next song's gain at the start, back to 0 by the end (smoothstep). A drop-in's outDb is at least -1.5 (versions.md \"The mix's ceiling\" rule 6); its diffDb is null when the loudness was not measured. null: not measured." },
         "keyClash": { "type": ["string", "null"], "description": "'F major → B minor' when the keys clash and key-aware mixing is on (version 3: always, with the key score: 'F# major → C minor, 0.307'); then the blend is shortened." },
+        "curator": { "const": true, "description": "Automix v2's curator blend (analysis-cases.md \"The curator blend\"): Auto picked a blend, not the loop mix, and it is placed as Spotify's playlist editors place theirs, 8 bars from the downbeat nearest 31 s before the music ends. Absent: the usual blend." },
         "mixOutTrackTime": { "type": "number", "description": "Outgoing song time where the transition starts." },
         "durationSec": { "type": "number", "minimum": 0 },
         "mixInTrackTime": { "type": "number", "description": "Incoming song time it starts from." },
-        "rate": { "type": "number", "exclusiveMinimum": 0, "description": "Incoming playback rate during the blend." },
-        "outRate": { "type": "number", "exclusiveMinimum": 0, "description": "Outgoing rate after the tempo ramp." },
+        "rate": { "type": "number", "exclusiveMinimum": 0, "description": "Incoming playback rate during the blend (with song speeds: speedOut × the outgoing BPM / the incoming BPM, A's played tempo, spotify-mixes.md rule 10; a filter mix or fade: speedIn)." },
+        "outRate": { "type": "number", "exclusiveMinimum": 0, "description": "Outgoing rate after the tempo ramp (with song speeds: speedOut, no ramp)." },
+        "speedOut": { "type": "number", "minimum": 0.5, "maximum": 2, "description": "spotify-mixes.md rule 10: the playing song's playlist speed, the whole time it plays; absent: 1 for both." },
+        "speedIn": { "type": "number", "minimum": 0.5, "maximum": 2, "description": "spotify-mixes.md rule 10: the next song's playlist speed, in the mix and after it." },
+        "loopSec": { "type": "number", "exclusiveMinimum": 0, "description": "editor.md §13: the Looping lane, curves.loopBeats of the playing song's beats in its own seconds, looped from mixOutTrackTime." },
         "rampBeats": { "type": "number" },
         "rampSongSec": { "type": "number" },
         "beatSec": { "type": "number" },

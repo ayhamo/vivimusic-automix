@@ -23,7 +23,12 @@
   function get(keys, callback) {
     const p = read(keys === undefined ? null : keys, 4);
     if (typeof callback !== 'function') return p;
-    p.then(callback, (err) => console.warn('[Vivimusic] storage read failed:', err && err.message));
+    p.then(callback, (err) => {
+      console.warn('[Vivimusic] storage read failed:', err && err.message);
+      // still answer, as the browser would with nothing stored: the defaults asked for, else {}
+      // (a caller waiting on its callback must not wait forever)
+      callback(keys && typeof keys === 'object' && !Array.isArray(keys) ? { ...keys } : {});
+    });
     return undefined;
   }
 

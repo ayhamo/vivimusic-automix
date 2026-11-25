@@ -1,5 +1,5 @@
 {
-  "about": "Addon track matching: a YouTube Music song (target) against an addon's search rows (candidates). expect is what BitChord's TrackMatcher returns: ranked = accepted rows best first (pick = ranked[0]), scores = each accepted row's score, rejected = rows it refuses. Filled by scripts/addon_matcher_fixtures.mjs --update from BitChord v1.9.2 (a2d886e6) web/app/src/data/match/trackMatcher.ts.",
+  "about": "Addon track matching: a YouTube Music song (target) against an addon's search rows (candidates). expect is what BitChord's TrackMatcher returns: ranked = accepted rows best first (pick = ranked[0]), scores = each accepted row's score, rejected = rows it refuses. Filled by scripts/addon_matcher_fixtures.mjs --update from BitChord v1.9.2 (a2d886e6) web/app/src/data/match/trackMatcher.ts. Cases named (ours, …) are our rules on top of BitChord a2d886e6 (protocol.md §7), their expect checked by hand.",
   "cases": [
     {
       "name": "exact row wins; a row 45 s longer by the same artist is kept at 0 length points (shared-artist rows may drift up to 90 s)",
@@ -708,6 +708,110 @@
         "rejected": [
           "upper"
         ]
+      }
+    },
+    {
+      "name": "(ours, mashups) a mashup title: a song inside it is another song, by substring or by the credit override (YouTube 6Edmp3yHv1s against Tidal 445741450)",
+      "target": {
+        "title": "LET ME LOVE YOU x GATA ONLY",
+        "artist": "Moonshine",
+        "durationSec": 172.7
+      },
+      "candidates": [
+        {
+          "id": "other-song",
+          "title": "Let Me Love You",
+          "artist": "Bonnie X Clyde",
+          "durationSec": 172.5,
+          "album": null
+        },
+        {
+          "id": "one-half",
+          "title": "Let Me Love You",
+          "artist": "Moonshine",
+          "durationSec": 172.7,
+          "album": null
+        },
+        {
+          "id": "the-mashup",
+          "title": "Let Me Love You x Gata Only",
+          "artist": "Moonshine",
+          "durationSec": 172.7,
+          "album": null
+        }
+      ],
+      "expect": {
+        "pick": "the-mashup",
+        "ranked": [
+          "the-mashup"
+        ],
+        "scores": {
+          "the-mashup": 165
+        },
+        "rejected": [
+          "other-song",
+          "one-half"
+        ]
+      }
+    },
+    {
+      "name": "(ours, mashups) a mashup or medley word in brackets counts",
+      "target": {
+        "title": "Levitating / Physical (Mashup)",
+        "artist": "Mashup Channel",
+        "durationSec": 210
+      },
+      "candidates": [
+        {
+          "id": "levitating",
+          "title": "Levitating",
+          "artist": "Dua Lipa",
+          "durationSec": 210.5,
+          "album": null
+        }
+      ],
+      "expect": {
+        "pick": null,
+        "ranked": [],
+        "scores": {},
+        "rejected": [
+          "levitating"
+        ]
+      }
+    },
+    {
+      "name": "(ours, mashups) false-positive guard: \" x \" between the credited artists is a credit, not a mashup; the credit override still holds",
+      "target": {
+        "title": "Sigala x Ella Eyre - Came Here For Love",
+        "artist": "Sigala x Ella Eyre",
+        "durationSec": 200
+      },
+      "candidates": [
+        {
+          "id": "other-credit",
+          "title": "Came Here For Love",
+          "artist": "Someone Else",
+          "durationSec": 200.5,
+          "album": null
+        },
+        {
+          "id": "credited",
+          "title": "Came Here For Love",
+          "artist": "Sigala, Ella Eyre",
+          "durationSec": 200,
+          "album": null
+        }
+      ],
+      "expect": {
+        "pick": "credited",
+        "ranked": [
+          "credited"
+        ],
+        "scores": {
+          "other-credit": 110,
+          "credited": 165
+        },
+        "rejected": []
       }
     }
   ],

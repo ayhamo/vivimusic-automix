@@ -20,6 +20,7 @@ const server = http.createServer((req, res) => {
   const b = behaviour[name] || {};
   const send = (status, body, headers = {}) => { res.writeHead(status, { 'content-type': 'application/json', ...headers }); res.end(typeof body === 'string' ? body : JSON.stringify(body)); };
   if (kind === 'file') {   // the audio file: answers the range probe
+    if (b.fileFail?.[id] > 0) { b.fileFail[id]--; res.writeHead(503); return res.end(); }   // a passing server fault
     const size = b.fileBytes?.[id] ?? 30_000_000;
     res.writeHead(206, { 'content-range': `bytes 0-0/${size}`, 'content-length': '1' });
     return res.end('x');
@@ -183,8 +184,40 @@ behaviour.withfallback = {
   const got = await fresh().resolve(song, [{ base: base('withfallback') }]);
   check('stream 404: the row\'s streamURL', got.stream?.url, fileUrl('withfallback', 'a'));
 }
+// (audit 2026-11-24) §4: a 200 whose answer has an `error` or a blank url falls back the same way
+behaviour.errfallback = {
+  search: (u, send) => send(200, { tracks: [row('e', { streamURL: fileUrl('errfallback', 'e') }), row('b', { streamURL: fileUrl('errfallback', 'b') })] }),
+  stream: (u, send, id) => send(200, id === 'e' ? { error: 'not on this service' } : { url: '  ' }),
+};
+{
+  const c = fresh(), man = await c.manifest(base('errfallback'));
+  const e = await c.stream({ base: base('errfallback') }, { id: 'e', streamURL: fileUrl('errfallback', 'e') }, man);
+  const b = await c.stream({ base: base('errfallback') }, { id: 'b', streamURL: fileUrl('errfallback', 'b') }, man);
+  check('stream 200 with an error field or a blank url: the row\'s streamURL', [e.url, b.url], [fileUrl('errfallback', 'e'), fileUrl('errfallback', 'b')]);
+  const bad = await c.stream({ base: base('errfallback') }, { id: 'x', streamURL: 'http://evil.example/f.flac' }, man);
+  check('stream fallback: the streamURL still answers to the https rule', bad.miss, 'not https');
+}
+// (audit 2026-11-24) §6: a /stream miss (an error answer, no streamURL) is not cached: asked again
+behaviour.misscache = { stream: (u, send) => send(200, { error: 'not yet' }) };
+{
+  const c = fresh(), man = await c.manifest(base('misscache'));
+  const n0 = hitsOf('misscache', 'stream').length;
+  const a = await c.stream({ base: base('misscache') }, { id: 'm' }, man);
+  const b = await c.stream({ base: base('misscache') }, { id: 'm' }, man);
+  check('stream miss: not cached, the second ask goes to the addon', [a.miss, b.miss, hitsOf('misscache', 'stream').length - n0], ['not yet', 'not yet', 2]);
+}
 
 // ---- §8.1.4 the race: every addon at once, the first playable answer wins ----
+// a server fault on the probe is read once more before the row counts as refused (BitChord: retry a failed window read once)
+behaviour.flaky = { fileFail: { once: 1, twice: 2 } };
+{
+  const c = fresh();
+  const once = await c.probe(fileUrl('flaky', 'once'), row('once'), 200, 5);
+  check('probe: one 503, then the file: not refused, read twice', [once.ok, hitsOf('flaky', 'file').filter((h) => h.id === 'once').length], [true, 2]);
+  const twice = await c.probe(fileUrl('flaky', 'twice'), row('twice'), 200, 5);
+  check('probe: 503 twice: refused, read twice (no third ask)', [twice.ok, twice.why, hitsOf('flaky', 'file').filter((h) => h.id === 'twice').length], [false, 'stream answered 503', 2]);
+}
+
 const later = (ms, f) => (...a) => setTimeout(() => f(...a), ms);
 const raceAddon = (name, { searchMs = 0, streamMs = 0, rows = [row('r1')] } = {}) => {
   behaviour[name] = {
@@ -271,6 +304,25 @@ const raceAddon = (name, { searchMs = 0, streamMs = 0, rows = [row('r1')] } = {}
   await c.find(other, [a]);
   check('forget: the song asked again (search and /stream), another song still cached', [n >= 2, hitsOf('forgetme', 'search').length - s0, hitsOf('forgetme', 'stream').length - t0], [true, 1, 1]);
 }
+{
+  // (audit 2026-11-24) forget matches whole parameters: forgetting "Blinding" keeps "Blinding Lights"
+  const a = raceAddon('forgetword');
+  const c = fresh();
+  await c.find(song, [a]);
+  const s0 = hitsOf('forgetword', 'search').length;
+  c.forget({ ...song, title: 'Blinding' });
+  await c.find(song, [a]);
+  check('forget: a title that only starts the same is kept', hitsOf('forgetword', 'search').length - s0, 0);
+}
+{
+  // §3: title and artist sent trimmed; the opened addon keeps its quality pick (the cache key, 8.1.6)
+  const a = { ...raceAddon('trimq'), quality: 'HI_RES' };
+  const c = fresh();
+  const f = await c.find({ ...song, title: '  Blinding Lights ', artist: ' The Weeknd ' }, [a]);
+  const q = new URLSearchParams(hitsOf('trimq', 'search').at(-1)?.query || '');
+  const got = await c.open(f.found, song);
+  check('search: title and artist trimmed; open keeps the addon\'s quality', [q.get('title'), q.get('artist'), got.addon?.quality], ['Blinding Lights', 'The Weeknd', 'HI_RES']);
+}
 // ---- §4a stream limits, the look-ahead, the stream's own headers ----
 behaviour.limited = {
   search: (u, send) => send(200, { tracks: [row('a')] }),
@@ -299,6 +351,14 @@ behaviour.limited = {
   T += 61_000;
   check('limit: a minute later, free again', await c.stream({ base: base('limited') }, { id: 'g' }, man).then(() => 'ok', (e) => e.kind), 'ok');
   check('limit: no failure noted', c.health()[new URL(ROOT).host].fails, 0);
+}
+// (audit 2026-11-24) §4a: the budget is the addon's, on baseOf(link): a trailing '/' is the same addon
+behaviour.slashlimit = { manifest: { id: 's', name: 'S', resources: ['search', 'stream'], limits: { streamsPerMinute: 1 } }, stream: (u, send, id) => send(200, { url: fileUrl('slashlimit', id), codec: 'flac' }) };
+{
+  const c = fresh(), man = await c.manifest(base('slashlimit'));
+  const first = await c.stream({ base: base('slashlimit') + '/' }, { id: 'a' }, man).then(() => 'ok', (e) => e.kind);
+  const second = await c.stream({ base: base('slashlimit') }, { id: 'b' }, man).then(() => 'ok', (e) => e.kind);
+  check('limit: counted on the addon\'s base, a trailing / is the same addon', [first, second, c.streamWait({ base: base('slashlimit') }, man) > 0], ['ok', 'limit', true]);
 }
 let n429s = 0;
 behaviour.streams429 = {

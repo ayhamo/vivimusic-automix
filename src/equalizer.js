@@ -112,6 +112,7 @@
     if (video.dataset.viviEqBound === '1' && boundVideo !== video) {
       return false;
     }
+    if (boundVideo && audioCtx) { stopSpatial(); if (!boundVideo.isConnected) audioCtx.close().catch(() => {}); } // vivi+ (audit 2026-11-24): a new <video>: the old pan schedule stops (its clock is not the new context's), a removed element's context closes
 
     try {
       audioCtx = new (window.AudioContext || window.webkitAudioContext)({ latencyHint: 'playback' });
@@ -197,6 +198,7 @@
   function applySettingsToGraph() {
     if (!audioCtx && settings.enabled) ensureGraph(findVideo());
     if (!audioCtx) return;
+    if (audioCtx.state === 'suspended') audioCtx.resume().catch(() => {}); // vivi+ (audit 2026-11-24): power, preset and sliders resume it too, not only the toggle button
     const now = audioCtx.currentTime;
     const ramp = 0.05; // seconds, avoids audible zipper/clicks on slider drag
 

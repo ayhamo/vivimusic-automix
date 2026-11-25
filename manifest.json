@@ -29,15 +29,11 @@
     "https://lrc.red/*",
     "https://*.lrc.red/*",
     "https://api.deezer.com/*",
-    "https://apic-desktop.musixmatch.com/*",
     "https://apic-appmobile.musixmatch.com/*",
     "https://apic.musixmatch.com/*",
     "https://www.musixmatch.com/*",
     "https://api.github.com/*",
     "https://github.com/*",
-    "https://codeload.github.com/*",
-    "https://objects.githubusercontent.com/*",
-    "https://release-assets.githubusercontent.com/*",
     "https://raw.githubusercontent.com/*",
     "https://avatars.githubusercontent.com/*",
     "https://ws.audioscrobbler.com/*",
@@ -75,7 +71,6 @@
     "https://www.last.fm/*",
     "https://*.scdn.co/*",
     "https://*.spotifycdn.com/*",
-    "https://spotify-canva.vercel.app/*",
     "https://*.ggpht.com/*",
     "https://*.ytimg.com/*"
   ],
@@ -211,7 +206,8 @@
         "src/vendor/automix/*",
         "src/vendor/signalsmith-stretch.js",
         "src/addons/tap-worklet.js",
-        "src/automix/*"
+        "src/automix/host.html",
+        "src/automix/limiter-worklet.js"
       ],
       "matches": [
         "https://music.youtube.com/*"

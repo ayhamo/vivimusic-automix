@@ -108,6 +108,7 @@
   }
 
   function initKawarp() {
+    if (canvas && !canvas.isConnected) getWrapper()?.appendChild(canvas); // vivi+ (audit 2026-11-24): content.js made #vivi-bg-layer again: move the live canvas (its GL context and image) into it
     if (kawarp || !webglOk) return kawarp;
     canvas = ensureCanvas();
     if (!canvas) return null;

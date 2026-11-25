@@ -25,7 +25,7 @@
     chrome.storage.onChanged.addListener((ch, area) => {
       if (area !== 'local' || !ch.addonsEnabled) return;
       enabled = ch.addonsEnabled.newValue === true;
-      if (!enabled) songs.clear();
+      if (!enabled) { songs.clear(); curId = nextId = ''; }   // turned on again: the playing song is asked for again
     });
   } catch { /* no extension context */ }
 
@@ -46,10 +46,13 @@
   });
   function metaOf(id) {
     return new Promise((resolve) => {
+      // each ask settles once, by the answer or its own timeout (two asks for one song: neither is left waiting)
       const prev = metaWaits.get(id);
-      metaWaits.set(id, (m) => { prev?.(m); resolve(m); });
+      let done = false;
+      const mine = (m) => { prev?.(m); if (!done) { done = true; resolve(m); } };
+      metaWaits.set(id, mine);
       window.postMessage({ ch: CHANNEL, dir: 'in', type: 'meta', id }, window.location.origin);
-      setTimeout(() => { if (metaWaits.has(id)) { metaWaits.delete(id); resolve(null); } }, 3000);
+      setTimeout(() => { if (metaWaits.get(id) === mine) metaWaits.delete(id); if (!done) { done = true; resolve(null); } }, 3000);
     });
   }
 
@@ -184,7 +187,7 @@
       const again = await openFor(id);
       if (again?.state === 'ready') r = await ask({ type: 'VIVI_ADDONS_FETCH', ticket: again.ticket });
     }
-    if (!(r.bytes instanceof ArrayBuffer) && !ArrayBuffer.isView(r.bytes)) return { none: r.none || 'no bytes' };
+    if (!(r.bytes instanceof ArrayBuffer) && !ArrayBuffer.isView(r.bytes)) return { none: r.none || 'no bytes', ...(r.refused ? { refused: true } : {}) };
     return { bytes: r.bytes, mime: r.mime };
   }
   // what happened to the song after OPEN: 'fitting', 'playing' (with offset and gain), or why not

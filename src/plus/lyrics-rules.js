@@ -111,19 +111,21 @@
 
   /**
    * An LRC file's own [offset:+/-N] (§3.5, Metrolist LrcTiming.kt): the last such tag on a line of its own, in ms,
-   * added to every line and word time, none below 0 (Metrolist's sign: a positive offset shows the lyrics later).
+   * taken from every line and word time, none below 0 (the LRC standard: a positive offset shows the lyrics earlier).
+   * A leading BOM doesn't hide a first-line tag.
    * result: a parsed { mode, lines } (lines [{ start, end, words? }]); answers it shifted, or as it was.
    */
   const LRC_OFFSET_RE = /^[ \t]*\[offset:[ \t]*([+-]?\d+)[ \t]*\][ \t]*\r?$/gim;
   function lrcOffsetMs(text) {
-    const all = [...String(text ?? '').matchAll(LRC_OFFSET_RE)];
+    const all = [...String(text ?? '').replace(/^﻿/, '').matchAll(LRC_OFFSET_RE)];
     const n = all.length ? parseInt(all[all.length - 1][1], 10) : 0;
     return Number.isFinite(n) ? n : 0;
   }
   function withLrcOffset(result, text) {
     const off = lrcOffsetMs(text);
     if (!off || !result || !Array.isArray(result.lines)) return result;
-    const t = (x) => (Number.isFinite(x) ? Math.max(0, x + off) : x);
+    // lyrics.md §3.5: the LRC standard, a positive offset shows the lyrics earlier (Metrolist adds it instead)
+    const t = (x) => (Number.isFinite(x) ? Math.max(0, x - off) : x);
     const span = (o) => ({ ...o, start: t(o.start), end: t(o.end) });
     return {
       ...result,

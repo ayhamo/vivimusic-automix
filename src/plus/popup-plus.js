@@ -39,6 +39,8 @@
       const theme = h % 6;                 // 6 animation styles
       const hue = (h >>> 4) % 360;         // unique colour shift per release
       const speed = (0.8 + ((h >>> 12) % 9) / 10).toFixed(2); // 0.8x–1.6x
+      const ff = /firefox/i.test(navigator.userAgent);   // the Edge/Chrome zip has no store that updates it
+      const href = ff && /^https:\/\/addons\.mozilla\.org\//.test(result.releaseUrl || '') ? result.releaseUrl : this.updatePage;
       updateStatus.innerHTML =
         `<div class="update-hero uh-t${theme}" style="--uh-hue:${hue}deg;--uh-speed:${speed}">` +
         `<span class="uh-bg"><i></i><i></i><i></i></span><span class="uh-glass"></span>` +
@@ -46,9 +48,10 @@
         `<span class="uh-eyebrow">VIVIMUSIC XTEN</span>` +
         `<span class="uh-badge">New update available</span>` +
         `<span class="uh-version">v${esc(ver)}</span>` +
-        `<span class="uh-sub">You're on v${esc(chrome.runtime.getManifest().version)} · Firefox updates this extension automatically</span>` +
-        `<a class="uh-btn" href="${esc(/^https:\/\/addons\.mozilla\.org\//.test(result.releaseUrl || '') ? result.releaseUrl : this.updatePage)}" target="_blank" rel="noopener">Check in Add-on Store <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 17 17 7M8 7h9v9"/></svg></a>` +
-        `<span class="uh-note">Firefox will install the update on its own. Want it right now? Open <b>about:addons</b> → click the ⚙ gear → <b>Check for Updates</b>, and Firefox will force the update immediately.</span></div>`;
+        `<span class="uh-sub">You're on v${esc(chrome.runtime.getManifest().version)}${ff ? ' · Firefox updates this extension automatically' : ''}</span>` +
+        `<a class="uh-btn" href="${esc(href)}" target="_blank" rel="noopener">${ff ? 'Check in Add-on Store' : 'Open the release'} <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 17 17 7M8 7h9v9"/></svg></a>` +
+        (ff ? `<span class="uh-note">Firefox will install the update on its own. Want it right now? Open <b>about:addons</b> → click the ⚙ gear → <b>Check for Updates</b>, and Firefox will force the update immediately.</span></div>`
+          : `<span class="uh-note">Download the Edge/Chrome zip from the release and load it in place of this one.</span></div>`);
       return true;
     },
   };
@@ -412,6 +415,13 @@
     });
     canvasMaster?.addEventListener('change', () => { masters.canvas = canvasMaster.checked; render(); });
     appleMaster?.addEventListener('change', () => { masters.apple = appleMaster.checked; render(); });
+    // popup.js's vinyl-disc switch writes both masters to storage without a change event
+    chrome.storage.onChanged.addListener((ch, area) => {
+      if (area !== 'local' || !('enabled' in ch || 'spotifyCanvasEnabled' in ch)) return;
+      if ('enabled' in ch) { masters.apple = ch.enabled.newValue !== false; if (appleMaster) appleMaster.checked = masters.apple; }
+      if ('spotifyCanvasEnabled' in ch) { masters.canvas = ch.spotifyCanvasEnabled.newValue !== false; if (canvasMaster) canvasMaster.checked = masters.canvas; }
+      render();
+    });
     vq.addEventListener('change', () => save({ videoCanvasQuality: vq.value }));
     vm.addEventListener('change', () => save({ videoCanvasMode: vm.value }));
     aq.addEventListener('change', () => save({ appleCoverQuality: aq.value }));
@@ -622,14 +632,17 @@
 
   nerdStatsToggle?.addEventListener('change', () => {
     chrome.storage.local.set({ nerdStatsEnabled: nerdStatsToggle.checked });
+    relay({ nerdStatsEnabled: nerdStatsToggle.checked });
   });
 
   wheelVolumeToggle?.addEventListener('change', () => {
     chrome.storage.local.set({ wheelVolumeEnabled: wheelVolumeToggle.checked });
+    relay({ wheelVolumeEnabled: wheelVolumeToggle.checked });
   });
 
   appleArtistArtToggle?.addEventListener('change', () => {
     chrome.storage.local.set({ appleArtistArtEnabled: appleArtistArtToggle.checked });
+    relay({ appleArtistArtEnabled: appleArtistArtToggle.checked });
   });
 
   // Placement of the Spotify Canvas; "Off" is the same as the switch above.
@@ -652,6 +665,13 @@
     spotifyCanvasEnabled.checked = true;
     chrome.storage.local.set({ spotifyCanvasEnabled: true, spotifyCanvasPlacement: v });
     relay({ spotifyCanvasEnabled: true, spotifyCanvasPlacement: v });
+  });
+  chrome.storage.onChanged.addListener((ch, area) => {   // the vinyl-disc switch, as above
+    if (area !== 'local' || !('spotifyCanvasEnabled' in ch)) return;
+    if (ch.spotifyCanvasEnabled.newValue === false) placementSelect.value = 'off';
+    else if (placementSelect.value === 'off') {
+      chrome.storage.local.get({ spotifyCanvasPlacement: 'cover' }, (s) => { placementSelect.value = s.spotifyCanvasPlacement; });
+    }
   });
   spotifyCanvasEnabled.addEventListener('change', () => {
     if (!spotifyCanvasEnabled.checked) placementSelect.value = 'off';

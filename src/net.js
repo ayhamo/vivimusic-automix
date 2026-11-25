@@ -67,9 +67,11 @@
     });
 
     if (!signal) return relay;
+    // vivi+ (audit 2026-11-24): the abort listener goes once the relay settles, so a long-lived signal keeps none
+    let onAbort;
     return Promise.race([
       relay,
-      new Promise((_, reject) => signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true })),
-    ]);
+      new Promise((_, reject) => { onAbort = () => reject(new DOMException('Aborted', 'AbortError')); signal.addEventListener('abort', onAbort, { once: true }); }),
+    ]).finally(() => signal.removeEventListener('abort', onAbort));
   };
 })();

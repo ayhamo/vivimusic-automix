@@ -134,12 +134,12 @@
       cache.set(key, { until: now() + ttl, value });
       while (cache.size > CACHE_MAX) cache.delete(cache.keys().next().value);
     };
-    // one request for identical calls in flight, cached on success
-    function shared(key, ttl, make) {
+    // one request for identical calls in flight, cached on success (`keep`: which answers count as one, §6)
+    function shared(key, ttl, make, keep = () => true) {
       const hit = cached(key);
       if (hit !== undefined) return Promise.resolve(hit);
       if (inflight.has(key)) return inflight.get(key);
-      const p = make().then((v) => { remember(key, v, ttl); return v; }).finally(() => inflight.delete(key));
+      const p = make().then((v) => { if (keep(v)) remember(key, v, ttl); return v; }).finally(() => inflight.delete(key));
       inflight.set(key, p);
       return p;
     }
@@ -240,8 +240,9 @@
     function search(addon, target, query, man) {
       const params = paramsFor(man, addon.tier, addon.quality);
       const extra = [];
-      if (target?.title) extra.push(['title', text(target.title)]);
-      if (target?.artist) extra.push(['artist', text(target.artist)]);
+      const title = text(target?.title).trim(), artist = text(target?.artist).trim();   // §3: trimmed
+      if (title) extra.push(['title', title]);
+      if (artist) extra.push(['artist', artist]);
       const q = text(query).trim();
       if (q) extra.push(['q', q]);
       const url = `${addon.base}/search?${qs([...params, ...extra])}`;
@@ -261,7 +262,8 @@
       const enc = j.encrypted;
       if (!(enc === false || enc == null || text(enc).trim() === '' || text(enc).toLowerCase() === 'none' || text(enc).toLowerCase() === 'false')) return { miss: 'encrypted' };
       const quality = text(j.quality ?? j.streamQuality ?? j.audioQuality);
-      const all = [url, j.format, quality, j.codec, j.fileCodec, j.container, j.containerFormat, j.mimeType, j.manifest, j.mediaType, j.audioMode].map(text).join(' ');
+      // (never the URL: its path or token could read as numbers)
+      const all = [j.format, quality, j.codec, j.fileCodec, j.container, j.containerFormat, j.mimeType, j.manifest, j.mediaType, j.audioMode].map(text).join(' ');
       if (ATMOS.test([j.codec, j.audioMode, j.format, quality].map(text).join(' '))) return { miss: 'atmos' };
       // transport: the URL path's extension and the answer's own format fields, never words inside
       // the host, query or a token (a progressive /Dashboard.flac or ?t=..mpd.. is a file)
@@ -312,13 +314,19 @@
     function local(base, s) { return s.url && /^http:/i.test(s.url) && !isLocal(base) ? { miss: 'not https' } : s; }
     function streamWait(addon, man) { return budgetOf(baseOf(addon.base), man).wait; }
     function stream(addon, row, man) {
-      const url = `${addon.base}/stream/${encodeURIComponent(row.id)}?${qs(paramsFor(man, addon.tier, addon.quality))}`;
+      // (counted and asked on the addon's base: a pasted link's trailing '/' is the same addon, §4a)
+      const base = baseOf(addon.base);
+      const url = `${base}/stream/${encodeURIComponent(row.id)}?${qs(paramsFor(man, addon.tier, addon.quality))}`;
+      // a miss is not kept (§6: failures, 404s included, are not cached); it may be asked again
       return shared('t|' + url, TTL.stream, async () => {
-        const { b, wait } = budgetOf(addon.base, man);
+        const { b, wait } = budgetOf(base, man);
         if (wait > 0) throw new AddonError('limit', `stream limit, free in ${Math.ceil(wait / 1000)} s`);
         b.calls.push(now());
         try {
-          const s = local(addon.base, readStream(await getJson(addon.base, url, { retry429: false }), man.limits?.cachedMarker));
+          const j = await getJson(base, url, { retry429: false });
+          // §4: a blank url or an error field is a miss like a 404: the row's streamURL, else the next source
+          if ((!text(j?.url).trim() || j?.error) && row.streamURL) return local(base, readStream({ url: row.streamURL }));
+          const s = local(base, readStream(j, man.limits?.cachedMarker));
           if (!s.cached) b.uncached.push(now());
           return s;
         } catch (e) {
@@ -327,20 +335,26 @@
             b.until = now() + Math.max(1, Math.min(3600, e.retryAfterSec ?? 60)) * 1000;
             throw new AddonError('limit', `stream limit (429), ${b.perMinute}/min from now on`);
           }
-          if (e.kind === 'miss' && row.streamURL) return local(addon.base, readStream({ url: row.streamURL }));
+          if (e.kind === 'miss' && row.streamURL) return local(base, readStream({ url: row.streamURL }));
           throw e;
         }
-      });
+      }, (s) => !s?.miss);
     }
 
     // §7: Range bytes=0-0 (4 s); the file must hold the whole song
     // (fetch itself adds Accept-Encoding: identity to a Range request)
+    // a server error or timeout on the probe is read once more before the row counts as refused (a passing fault)
     async function probe(url, row, songSec, slackSec, headers = {}) {
+      const p = await probeOnce(url, row, songSec, slackSec, headers);
+      return p.retry ? probeOnce(url, row, songSec, slackSec, headers).then((q) => (q.retry ? { ok: false, why: q.why } : q)) : p;
+    }
+    async function probeOnce(url, row, songSec, slackSec, headers) {
       const ctl = new AbortController();
       const timer = setTimeout(() => ctl.abort(), PROBE_TIMEOUT_MS);
       try {
         const r = await doFetch(url, { headers: { ...headers, Range: 'bytes=0-0' }, signal: ctl.signal, credentials: 'omit', cache: 'no-store' });
         try { await r.body?.cancel?.(); } catch { /* already read */ }
+        if (r.status >= 500 || r.status === 408) return { ok: false, retry: true, why: `stream answered ${r.status}` };
         if (r.status >= 400) return { ok: false, why: `stream answered ${r.status}` };
         return Pick.probeVerdict({ status: r.status, contentRange: r.headers.get('content-range'), contentLength: r.headers.get('content-length') }, row, songSec, slackSec);
       } catch { return { ok: true }; } finally { clearTimeout(timer); }   // unmeasurable: not refused
@@ -407,7 +421,7 @@
           if (!p.ok) { tried.push({ addon: addon.host, row: row.id, why: p.why }); continue; }
           note(addon.base, true, 'ok', now() - t0);
           log(`addons: ${man.name} (${addon.host}) has it: row ${row.id}, ${s.codec || '?'}${s.sampleRate ? ' ' + s.sampleRate / 1000 + ' kHz' : ''}${s.bitDepth ? '/' + s.bitDepth : ''}`);
-          return { addon: { base: addon.base, name: man.name, host: addon.host, id: addon.id }, row, stream: s };
+          return { addon: { base: addon.base, name: man.name, host: addon.host, id: addon.id, quality: addon.quality ?? null }, row, stream: s };
         }
       } catch (e) {
         if (e.kind === 'limit') { tried.push({ addon: addon.host, why: e.message }); return null; }   // not a fault
@@ -457,11 +471,12 @@
     // protocol.md 8.1.7, "Upgrade quality": a song's search answers (empty ones too) and the /stream
     // answers of its rows are forgotten, so the next ask goes to the addons again
     function forget(target, found = []) {
-      const marks = [target?.title && 'title=' + encodeURIComponent(text(target.title)), target?.artist && 'artist=' + encodeURIComponent(text(target.artist))].filter(Boolean);
+      // each a whole parameter of the search URL: forgetting "Love" keeps "Love Story"
+      const marks = [['title', text(target?.title).trim()], ['artist', text(target?.artist).trim()]].filter(([, v]) => v).map(([k, v]) => k + '=' + encodeURIComponent(v));
       const rows = new Set(found.flatMap((f) => (f.rows || []).map((r) => '/stream/' + encodeURIComponent(r.id) + '?')));
       let n = 0;
       for (const k of [...cache.keys()]) {
-        const drop = (k.startsWith('s|') && marks.length && marks.every((m) => k.includes(m))) || (k.startsWith('t|') && [...rows].some((r) => k.includes(r)));
+        const drop = (k.startsWith('s|') && marks.length && marks.every((m) => ['?', '&'].some((c) => (k + '&').includes(c + m + '&')))) || (k.startsWith('t|') && [...rows].some((r) => k.includes(r)));
         if (drop) { cache.delete(k); n++; }
       }
       return n;

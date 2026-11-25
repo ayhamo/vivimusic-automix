@@ -120,7 +120,58 @@ await run('appleRank', async (c) => {
   const m = await apCtx.searchAndFetchMotion(c.want.title, c.want.artist, c.want.album, 'us', 'songs');
   return m ? m.animated.replace('https://example.invalid/', '').replace('.m3u8', '') : null;
 });
-skip('appleToken', "bg-plus.js scrapeAmpToken() fetches the bundles itself and isWebPlayerToken() is block-scoped; needs a pure pickToken(jwts, now, rejected)");
+// The token pick through bg-plus.js's real scrape, on a fake music.apple.com: each token in its own
+// bundle, so a web player token in a later bundle than an unlabelled one must still win (audit
+// 2026-11-24). A fresh context per case (the 30 min wait and the rejected set are block state).
+// Made-up JWTs with a fake signature; a "rejected" token gets a 401 from the catalog API.
+function appleTokenCtx(nowMs, bundles, rejectedJwts = []) {
+  const ctx = {
+    chrome: { storage: { local: { get: async () => ({}), set: async () => {}, remove: async () => {} } } },
+    TextEncoder, TextDecoder, URL, atob, btoa, Intl, navigator: { language: 'en-US' },
+    console: { log() {}, info() {}, warn() {}, error() {} }, setTimeout: () => 0, clearTimeout() {},
+    fetchLog: [],
+    fetch: async (url, opts) => {
+      const u = String(url);
+      ctx.fetchLog.push(u);
+      if (u.endsWith('/us/browse')) return { text: async () => bundles.map((_, i) => `<script src="/assets/index-b${i}.js">`).join('') };
+      const m = u.match(/\/assets\/index-b(\d+)\.js$/);
+      if (m) { const b = bundles[+m[1]]; if (b === null) throw new Error('bundle read failed'); return { text: async () => `var t="${b}";` }; }
+      const auth = (opts && opts.headers && opts.headers.Authorization) || '';
+      const bad = rejectedJwts.some((j) => auth === 'Bearer ' + j);
+      return { status: bad ? 401 : 200, ok: !bad, json: async () => ({}) };
+    },
+  };
+  vm.createContext(ctx);
+  vm.runInContext(readFileSync(new URL('src/apple-canvas.js', root), 'utf8'), ctx);
+  const lines = readFileSync(new URL('src/plus/bg-plus.js', root), 'utf8').split(/\r?\n/);
+  const a = lines.findIndex((l) => l.startsWith('// ── apple-canvas.js (ported'));
+  let b = a;
+  while (lines[b] !== '}') b++;
+  vm.runInContext(lines.slice(a, b + 1).join('\n'), ctx);
+  vm.runInContext(`Date.now = () => ${nowMs};`, ctx);
+  return ctx;
+}
+const b64u = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
+await run('appleToken', async (c) => {
+  const jwts = c.tokens.map((t, i) => `${b64u(t.header)}.${b64u(t.payload)}.fakeSig${i}`);
+  const rejected = (c.rejected || []).map((i) => jwts[i]);
+  const ctx = appleTokenCtx(c.now, jwts, rejected);
+  let got;
+  if (rejected.length) { await ctx.ampGet('/v1/test', {}); got = vm.runInContext('cachedAmpToken', ctx); }
+  else got = await ctx.getOrFetchAmpToken();
+  return got ? jwts.indexOf(got) : null;
+});
+{
+  // a bundle that fails to read is passed over, the next one is still read, and no 30 min wait is set
+  const now = 1763400000000;
+  const own = `${b64u({ alg: 'ES256', kid: 'WebPlayKid' })}.${b64u({ iss: 'AMPWebPlay', exp: 1863400000 })}.fakeSigOwn`;
+  const ctx = appleTokenCtx(now, [null, own]);
+  const got = await ctx.getOrFetchAmpToken();
+  vm.runInContext('cachedAmpToken = null; ampTokenExpiryMs = 0;', ctx);
+  ctx.fetchLog.length = 0;
+  await ctx.getOrFetchAmpToken();
+  report('appleToken', 'a failed bundle read: the next bundle is read, and no 30 min wait', { got: got === own, rescraped: ctx.fetchLog.length > 0 }, { got: true, rescraped: true });
+}
 await run('appleMotion', async (c) => {
   const primary = apCtx.extractEditorialVideoUrl(c.video, false);
   if (!primary) return null;

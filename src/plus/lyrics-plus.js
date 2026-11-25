@@ -100,9 +100,11 @@
   // SimpMusic (lyrics.md §11.1): keyed by the video id. Of its tracks, the one closest to the song's length within
   // 10 s; its word-synced lyrics first, then its line-synced. Its answer: { type: 'success', data: [{ durationSeconds,
   // richSyncLyrics, syncedLyrics, plainLyric }] }; the rich sync comes HTML-escaped (BitChord's EnhancedLrc).
+  // (a code point past U+10FFFF stays as written: fromCodePoint would throw and lose the song's lyrics)
+  const codePoint = (m, n) => (n >= 0 && n <= 0x10ffff ? String.fromCodePoint(n) : m);
   const decodeEntities = (t) => (typeof t !== 'string' || !t.includes('&') ? t : t
-    .replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCodePoint(parseInt(h, 16)))
-    .replace(/&#(\d+);/g, (_, d) => String.fromCodePoint(Number(d)))
+    .replace(/&#x([0-9a-f]+);/gi, (m, h) => codePoint(m, parseInt(h, 16)))
+    .replace(/&#(\d+);/g, (m, d) => codePoint(m, Number(d)))
     .replace(/&apos;/g, "'").replace(/&quot;/g, '"').replace(/&nbsp;/g, ' ').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
     .replace(/&amp;/g, '&'));
   function pickSimpMusic(body, durationSec) {

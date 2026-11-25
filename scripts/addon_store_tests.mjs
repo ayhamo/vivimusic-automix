@@ -142,5 +142,24 @@ client.manifest = async (base) => /b\.example/.test(base) ? { settings: [{ key: 
   check('picker: an unknown addon', (await msg({ type: 'VIVI_ADDONS_QUALITY', id: 'zz', quality: 'x' })).error, 'No such addon.');
 }
 
+// the background's message gate: YouTube Music's tab may FIND, ISRC (the lyrics lookup's), OPEN ...; the list only from our pages
+{
+  const { readFileSync } = await import('node:fs');
+  const vm = await import('node:vm');
+  let listener = null;
+  const data = {};
+  const chrome = {
+    runtime: { getURL: (p) => 'moz-extension://ours/' + p, onMessage: { addListener: (f) => { listener = f; } } },
+    storage: { local: { get: async (d) => ({ ...d, ...data }), set: async (p) => { Object.assign(data, p); } } },
+  };
+  const ctx = vm.createContext({ chrome, console: { info() {}, warn() {} }, setTimeout, clearTimeout, URL, TextDecoder, TextEncoder });
+  ctx.globalThis = ctx;
+  for (const f of ['pick.js', 'client.js', 'bg-addons.js']) vm.runInContext(readFileSync(new URL('../src/addons/' + f, import.meta.url), 'utf8'), ctx);
+  const send = (m, url) => new Promise((resolve) => { if (listener(m, { url }, resolve) !== true) setTimeout(() => resolve('(no answer)'), 5); });
+  const page = 'https://music.youtube.com/watch?v=x';
+  check('gate: the tab may report an ISRC', await send({ type: 'VIVI_ADDONS_ISRC', videoId: 'v1', isrc: 'USUM71900001' }, page), { ok: true });
+  check('gate: the tab may not change the list', (await send({ type: 'VIVI_ADDONS_REMOVE', id: 'x' }, page)).error, 'Only the add-on settings can do that.');
+}
+
 console.log(failed ? `${failed} failed` : 'all passed');
 process.exit(failed ? 1 : 0);

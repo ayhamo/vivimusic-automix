@@ -31,6 +31,30 @@ must still have 0 cuts, and the platform logs it.
 
 Each platform reports its numbers against this table; a miss is a bug on that platform.
 
+## Muting the player at a take-over [phone]
+
+Phone 478a373, measured on Vaina Loca → SI NO ES CONTIGO, 2026-11-25. At a take-over, where the deck
+hands the song back to the player, YouTube's own track is heard about 10 ms after the deck's. If the
+player is muted only when the deck starts its fade, both play at once for those 10 ms: the samples
+add, and the output clips.
+
+**The rule:** mute the player one measured output latency + 10 ms ahead of the deck's 25 ms fade-in.
+
+**Measured on the phone,** 3 runs, before → after:
+- full-scale samples at the take-over: 74 → 0;
+- no dip: the level from 0 to 50 ms after the take-over within 0.2 dB;
+- the sections' levels within 0.1 dB;
+- the splice −1 to +2 ms, still within the 10 ms target.
+
+**PC:** not needed. Checked 2026-11-25 on a recorded run of the pair (an 8-bar blend out at
+145.66 s), recording the graph's output and YouTube's source together:
+- YouTube's `<video>` plays into the PC's own audio graph (`equalizer.js`), so it shares the decks'
+  output latency and can't be heard after them. In the recording YouTube's source ran 11 ms ahead
+  of the output, not behind it.
+- The output had no samples at full scale (peak −1.3 dBFS) and 0 cuts.
+- With an add-on copy of the new song, the song passed from deck to deck and YouTube's track never
+  came back.
+
 ## The queue during a mix [all]
 
 Rules for any app with Automix, not sound targets. Phone: Vivimusic 4370de0. The PC hasn't been
@@ -48,6 +72,36 @@ checked against them yet.
      isn't taken for that.
 
    Otherwise it stayed "done", and the overview showed "Planning the mix…" for good.
+   **PC:** a mix the listener calls off (Previous, Next, going back to the song, a seek, a pause of
+   theirs, a queue change) never marks the outgoing song as failed (`crossfade.js` `abortLive`). Only
+   a hand-over that fails on its own (Next did nothing) skips the song's next tries.
+3. **A pause between our Next and the new song isn't the listener's.** After the mix presses Next and
+   before the player names the new song, the player can stop for reasons of its own: an ad slot a
+   blocker empties (its flag shows for a moment), or the new song loading. The ad flag gets the same
+   grace as after the change (2 s); only a settled pause (the player has its data, isn't seeking) stops
+   the mix. A song that never starts is still caught (8 s). PC: `crossfade.js` `driveLive`, 2026-11-24,
+   after a blend in the Firefox test was called off "paused" 1.0 s after our Next, 0.2 s before the title
+   changed. A clean Next, sampled every 25 ms, never pauses the element: it stays playing at readyState
+   4, and the title changes in about 0.9 s.
+4. **A stopped audio clock calls the mix off.** A mix's end and its waits run on the audio clock
+   (the scheduled end, a copy's `onended`), and a suspended context, or one whose output device is
+   gone, never advances it: the mix would hold the player and every later skip for good. A watchdog on
+   the wall clock calls the mix off when the audio clock stands still for 3 s while it runs, without
+   marking the song (it isn't the song's fault). PC: `crossfade.js` `clockStalled` in `driveLive`
+   ("the audio clock stopped"), audit 2026-11-24.
+5. **The listener's pause during a mix stops it at once.** From the hand-over to the take-over, what
+   is heard is the app's (a copy, the decks), while the player may be silent, loading the next song,
+   or held paused, and its button may show a spinner. A press of the app's or the player's
+   play/pause in any of those phases means "pause": the mix is called off at once (not marked, rule
+   2), the decks fade out in about 0.1 s, and the player is left paused at the song and spot the mix
+   had reached: the outgoing song's before the Next, the incoming song's after it. It is never
+   started by that press (a hold before the incoming song's start isn't released into play first).
+   Found 2026-11-25 by the user: a pause during a mix kept the player loading and the mix playing.
+   On the PC the gaps were the time between our Next and the new song (rule 3 waits for a settled
+   pause there, and a loading player never settles) and the press while the player was held.
+   **PC:** `crossfade.js` `onPlayPauseDuringHold`: the player bar's and the mini player's
+   play/pause button, Space and K, captured before YouTube sees them, whenever a mix is live. A
+   pause from elsewhere (a media key) is still caught by the checks in `driveLive`.
 
 ## Playback speed [all]
 

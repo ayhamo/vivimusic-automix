@@ -298,7 +298,7 @@
   });
 
   chrome.storage.local.get(
-    { lyricsPriorityEnabled: true, lyricsPriorityOrder: ['lrcred', 'binilyrics', 'musixmatch'], lyricsPriorityWaitEnabled: true },
+    { lyricsPriorityEnabled: true, lyricsPriorityOrder: ['lrcred', 'unison', 'betterlyrics'], lyricsPriorityWaitEnabled: true }, // vivi+ the user's order
     ({ lyricsPriorityEnabled, lyricsPriorityOrder, lyricsPriorityWaitEnabled }) => {
       priorityEnabledToggle.checked = lyricsPriorityEnabled;
       priorityList.classList.toggle('open', lyricsPriorityEnabled);
@@ -875,8 +875,8 @@
     try {
       const res = await fetch(`https://music.youtube.com/search?q=${encodeURIComponent(q)}`, { credentials: 'include' });
       const html = await res.text();
-      const match = html.match(/"videoId":"([a-zA-Z0-9_-]{11})"/);
-      return match ? match[1] : null;
+      const match = html.match(/"videoId":"([a-zA-Z0-9_-]{11})"|videoId\\x22:\\x22([a-zA-Z0-9_-]{11})\\x22/); // vivi+ (audit 2026-11-24): the page's initial data writes quotes as \x22
+      return match ? match[1] || match[2] : null; // vivi+ (audit 2026-11-24)
     } catch {
       return null;
     }
@@ -902,6 +902,7 @@
   let cachePreviewCurrentUrl  = null;
 
   function openCachePreview(entry) {
+    if ([entry.videoUrl, entry.imageUrl].some((u) => u && !/^https:\/\//i.test(String(u)))) return; // vivi+ (audit 2026-11-24): only https artwork opens
     const url = entry.videoUrl || entry.imageUrl;
     if (!url) return;
     cachePreviewCurrentUrl = url;

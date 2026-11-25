@@ -2,6 +2,8 @@
 
 What the extension (this repo) and the phone app must agree on. The phone app keeps a copy of this folder and a script that checks its copy against this one; this folder is the master.
 
+The rulebook is a way to keep one design across our apps, so nothing is worked out twice; it isn't a rule above the apps we build on. It covers what we built. When a base app (Morphe on the phone, upstream BitChord, the extension's upstream) ships a feature we built, its version wins: we delete ours and wire theirs into our code, and the rule here says so.
+
 ```
 spec/
   automix/

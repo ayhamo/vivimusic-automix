@@ -32,6 +32,7 @@ async function ensureAmpHeaderSpoofRule() {
         condition: {
           urlFilter: '||amp-api.music.apple.com',
           resourceTypes: ['xmlhttprequest'],
+          tabIds: [-1], // vivi+ (audit 2026-11-24): only this extension's own requests, never a web page's
         },
         action: {
           type: 'modifyHeaders',
@@ -152,7 +153,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
   if (msg.type === 'VIVI_ANNOUNCEMENTS_FOR_YTMUSIC') {
-    if (sender.url && !sender.url.startsWith('https://music.youtube.com/') && !sender.url.startsWith(chrome.runtime.getURL(''))) { // vivi+ hook: our extension pages too
+    if (!sender.url || !sender.url.startsWith('https://music.youtube.com/') && !sender.url.startsWith(chrome.runtime.getURL(''))) { // vivi+ hook: our extension pages too; vivi+ (audit 2026-11-24): no url, no answer
       sendResponse({ ok: false, announcements: [] });
       return false;
     }
@@ -163,7 +164,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
   if (msg.type === 'VIVI_ANNOUNCEMENTS_TOASTED') {
-    if (sender.url && !sender.url.startsWith('https://music.youtube.com/') && !sender.url.startsWith(chrome.runtime.getURL(''))) { // vivi+ hook: our extension pages too
+    if (!sender.url || !sender.url.startsWith('https://music.youtube.com/') && !sender.url.startsWith(chrome.runtime.getURL(''))) { // vivi+ hook: our extension pages too; vivi+ (audit 2026-11-24): no url, no answer
       sendResponse({ ok: false });
       return false;
     }
@@ -250,11 +251,11 @@ async function checkForUpdate() {
 }
 
 // One-time lyrics defaults: lrc.red becomes the 1st priority provider
-// (then BiniLyrics, then BetterLyrics word-sync) and every provider is on.
+// (then Better Lyrics Unison, then Better Lyrics; vivi+) and every provider is on.
 // Respects existing choices: a user's own order is kept, with lrc.red just
 // slotted in at the top; priority is only switched on for users who never
 // configured an order.
-const DEFAULT_PRIORITY_ORDER = ['lrcred', 'binilyrics', 'musixmatch'];
+const DEFAULT_PRIORITY_ORDER = ['lrcred', 'unison', 'betterlyrics']; // vivi+ the user's order (2026-11-24)
 async function migrateLyricsDefaults() {
   // "Show lyrics for video songs" now defaults to off — applied once.
   const v = await chrome.storage.local.get({ vivi_video_lyrics_default_off: false });
@@ -505,6 +506,7 @@ async function romanizeJapaneseViaGoogle(text, sl) {
 
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (viviRefuseFromTab(msg, _sender, sendResponse)) return false; // vivi+ (audit 2026-11-24): account actions from our own pages only (fx-headers.js)
   switch (msg.type) {
 
     case 'VIVI_ROMANIZE_JA':
@@ -1319,20 +1321,22 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (!msg || msg.type !== 'VIVI_NET_FETCH') return false;
     (async () => {
       try {
-        if (sender.id && sender.id !== chrome.runtime.id) { // vivi+ hook: any of our own senders, not only YouTube Music tabs
+        if (sender.id !== chrome.runtime.id) { // vivi+ hook: any of our own senders, not only YouTube Music tabs; vivi+ (audit 2026-11-24): an id is required
           throw new Error('sender not allowed');
         }
         const u = new URL(msg.url);
-        if (u.protocol !== 'https:' || !hostAllowed(u.hostname)) throw new Error('host not allowed: ' + u.hostname);
+        if (u.protocol !== 'https:' || !hostAllowed(u.hostname) || !viviNetUrlOk(u.href, hostAllowed)) throw new Error('host not allowed: ' + u.hostname); // vivi+ (audit 2026-11-24): no Spotify (fx-headers.js)
         const i = msg.init || {};
         const res = await fetch(u.href, {
           method: i.method || 'GET',
           headers: i.headers || {},
           body: i.body ?? undefined,
-          credentials: i.credentials || 'same-origin',
+          credentials: 'omit', // vivi+ (audit 2026-11-24): no caller sends cookies; never the browser's logins
           cache: i.cache || 'default',
           redirect: 'follow',
+          signal: AbortSignal.timeout(VIVI_NET_TIMEOUT_MS), // vivi+ (audit 2026-11-24)
         });
+        if (res.url && !viviNetUrlOk(res.url, hostAllowed)) throw new Error('redirect not allowed'); // vivi+ (audit 2026-11-24)
         sendResponse({
           ok: true,
           status: res.status,

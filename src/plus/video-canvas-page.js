@@ -1002,7 +1002,7 @@
   const core = {
     CLIP_SEC, W, H, NEVER, OTHER_TAKE,
     norm, artists, officialChannel, titleCore, matches, searchResults, pickFormat,
-    heatmapOf, partStart, chorusMs, noFrames, pick, titleSays, findOn, snap, bestPartShows, videoChoices, choiceTag, artists,
+    heatmapOf, partStart, chorusMs, noFrames, pick, titleSays, findOn, snap, bestPartShows, videoChoices, choiceTag,
     grid, bars, area, diff, still, windows, choose, runnersUp, judge, cropX, change, cuts, flashing, end: loopEnd, cropRect,
     storyboardPlan, parseSidx, sidxRange, readBoxes, parseInit, parseSamples, selectSamples, buildClip,
   };
@@ -1746,7 +1746,8 @@
     const lines = [];
     for (const l of find(page) || []) {
       const text = String((l && l.lyricLine) || '').trim();
-      const start = Number(l && l.cueRange && l.cueRange.startTimeMilliseconds);
+      const rawStart = l && l.cueRange && l.cueRange.startTimeMilliseconds;
+      const start = String(rawStart ?? '').trim() === '' ? NaN : Number(rawStart);   // a missing start is not 0 (§11.6)
       const end = Number(l && l.cueRange && l.cueRange.endTimeMilliseconds);
       if (!text || !Number.isFinite(start)) continue;
       lines.push({ start, end: Number.isFinite(end) && end > start ? end : start + 3000, text });
@@ -1775,7 +1776,7 @@
       log('cache hit: no video for', `'${song.title}'`, '(saved', Math.round((Date.now() - saved.at) / 60000), 'min ago)');
       return { reqId: d.reqId, ok: false, none: true, why: 'no music video (saved miss: ' + (saved.why || 'none') + ')' };
     }
-    if (saved) {
+    if (saved && !saved.miss) {   // (a saved miss with choice.only: asked again below)
       idbPut(keyOf(id), { ...saved, shown: Date.now() });
       lastShown = id;
       const e = memPut(id, new Blob([saved.bytes], { type: 'video/mp4' }), saved.meta);

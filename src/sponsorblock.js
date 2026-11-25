@@ -23,7 +23,7 @@
   const CACHE_KEY_PFX   = 'vivi_sb_';
   const CACHE_TTL_MS    = 6 * 60 * 60 * 1000; // 6h — segments rarely change
   const FETCH_TIMEOUT   = 8000;
-  const DEBUG           = true; // temporarily on — surfaces fetch/lookup failures in devtools console while we track down the skip issue
+  const DEBUG           = false; // temporarily on — surfaces fetch/lookup failures in devtools console while we track down the skip issue // vivi+ (audit 2026-11-24): off, it logged every lookup
   const log = (...a) => DEBUG && console.log('[Vivi:SponsorBlock]', ...a);
 
   // "music_offtopic" is SponsorBlock's actual category for the non-music
@@ -78,14 +78,15 @@
   }
 
   function evictOldCache() {
-    chrome.storage.local.get(null, (all) => {
+    if (!chrome.storage.local.getKeys) return; // vivi+ (audit 2026-11-24): never get(null), it would read every login token into this page
+    chrome.storage.local.getKeys().then((keys) => chrome.storage.local.get(keys.filter((k) => k.startsWith(CACHE_KEY_PFX)), (all) => { // vivi+ (audit 2026-11-24): only the vivi_sb_ keys
       const entries = Object.entries(all).filter(([k]) => k.startsWith(CACHE_KEY_PFX));
       const MAX = 500;
       if (entries.length <= MAX) return;
       entries.sort((a, b) => (a[1]?.cachedAt || 0) - (b[1]?.cachedAt || 0));
       const toRemove = entries.slice(0, entries.length - MAX).map(([k]) => k);
       if (toRemove.length) chrome.storage.local.remove(toRemove);
-    });
+    })).catch(() => {}); // vivi+ (audit 2026-11-24)
   }
 
   // Returns an array of {start, end} in ms, sorted, for the given YouTube

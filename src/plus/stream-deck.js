@@ -76,6 +76,7 @@
     }
 
     load(bytes, mime = 'audio/webm') {
+      this.cancelLoad?.('another load');
       this.state = 'loading';
       if (this.url) URL.revokeObjectURL(this.url);
       this.url = URL.createObjectURL(new Blob([bytes], { type: mime }));
@@ -83,7 +84,9 @@
       return new Promise((resolve, reject) => {
         const ok = () => { done(); this.state = 'ready'; resolve(this.el.duration); };
         const bad = () => { done(); this.state = 'failed'; reject(new Error('the audio would not load')); };
-        const done = () => { this.el.removeEventListener('canplay', ok); this.el.removeEventListener('error', bad); };
+        const done = () => { this.el.removeEventListener('canplay', ok); this.el.removeEventListener('error', bad); this.cancelLoad = null; };
+        // (closed or loaded again before it was ready: the wait ends there, it never hangs)
+        this.cancelLoad = (why) => { done(); reject(new Error('the deck was ' + (why === 'another load' ? 'loaded again' : 'closed') + ' while loading')); };
         this.el.addEventListener('canplay', ok);
         this.el.addEventListener('error', bad);
       });
@@ -227,6 +230,7 @@
     }
 
     dispose(why = 'closed') {
+      this.cancelLoad?.(why);
       this.handBack(why);
       clearInterval(this.timer); this.timer = null;
       this.el.removeEventListener('error', this.onError);

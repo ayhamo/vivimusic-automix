@@ -1,5 +1,5 @@
 {
- "notes": "editor.md: every preset and lane shape at a window of D seconds and a beat of beatSec (null: beat match Off) → the curves both engines play (plan.schema.json curves; seconds from the window start). windows: a saved position (override.schema.json $defs.position) on a song grid {downbeatSec, beatSec} → song seconds. expect null: the override is refused (Auto plays). plans: an override (pick) on two steady songs {bpm, sec, downbeatSec} (every beat sure, flat energy, intro 0, outro 20 s before the end), planned at pos with earliest = pos + 4.5 s (a fixture input every runner passes as given, not the platform's own lead: editor.md §6) on Automix engine 2 (Classic) or 3 (v2) → the window played and glide (the plan carries one) and kickLock (Automix v2 only, kickLockAllowed: may its kick lock move the mix-in).",
+ "notes": "editor.md: every preset and lane shape at a window of D seconds and a beat of beatSec (null: beat match Off) → the curves both engines play (plan.schema.json curves; seconds from the window start). windows: a saved position (override.schema.json $defs.position) on a song grid {downbeatSec, beatSec} → song seconds. expect null: the override is refused (Auto plays). plans: an override (pick) on two steady songs {bpm, sec, downbeatSec} (every beat sure, flat energy, intro 0, outro 20 s before the end), planned at pos with earliest = pos + 4.5 s (a fixture input every runner passes as given, not the platform's own lead: editor.md §6) on Automix engine 2 (Classic) or 3 (v2) → the window played and glide (the plan carries one) and kickLock (Automix v2 only, kickLockAllowed: may its kick lock move the mix-in). An override with a speed (spotify-mixes.md rule 10) is planned with that speed, and its expect adds outRate, rate, speedOut and speedIn.",
  "curves": [
   {
    "name": "preset smooth, 8 bars at 120 BPM",
@@ -445,6 +445,10 @@
        1
       ],
       [
+       8,
+       1
+      ],
+      [
        16,
        0
       ]
@@ -477,7 +481,7 @@
        0
       ],
       [
-       16,
+       8,
        1
       ]
      ],
@@ -1868,7 +1872,7 @@
  ],
  "plans": [
   {
-   "name": "Slam with beat match Off: still its 2 bars",
+   "name": "Slam with beat match Off: the pair's own length (no preset sets one)",
    "engine": 3,
    "out": {
     "bpm": 120,
@@ -1889,8 +1893,8 @@
    "expect": {
     "style": "crossfade",
     "bars": 0,
-    "durationSec": 4,
-    "mixOutTrackTime": 195.7,
+    "durationSec": 12,
+    "mixOutTrackTime": 187.7,
     "mixInTrackTime": 0,
     "glide": false,
     "kickLock": false,
@@ -2185,6 +2189,88 @@
     "kickLock": true,
     "warnings": [
      "16 bars not used: no intro in the next song to blend over: a drop-in on the next song's first beat"
+    ]
+   }
+  },
+  {
+   "name": "songs at a speed (BUDGET #5, Stay x0.97057 -> Cold Water x1.03228, BitChord's BPMs): 10% apart raw, 3.4% as they play, so it beat-matches; B at A's played tempo",
+   "engine": 3,
+   "out": {
+    "bpm": 102.3,
+    "sec": 220,
+    "downbeatSec": 0.4
+   },
+   "in": {
+    "bpm": 93,
+    "sec": 210,
+    "downbeatSec": 0.4
+   },
+   "pos": 30,
+   "override": {
+    "v": 1,
+    "preset": "custom",
+    "bars": 2,
+    "lanes": {
+     "volume": "fadeInFadeOut",
+     "eq": "none",
+     "effect": "none"
+    },
+    "speed": {
+     "out": 0.97057,
+     "in": 1.03228
+    }
+   },
+   "expect": {
+    "style": "blend",
+    "bars": 2,
+    "durationSec": 4.834357,
+    "mixOutTrackTime": 211.543695,
+    "mixInTrackTime": 0.4,
+    "glide": false,
+    "kickLock": true,
+    "warnings": [
+     "no intro in the next song to blend over"
+    ],
+    "outRate": 0.97057,
+    "rate": 1.067627,
+    "speedOut": 0.97057,
+    "speedIn": 1.03228
+   }
+  },
+  {
+   "name": "the same pair with no speeds: 10% apart, no beat match",
+   "engine": 3,
+   "out": {
+    "bpm": 102.3,
+    "sec": 220,
+    "downbeatSec": 0.4
+   },
+   "in": {
+    "bpm": 93,
+    "sec": 210,
+    "downbeatSec": 0.4
+   },
+   "pos": 30,
+   "override": {
+    "v": 1,
+    "preset": "custom",
+    "bars": 2,
+    "lanes": {
+     "volume": "fadeInFadeOut",
+     "eq": "none",
+     "effect": "none"
+    }
+   },
+   "expect": {
+    "style": "crossfade",
+    "bars": 0,
+    "durationSec": 4.692082,
+    "mixOutTrackTime": 215.007918,
+    "mixInTrackTime": 0,
+    "glide": false,
+    "kickLock": false,
+    "warnings": [
+     "tempos 10% apart (v2 stretches at most 8%): plays without beat match"
     ]
    }
   }

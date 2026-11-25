@@ -6,15 +6,23 @@
 
 'use strict';
 
-// ── Chrome/Edge: Spotify web-player Origin/Referer for this extension's own requests ──
+// ── Chrome/Edge: Spotify web-player Origin/Referer (and SimpMusic's User-Agent) for this extension's own requests ──
 // Firefox does this in fx-headers.js (blocking webRequest) and has no DNR here.
 const SPOTIFY_HEADER_RULE_ID = 9002;
+const SIMPMUSIC_UA_RULE_ID = 9003;
 async function ensureSpotifyHeaderRule() {
   if (!chrome.declarativeNetRequest?.updateSessionRules) return;
   try {
     await chrome.declarativeNetRequest.updateSessionRules({
-      removeRuleIds: [SPOTIFY_HEADER_RULE_ID],
+      removeRuleIds: [SPOTIFY_HEADER_RULE_ID, SIMPMUSIC_UA_RULE_ID],
       addRules: [{
+        // lyrics.md §11.1: SimpMusic answers its own clients only, by the User-Agent (a
+        // browser's gets 403). Chrome drops a User-Agent set in fetch(); Firefox keeps it.
+        id: SIMPMUSIC_UA_RULE_ID,
+        priority: 1,
+        condition: { requestDomains: ['api-lyrics.simpmusic.org'], resourceTypes: ['xmlhttprequest'], tabIds: [-1] },
+        action: { type: 'modifyHeaders', requestHeaders: [{ header: 'User-Agent', operation: 'set', value: 'SimpMusicLyrics/1.0' }] },
+      }, {
         // Chrome/Edge: the Spotify web-player endpoints want the web player's
         // Origin/Referer. tabIds [-1] = only this extension's own requests,
         // never the open.spotify.com page itself.
@@ -43,6 +51,21 @@ async function ensureSpotifyHeaderRule() {
 chrome.storage.local.get({ vivi_video_lyrics_on_2026_11: false }).then((s) => {
   if (!s.vivi_video_lyrics_on_2026_11) chrome.storage.local.set({ lyricsShowForVideos: true, vivi_video_lyrics_default_off: true, vivi_video_lyrics_on_2026_11: true });
 }).catch(() => {});
+// spotify.js and bg-canvas.js keep one spotify_canvas_<artist>—<song> key per song, with no
+// limit: once a day the oldest beyond SPOTIFY_CANVAS_KEEP are dropped (they are asked again).
+const SPOTIFY_CANVAS_KEEP = 2000;
+async function pruneSpotifyCanvasCache() {
+  const { vivi_canvas_pruned_at: at = 0 } = await chrome.storage.local.get('vivi_canvas_pruned_at');
+  if (Date.now() - at < 24 * 3600 * 1000) return;
+  await chrome.storage.local.set({ vivi_canvas_pruned_at: Date.now() });
+  const names = chrome.storage.local.getKeys ? await chrome.storage.local.getKeys() : Object.keys(await chrome.storage.local.get(null));
+  const keys = names.filter((k) => k.startsWith('spotify_canvas_'));
+  if (keys.length <= SPOTIFY_CANVAS_KEEP) return;
+  const all = await chrome.storage.local.get(keys);
+  keys.sort((a, b) => (all[a]?.cachedAt || 0) - (all[b]?.cachedAt || 0));
+  await chrome.storage.local.remove(keys.slice(0, keys.length - SPOTIFY_CANVAS_KEEP));
+}
+pruneSpotifyCanvasCache().catch(() => {});
 chrome.runtime.onInstalled?.addListener(() => { ensureSpotifyHeaderRule(); });
 chrome.runtime.onStartup?.addListener(() => { ensureSpotifyHeaderRule(); });
 ensureSpotifyHeaderRule();
@@ -94,22 +117,24 @@ async function handleListenbrainzScrobble(track, timestamp) {
   }
 }
 
-chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (viviRefuseFromTab(msg, sender, sendResponse)) return false;   // sign-in and out: our own pages only (fx-headers.js)
+  const answer = (p) => p.then(sendResponse, (e) => sendResponse({ ok: false, error: String(e?.message || e) }));
   switch (msg?.type) {
     case 'VIVI_LISTENBRAINZ_LOGIN':
-      handleListenbrainzLogin(msg.token).then(sendResponse);
+      answer(handleListenbrainzLogin(msg.token));
       return true;
     case 'VIVI_LISTENBRAINZ_LOGOUT':
-      handleListenbrainzLogout().then(sendResponse);
+      answer(handleListenbrainzLogout());
       return true;
     case 'VIVI_LISTENBRAINZ_STATUS':
-      listenbrainzGetSession().then((s) => sendResponse({ loggedIn: !!s, username: s?.username || null }));
+      answer(listenbrainzGetSession().then((s) => ({ loggedIn: !!s, username: s?.username || null })));
       return true;
     case 'VIVI_LISTENBRAINZ_NOWPLAYING':
-      handleListenbrainzNowPlaying(msg.track).then(sendResponse);
+      answer(handleListenbrainzNowPlaying(msg.track));
       return true;
     case 'VIVI_LISTENBRAINZ_SCROBBLE':
-      handleListenbrainzScrobble(msg.track, msg.timestamp).then(sendResponse);
+      answer(handleListenbrainzScrobble(msg.track, msg.timestamp));
       return true;
     default:
       return undefined;
@@ -173,7 +198,10 @@ async function getAppleArtistArt(artistName) {
     if (!hit || !hit.artistLinkUrl) return null;
 
     const pageUrl = hit.artistLinkUrl.split('?')[0];
+    // the link comes from iTunes' answer: only Apple Music's own https pages are opened
+    if (!/^https:\/\/music\.apple\.com\//.test(pageUrl)) return null;
     const pageRes = await fetch(pageUrl, {
+      credentials: 'omit',
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
       }
@@ -347,7 +375,10 @@ async function getGeniusLyrics(track) {
     }
 
     if (!bestHit?.url) return null;
+    // the link comes from Genius' answer: only genius.com's own https pages are opened
+    if (!/^https:\/\/genius\.com\//.test(String(bestHit.url))) return null;
     const pageRes = await fetch(bestHit.url, {
+      credentials: 'omit',
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
       }
@@ -462,96 +493,55 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   };
 }
 
-// ── spotify.js: login via the browser's own Spotify cookie (any cookie store),
-// a remembered Disconnect, the TOTP secret fallback, keep-alive while connecting ──
+// ── spotify.js: login via the browser's own Spotify cookie (the default cookie
+// store only), a remembered Sign out, the TOTP secret fallback, keep-alive while connecting ──
+// canvas.md §4 rule 0: the cookie is read from the browser each time and never
+// copied into storage (content scripts can read storage.local); Firefox
+// containers and private windows (other cookie stores) are never read.
+chrome.storage.local.remove('spotifySpDc').catch(() => {});   // the copy older versions kept
 getSpDc = async function getSpDc() {
-  const { spotifySpDc, spotifyDisconnected } = await chrome.storage.local.get(['spotifySpDc', 'spotifyDisconnected']);
-  if (spotifySpDc) return spotifySpDc;
-  // After "Disconnect" the browser's own Spotify login is left alone, so do
-  // not pick it up again until the user presses Connect.
+  // After Sign out the browser's own Spotify login is left alone, so do
+  // not pick it up again until the listener presses Sign in.
+  const { spotifyDisconnected } = await chrome.storage.local.get('spotifyDisconnected');
   if (spotifyDisconnected) return null;
 
   // Upstream's plain lookup first: the normal first-party login cookie.
   try {
     const c = await chrome.cookies.get({ url: SPOTIFY_HOME, name: 'sp_dc' });
-    if (c?.value) {
-      await chrome.storage.local.set({ spotifySpDc: c.value });
-      return c.value;
-    }
+    if (c?.value) return c.value;
   } catch {}
 
-  try {
-    const stores = await chrome.cookies.getAllCookieStores().catch(() => [{ id: null }]);
-    const storeIds = [null, ...stores.map(s => s.id).filter(Boolean)];
-
-    for (const storeId of storeIds) {
-      const storeOpt = storeId ? { storeId } : {};
-      const queries = [
-        { name: 'sp_dc', ...storeOpt, partitionKey: {}, firstPartyDomain: null },
-        { name: 'sp_dc', ...storeOpt, firstPartyDomain: null },
-        { name: 'sp_dc', ...storeOpt, partitionKey: {} },
-        { name: 'sp_dc', ...storeOpt },
-        { domain: 'spotify.com', name: 'sp_dc', ...storeOpt },
-        { domain: '.spotify.com', name: 'sp_dc', ...storeOpt },
-        { url: 'https://open.spotify.com/', name: 'sp_dc', ...storeOpt },
-        { url: 'https://spotify.com/', name: 'sp_dc', ...storeOpt },
-        { url: 'https://accounts.spotify.com/', name: 'sp_dc', ...storeOpt }
-      ];
-
-      for (const q of queries) {
-        try {
-          let results;
-          if (q.url) {
-            const single = await chrome.cookies.get(q).catch(() => null);
-            results = single ? [single] : [];
-          } else {
-            results = await chrome.cookies.getAll(q).catch(() => []);
-          }
-          for (const c of results) {
-            if (c && c.name === 'sp_dc' && c.value) {
-              const val = String(c.value).trim();
-              if (val) {
-                await chrome.storage.local.set({ spotifySpDc: val });
-                return val;
-              }
-            }
-          }
-        } catch {}
-      }
-    }
-
-    // Direct check of open Spotify tabs
+  // The same default store, asked the ways Firefox's dFPI / first-party isolation need
+  // (no storeId: the background's own store, never a container's or a private window's).
+  const queries = [
+    { name: 'sp_dc', partitionKey: {}, firstPartyDomain: null },
+    { name: 'sp_dc', firstPartyDomain: null },
+    { name: 'sp_dc', partitionKey: {} },
+    { name: 'sp_dc' },
+    { domain: 'spotify.com', name: 'sp_dc' },
+    { url: 'https://spotify.com/', name: 'sp_dc' },
+    { url: 'https://accounts.spotify.com/', name: 'sp_dc' },
+  ];
+  for (const q of queries) {
     try {
-      const tabs = await chrome.tabs.query({ url: '*://*.spotify.com/*' });
-      for (const tab of tabs) {
-        if (tab.cookieStoreId) {
-          const cks = await chrome.cookies.getAll({ name: 'sp_dc', storeId: tab.cookieStoreId }).catch(() => []);
-          for (const c of cks) {
-            if (c && c.name === 'sp_dc' && c.value) {
-              const val = String(c.value).trim();
-              if (val) {
-                await chrome.storage.local.set({ spotifySpDc: val });
-                return val;
-              }
-            }
-          }
-        }
+      const results = q.url
+        ? [await chrome.cookies.get(q).catch(() => null)]
+        : await chrome.cookies.getAll(q).catch(() => []);
+      for (const c of results) {
+        const val = c && c.name === 'sp_dc' ? String(c.value || '').trim() : '';
+        if (val && (!c.storeId || c.storeId === 'firefox-default' || c.storeId === '0')) return val;
       }
     } catch {}
-
-    return null;
-  } catch (e) {
-    console.warn('[Vivi Spotify] Error getting sp_dc:', e);
-    return null;
   }
+  return null;
 };
 
 setSpDc = async function setSpDc(value) {
   value = String(value || '').trim();
   if (!value) throw new Error('Empty sp_dc');
-  // Keep a local copy and also install it as the Spotify web-player cookie so
-  // extension fetch() requests can authenticate with credentials: include.
-  await chrome.storage.local.set({ spotifySpDc: value, spotifyDisconnected: false });
+  // Install it as the Spotify web-player cookie (no copy in storage) so extension
+  // fetch() requests can authenticate with credentials: include.
+  await chrome.storage.local.set({ spotifyDisconnected: false });
   // Only install the cookie when the browser does not already have this
   // login: rewriting it would turn a remembered login into a session cookie.
   const existing = await chrome.cookies.get({ url: SPOTIFY_HOME, name: 'sp_dc' }).catch(() => null);
@@ -588,7 +578,6 @@ getSecretDict = async function getSecretDict() {
   const connect = async function spotifyConnectFromBrowser() {
     // Read the browser's current login, not an older saved copy.
     spotifyTokenCache = null;
-    await chrome.storage.local.remove('spotifySpDc');
     await chrome.storage.local.set({ spotifyDisconnected: false });
     // Without the Spotify host permission Firefox hides the cookie entirely.
     try {
@@ -598,17 +587,16 @@ getSecretDict = async function getSecretDict() {
         return spotifyJsonError('Vivimusic Web is not allowed to access Spotify. Allow it in about:addons → Vivimusic Web+ → Permissions, then press Connect again.');
       }
     } catch {}
-    // 1. First, check if sp_dc is ALREADY available right now in browser cookies!
-    const existingSpDc = await getSpDc();
-    if (existingSpDc) {
-      await setSpDc(existingSpDc);
-      return { ok: true };
-    }
+    // 1. Already signed in on open.spotify.com in this browser (its default cookie store)?
+    // The cookie is the browser's own: nothing is copied or rewritten.
+    if (await getSpDc()) return { ok: true };
 
     // 2. If not found, focus existing Spotify tab or open open.spotify.com
     let tab;
     try {
-      const tabs = await chrome.tabs.query({ url: '*://*.spotify.com/*' });
+      // a container's or private window's tab has its own cookies, never read: not that one
+      const tabs = (await chrome.tabs.query({ url: '*://*.spotify.com/*' }))
+        .filter((t) => !t.incognito && (!t.cookieStoreId || t.cookieStoreId === 'firefox-default'));
       if (tabs.length > 0) {
         tab = tabs[0];
         await chrome.tabs.update(tab.id, { active: true });
@@ -623,15 +611,12 @@ getSecretDict = async function getSecretDict() {
     const deadline = Date.now() + 120000;
     while (Date.now() < deadline) {
       await new Promise(r => setTimeout(r, 1200));
-      const val = await getSpDc();
-      if (val) {
-        await setSpDc(val);
-        return { ok: true };
-      }
+      if (await getSpDc()) return { ok: true };
     }
     return spotifyJsonError('No sp_dc cookie detected. Log in to Spotify in the opened tab and try again.');
   };
-  spotifyConnectFromBrowser = function spotifyConnectFromBrowser() { return viviWithKeepAlive(connect); };
+  // background.js's VIVI_SPOTIFY_CONNECT already runs it inside viviWithKeepAlive
+  spotifyConnectFromBrowser = connect;
 }
 
 // canvas.md §4 rule 0: no part of the sp_dc cookie leaves the background (upstream showed 8 of its characters)
@@ -640,15 +625,34 @@ getSecretDict = async function getSecretDict() {
   spotifyStatus = async function spotifyStatus() { const s = await status(); if (s) delete s.masked; return s; };
 }
 
-clearSpotify = async function clearSpotify() {
-  spotifyTokenCache = null;
-  spotifyClientTokenCache = null;
-  // Forget the session here only. Removing the browser's sp_dc cookie (as
-  // before) logged the user out of open.spotify.com as well.
-  await chrome.storage.local.remove(['spotifySpDc']);
-  await chrome.storage.local.set({ spotifyDisconnected: true });
-  return { ok: true };
-};
+// ── Sign out and the signed-in token ──
+// A token request still in flight when the listener signs out must not be
+// stored or used after it: Sign out bumps a generation, and a token whose
+// request began in an older generation is dropped (audit 2026-11-24).
+{
+  let signOutGen = 0;
+  const fetchToken = getSpotifyToken;
+  getSpotifyToken = async function getSpotifyToken(spDc) {
+    const gen = signOutGen;
+    const auth = await fetchToken(spDc);
+    if (gen !== signOutGen) {
+      if (spotifyTokenCache === auth) spotifyTokenCache = null;
+      throw new Error('Spotify was signed out');
+    }
+    return auth;
+  };
+
+  clearSpotify = async function clearSpotify() {
+    signOutGen++;
+    spotifyTokenCache = null;
+    spotifyClientTokenCache = null;
+    // Forget the session here only. Removing the browser's sp_dc cookie (as
+    // before) logged the user out of open.spotify.com as well.
+    await chrome.storage.local.remove(['spotifySpDc']);   // a copy older versions kept
+    await chrome.storage.local.set({ spotifyDisconnected: true });
+    return { ok: true };
+  };
+}
 
 // ── apple-canvas.js (ported from BitChord's AppleMusicCanvas.kt) ──
 //  - the web player's own JWT is scraped from music.apple.com's bundles,
@@ -699,21 +703,24 @@ clearSpotify = async function clearSpotify() {
     const htmlRes = await fetch('https://music.apple.com/us/browse');
     const html = await htmlRes.text();
     const scripts = [...new Set(html.match(/\/assets\/index(?:-legacy)?[~-][a-zA-Z0-9_-]+\.js/g) || [])];
+    // Every bundle is read before picking: the web player's own token may sit in
+    // a later bundle than an unlabelled one (audit 2026-11-24).
+    const candidates = [];
     for (const scriptPath of scripts) {
       let scriptText;
       try {
         scriptText = await (await fetch(`https://music.apple.com${scriptPath}`)).text();
       } catch { continue; }
-      const candidates = [...new Set(scriptText.match(/ey[a-zA-Z0-9_-]+\.ey[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+/g) || [])]
-        .filter((t) => !rejectedAmpTokens.has(t))
-        .map((t) => ({ t, exp: jwtExpiryMs(t) }))
-        .filter((c) => c.exp && c.exp > now);
-      if (!candidates.length) continue;
-      // The web player's own token first; any other is a guess, kept so a change
-      // in how Apple labels it is not fatal.
-      return candidates.find((c) => isWebPlayerToken(c.t)) || candidates[0];
+      for (const t of scriptText.match(/ey[a-zA-Z0-9_-]+\.ey[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+/g) || []) {
+        if (!rejectedAmpTokens.has(t) && !candidates.some((c) => c.t === t)) candidates.push({ t, exp: jwtExpiryMs(t) });
+      }
+      // The web player's own token ends the search early; an unlabelled one waits for the rest.
+      const own = candidates.find((c) => c.exp && c.exp > now && isWebPlayerToken(c.t));
+      if (own) return own;
     }
-    return null;
+    // No web player token in any bundle: the first unexpired one is a guess, kept
+    // so a change in how Apple labels it is not fatal.
+    return candidates.find((c) => c.exp && c.exp > now) || null;
   }
 
   getOrFetchAmpToken = async function getOrFetchAmpToken() {

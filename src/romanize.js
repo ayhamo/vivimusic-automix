@@ -577,6 +577,7 @@
         done = true;
         onlineActive--;
         if (val) onlineCache.set(job.text, val);
+        if (onlineCache.size > 2000) onlineCache.delete(onlineCache.keys().next().value); // vivi+ (audit 2026-11-24): the newest 2000 lines, not every line of the session
         job.resolve(val || null);
         pumpOnline();
       };

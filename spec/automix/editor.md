@@ -1,6 +1,6 @@
 # Transition editor
 
-The Automix overview grows into an editor: presets, three lanes (volume, EQ, effect), a draggable
+The Automix overview grows into an editor: presets, four lanes (volume, EQ, effect, Effects: §12), a draggable
 transition window and a beat-match mode. The phone and the extension build the same editor from this
 file. The user's edits are saved per pair as an **override** (`override.schema.json`); the planner
 turns an override into a plan whose `curves` (plan.schema.json) both engines play.
@@ -8,6 +8,8 @@ turns an override into a plan whose `curves` (plan.schema.json) both engines pla
 Fixtures: `editor-cases.json` (an override → its curves and window). Runner on the extension:
 `node scripts/editor_cases.mjs`. Functions: `presetCurves`, `resolveWindow`, and for
 drawings (§10) `pointCurves`, `drawSec` and `normalizeOverride`, in `src/automix/automix.js`.
+
+Mix files (overrides per pair in a file, to import and export): `mix-file.md`.
 
 Sources: research `Spotify-Apple-Mixing.md` §1.2 (Spotify's editor) and §5 (what we lack), and
 SHORTLIST "Overview → editor".
@@ -17,11 +19,15 @@ SHORTLIST "Overview → editor".
 - **Key:** `"<fromVideoId>>``<toVideoId>"`, the same key both apps use today for `{style, bars}`.
 - **Fields:**
   - `preset`;
-  - `lanes` {volume, eq, effect} (only for `custom`): each a shape name, or a drawing (§10);
+  - `lanes` {volume, eq, effect, fx} (only for `custom`): each a shape name, or a drawing (§10); `fx`
+    (§12) may be missing, which is none;
   - `bars`;
   - `beatMatch`;
   - `window` {out, in}, each a bar index plus a nudge in ms plus the seconds it meant when saved;
   - `lock`;
+  - `gridBpm` (the tempo of A its beats count on, from a mix file: `mix-file.md` rule 4);
+  - `speed` {out, in}: each song's speed in the playlist the mix came from (`spotify-mixes.md` rule
+    10); the editor doesn't set it;
   - `engine` (the Automix version the user saw it under; informational);
   - `savedAt`.
 
@@ -52,21 +58,38 @@ SHORTLIST "Overview → editor".
 
 ## 2. Presets (questions 2, 7, 9, 12)
 
-A preset sets the three lanes together. Editing a lane turns the preset into `custom`, with the
+A preset sets the lanes together. Editing a lane turns the preset into `custom`, with the
 lanes it had. Picking a preset keeps the window and the length (Spotify does the same).
 
-| Preset | Volume | EQ | Effect | Default length | Colour chip |
-|---|---|---|---|---|---|
-| Auto | the planner's | the planner's | the planner's | the planner's | neutral |
-| Smooth | smooth | centerBassSwap | none | Auto | blue |
-| Rise | overlap | endBassSwap | lpInHpOut | Auto | purple |
-| Blend | overlap | threeBandFade | none | Auto | yellow |
-| Wave | overlap | centerBassSwap | lpBoth | Auto | purple |
-| Melt | crossfade | centerBassSwap | hpBoth | Auto | purple |
-| Slam | centerCut | none | none | 2 bars | red |
-| Echo out | *reserved, see §5* | | | | |
-| Loop | the loop mix's | the loop mix's | the loop mix's | the loop's own | green |
-| Custom | the user's | the user's | the user's | Auto | the badge only |
+The presets are Spotify's (read in its mix editor 2026-11-25), in its order, then this app's Loop.
+The id is what an override stores; the name is what the editor shows. The `effect` lane is
+Spotify's Filter. Looping is none in every preset. No preset sets a length: each plays the pair's
+own (Auto) unless one is picked.
+
+| Name | id | Volume | EQ | Filter (`effect`) | Effects (`fx`) | Colour chip |
+|---|---|---|---|---|---|---|
+| Auto | `auto` | the planner's | the planner's | the planner's | none | neutral |
+| Custom | `custom` | the user's | the user's | the user's | the user's | the badge only |
+| Fade | `smooth` | smooth | centerBassSwap | none | none | blue |
+| Rise | `rise` | overlap | endBassSwap | lpInHpOut | none | purple |
+| Wave | `wave` | overlap | centerBassSwap | lpBoth | none | purple |
+| Blend | `blend` | overlap | threeBandFade | none | none | yellow |
+| Slam | `slam` | centerCut | none | none | none | red |
+| Melt | `melt` | fadeInFadeOut | centerBassSwap | hpBoth | none | purple |
+| Afterglow | `afterglow` | smooth | centerBassSwap | none | reverbOutCenter | purple |
+| Surge | `surge` | fadeInCutOut | endBassSwap | hpHalfOut | reverbOutEnd | purple |
+| Dissolve | `dissolve` | fadeInCutOut | endBassSwap | hpHalfOut | echoHalfOutEnd | purple |
+| No transition | `none` | no mix | | | | neutral |
+| Loop | `loop` | the loop mix's | the loop mix's | the loop mix's | none | green |
+| Echo out | *reserved, see §5* | | | | | |
+
+- Fade keeps the id `smooth` (its name before 2026-11-25), so saved edits read as they did. Melt's
+  volume was `crossfade` before 2026-11-25 and Slam's length 2 bars.
+- **No transition:** no mix and no crossfade. The playing song plays to its end and the next starts
+  from its beginning, as with Automix off. The lanes, length, window and beat match are off; the
+  presets stay, to pick another.
+- The dropdowns show Spotify's names for the shapes (`spotify-mixes.md` rule 4, e.g. "Center bass
+  swap", "Low pass filter in high pass filter out", "2 beat loop").
 
 **Lane colours (both apps):**
 
@@ -96,7 +119,7 @@ lanes it had. Picking a preset keeps the window and the length (Spotify does the
 **Slam (question 9):** a cut, not a fade:
 - The volume swap is an 8 ms ramp (`CUT_RAMP_SEC`), which keeps it free of clicks.
 - The ramp starts on the window's centre.
-- Slam's default 2 bars put that centre on a downbeat. With any even bar count it's a bar line too.
+- With an even bar count that centre is a bar line.
 
 ## 3. Lanes as curves (questions 2, 3)
 
@@ -128,6 +151,12 @@ a fraction `x` of the window's length `D` (t = x·D).
 | cutInFadeOut | [0, 1] [1, 0] | [0, 0] [e, 1] |
 | fadeInCutOut | [0, 1] [1−e, 1] [1, 0] | [0, 0] [1, 1] |
 | centerCut | [0, 1] [0.5, 1] [0.5+e, 0] | [0, 0] [0.5, 0] [0.5+e, 1] |
+| fadeInFadeOut | [0, 1] [0.5, 1] [1, 0] | [0, 0] [0.5, 1] |
+| fadeInFastOut | [0, 1] [0.75, 1] [1, 0] | [0, 0] [0.75, 1] |
+| fadeIn1BarCutOut | [0, 1] [b, 1] [b+e, 0] | [0, 0] [0.5, 1] |
+| overlap1BarCutOut | [0, 1] [b, 1] [b+e, 0] | [0, 0] [e, 1] |
+
+`b` is one bar before the end: `max(0.5, 1 − 4 · beatSec / D)`; with beat match Off, `0.875`.
 
 ### EQ (`bassDb`, `highDb` per deck)
 
@@ -137,11 +166,13 @@ a fraction `x` of the window's length `D` (t = x·D).
 | endBassSwap | bass [0.875−hb, 0] [0.875+hb, CUT] | bass [0, CUT] [0.875−hb, CUT] [0.875+hb, 0] |
 | threeBandFade | as centerBassSwap, plus high [0.5, 0] [1, CUT] | as centerBassSwap, plus high [0, CUT] [0.5, 0] |
 | quickBassCut | bass [0, 0] [2·hb, CUT] | none |
+| startBassSwap | bass [0.125−hb, 0] [0.125+hb, CUT] | bass [0, CUT] [0.125−hb, CUT] [0.125+hb, 0] |
+| longBassCut | bass [0, 0] [0.5, CUT] | none |
+| bassFadeOut | bass CUT · (1 − cos(t·π)) / 2 at x = t / 2, t = 0, 1/16 … 1 (17 points; an S-curve to CUT at 0.5) | none |
 | none | none | none |
 
-**Question 3: no mid curve.** "3-band fade" uses the two shelves plus the volume lane. The mids
-follow the fader. The extension's decks have a 1 kHz band and the phone's have none, so a `midDb`
-lane would be extension-only. It isn't added.
+**Question 3: the mid band.** "3-band fade" uses the two shelves plus the volume lane; no shape
+moves the mids. A drawing can (`mid`, plan `midDb`: §12), since Spotify's mixes draw it.
 
 ### Effect (`lowpassHz`, `highpassHz` per deck)
 
@@ -153,6 +184,18 @@ lane would be extension-only. It isn't added.
 | lpBoth | LP [0.5, 20000] [1, 400] | LP [0, 400] [0.5, 20000] |
 | hpBoth | HP [0.5, 20] [1, 1000] | HP [0, 1000] [0.5, 20] |
 | lpInHpOut | HP [0, 20] [1, 1000] | LP [0, 400] [1, 20000] |
+| hpOut | HP [0, 20] [1, 1000] | none |
+| lpIn | none | LP [0, 400] [1, 20000] |
+| hpInLpOut | LP [0, 20000] [1, 400] | HP [0, 1000] [1, 20] |
+| hpHalfOut | HP [0.5, 20] [1, 1000] | none |
+| noiseOutEnd | noise [0.5, 0] [1, 1] (§12) | none |
+
+The shapes added 2026-11-25 (fadeInFadeOut, fadeInFastOut, startBassSwap, longBassCut, hpOut, lpIn,
+hpInLpOut, hpHalfOut, noiseOutEnd) carry Spotify's style names (`spotify-mixes.md` rule 4); Spotify's
+own curves for them aren't known, so these are this app's. fadeIn1BarCutOut, overlap1BarCutOut and
+bassFadeOut (added the same day) follow screenshots of Spotify's editor
+(`research/spotify-mixes/styles/`, an 8-bar mix: A cut at bar 7, B's fade and A's bass S-curve
+ending at bar 4).
 
 ### Rate (`rate`), from the beat-match mode (§4)
 
@@ -189,7 +232,8 @@ far apart"). Prism `MixMoves` `ECHO_OUT`.
    EQ and filters.
 2. **[both]** On the catch A's dry sound is cut in 10 ms and B comes in at full level in the same
    10 ms, at its own speed, from its first downbeat when that is in its first 10 s, else from its
-   start. Nothing is beatmatched and no filter moves.
+   start. Nothing is beatmatched and no filter moves. **PC:** a hand-over that comes too late to
+   feed that beat (the catch under 20 ms away) plays the catch without the echo.
 3. **[both]** The mix lasts 8 beats of A (`bars` 2); the echo has died to 0.53^8, about -44 dB, and is
    faded out over its last 50 ms.
 4. **[both]** The plan: `shape` `echo` on style `blend`, `rate` 1, `outRate` 1, and
@@ -210,6 +254,10 @@ from `bars`.
 - With beat match Off, nothing snaps.
 - Nudges are 10 ms steps (`nudgeMs`, ±2000 ms at most). A nudge past that is refused with
   "Nudges reach 2 s at most: drag the song instead".
+- A nudge stops at the window's limits (below), as a drag does: one that would leave them is refused
+  with "Held: " and the limit's reason; a nudge back towards them from outside is allowed. (Past a
+  limit the planner clamps the position back, so the nudge would save a position that never plays.)
+  **[PC]** `nudgeWindow(pos, dir, limits)` in `automix.js`.
 - **The grids** (`editorGrid(analysis, side)` → `{beatSec, downbeatSec, bpm}`):
   - `out` (A): A's end grid, the `tailGrid` fields (`beatIntervalSec`, `firstDownbeatSec`, `bpm`)
     when the analysis has one, else its main grid.
@@ -229,6 +277,10 @@ from `bars`.
 - **Reading it back** (`resolveWindow`): the time is `downbeat(bar) + nudgeMs/1000`. If that is more
   than one beat from `sec`, the grid changed under it. Then the position is `sec`, snapped to the new
   grid's nearest downbeat, and the result says `moved: true` so the editor can mark it.
+- **[all] Seconds only** (`{sec}` with no `bar`, as a mix file from another app gives it, mix-file.md
+  rule 2): the position plays at that song's nearest beat to `sec − nudgeMs/1000`, plus the nudge,
+  never `moved`. With no grid it plays at `sec`. The readout leaves out the bar. A drag saves a
+  normal position (with its bar); a nudge keeps it seconds only.
 
 **Limits (a drag past one is held there, and the readout says why).** These are the planner's
 `windowLimits(plan, A, B, earliest)`, in song seconds:
@@ -378,8 +430,10 @@ drawing:
   | Lane | Per deck | Plan curve | Range |
   |---|---|---|---|
   | volume | the list itself | `gain` | 0..1 |
-  | eq | `bass`, `high` | `bassDb`, `highDb` | −18..0 dB |
+  | eq | `bass`, `mid`, `high` | `bassDb`, `midDb`, `highDb` | −18..0 dB |
   | effect | `lp`, `hp` | `lowpassHz`, `highpassHz` | 20..20000 Hz |
+  | effect | `noise` | `noise` | 0..1 |
+  | fx (§12) | `echo`, `reverb`, `delay` | `echoSend`, `reverbSend`, `delaySend` | 0..1 |
 
 - A volume drawing has both decks. An EQ or effect curve that's missing is none: the deck plays
   that band or filter open. Rate is never drawn: it comes from the beat-match mode (§3, §4).
@@ -429,8 +483,8 @@ drawing read-only first):
   - A drawing is made for the window it was drawn on, so each drawing edit also saves the length
     shown (`bars`) when Length is Auto. Auto could otherwise shorten the window under it (a key
     clash plays 2 bars). A length picked by hand afterwards still applies (rule 5).
-- With a drawn lane, a row of curve chips appears under the canvas (Volume; Bass, High; Lowpass,
-  Highpass, for the drawn lanes). The chosen curve is drawn bold with its points, on both decks'
+- With a drawn lane, a row of curve chips appears under the canvas (Volume; Bass, Mid, High;
+  Lowpass, Highpass, Noise; Echo, Reverb, Delay, for the drawn lanes). The chosen curve is drawn bold with its points, on both decks'
   halves; the others stay as they are.
 - On the chosen curve:
   - a click inside the frame adds a point to that deck's curve; a drag moves it; a double-click or a
@@ -444,6 +498,12 @@ drawing read-only first):
   curve, both decks, along the window (start beat, length in beats; n = the length). The points
   already in each copy's span are replaced. Refused past 128 points, with the same message.
 - **Undo** (Ctrl+Z, and a button): one step back per edit while the dialog is open, 50 steps.
+- **[all] Replacing a drawing.** Picking a shape in a drawn lane's dropdown, or a preset other than
+  Custom while a lane is drawn, first asks "Replace the drawing?" ("Replace the drawings?" when a
+  preset would replace more than one). No leaves everything as it was. Yes saves the choice and puts
+  the whole override from before it on the Undo list, so Undo brings the drawing back: Ctrl+Z, and
+  on the PC an Undo button beside Reset to Auto while the drawing's tools are hidden. Custom keeps
+  the drawings and doesn't ask; Reset to Auto is the explicit clear (§1) and doesn't ask either.
 - Each edit is saved at once, as any other edit, so the next plan (and Preview) plays it.
 
 **7. To plan.curves** (§9): a drawn lane replaces that lane's curves of the shape; the planner's
@@ -486,3 +546,85 @@ PC: built 2026-11-24. `src/automix/automix.js` `progressOf(id)` → `{status, st
 fileKey, stage}` at its stage starts; the overview's `progressRow` in `src/automix-overview.js`
 (class `vivi-amx-ov-prog`, `src/plus/plus.css`). The snapshot names the songs (`curId`, `nextId`)
 even with no plan.
+
+## 12. Effects, the mid band and noise
+
+Asked for 2026-11-25: Spotify's mixes draw them (`spotify-mixes.md`), and a mix imported from
+Spotify should sound as drawn there. Functions on the PC: `presetCurves`, `FX_SHAPES` in
+`src/automix/automix.js`; `fxBus`, `presetShape` in `src/automix/crossfade.js`; the mid band of the
+player's chain in `src/plus/fx-plus.js`.
+
+1. **[all] The Effects lane** (`lanes.fx`; Spotify's white lane, drawn here in `#E8E8E8`): a shape
+   name (rule 4) or a drawing (§10) with `echo`, `reverb` and `delay` per deck, each 0..1 (how much
+   of that deck goes to the effect). A drawing may also carry `echoBeats` (1, 0.75 or 0.5; missing:
+   0.75) and `delayBeats` (0.75 or 0.5; missing: 0.5).
+   - Missing is none, and none is not stored: an override from before this lane reads as it did,
+     and an app that doesn't read `fx` yet plays the mix without effects.
+   - Of the presets, Afterglow, Surge and Dissolve have effects (§2); the others have none.
+
+2. **[all] Two more drawn curves** (§10 rule 1's table): `mid` in an EQ drawing (plan `midDb`,
+   −18..0 dB) and `noise` in an effect drawing (plan `noise`, 0..1). No shape of §3 uses them.
+
+3. **[all] How they sound.** Both decks feed the same three effect returns, each deck's sound taken
+   after its fader, EQ and filters (so a deck faded out sends nothing), times its send curve. The
+   returns play into the mix next to the decks (on the PC: the EQ's entry), and ring on after the mix:
+   a tail is never cut at the window's end.
+   - **Echo:** a delay of `echoBeats` beats with feedback 0.45 through a 3 kHz low-pass, so each
+     repeat is darker; level 1.
+   - **Delay:** a delay of `delayBeats` beats, feedback 0.3, no filter; level 1.
+   - **Reverb:** a convolution with a generated 2.4 s impulse (stereo white noise decaying by 60 dB
+     over 2.4 s, normalized); level 0.7.
+   - A beat is the plan's beat (§10 rule 4), 0.5 s without one. The echo and delay times are set at
+     the window's start (`curves.fxTime`: `echoSec`, `delaySec`).
+   - **Mid:** a peaking filter at 1 kHz, Q 0.7, on each deck between the bass and high shelves; 0 dB
+     at rest.
+   - **Noise:** white noise through a 1.5 kHz high-pass at `noise` × 0.25 (−12 dB at 1), played from
+     the window's start to its end, not under the deck's fader.
+
+4. **[all] Effects shapes** (sends on the outgoing deck; x a fraction of the window):
+
+   | Shape | Send | Curve | Time |
+   |---|---|---|---|
+   | echo1CutEnd, echo34CutEnd, echoHalfCutEnd | echo | [0.75, 0] [1, 0.5] | 1, ¾, ½ beat |
+   | echo1OutEnd, echo34OutEnd, echoHalfOutEnd | echo | [0.5, 0] [1, 0.5] | 1, ¾, ½ beat |
+   | delay34CutEnd, delayHalfCutEnd | delay | [0.75, 0] [1, 0.5] | ¾, ½ beat |
+   | reverbCutEnd | reverb | [0.75, 0] [1, 0.5] | |
+   | reverbOutEnd | reverb | [0.5, 0] [1, 0.5] | |
+   | reverbOutCenter | reverb | [0.25, 0] [0.5, 0.5] [0.75, 0] | |
+
+   The names are Spotify's Effects list. Spotify's own shapes for them are not known (its exports
+   only hold drawn curves); these are this app's, to compare by ear when Spotify's are found.
+
+5. **[all] To plan.curves:** `midDb`, `noise`, `echoSend`, `reverbSend`, `delaySend` per deck, and
+   `fxTime` when the Effects lane is not none (plan.schema.json). An absent curve is neutral (0 dB,
+   no noise, no send).
+
+6. **[each app] In the editor:** an "Effects" dropdown under Customize after Effect, with None, the
+   shapes of rule 4 and Draw…. The chips of rule 2 and the Effects lane draw like the others (§10
+   rule 6). The overview draws the sends and noise as 0 at a lane's bottom, 1 at its top, and the mid
+   band as the other EQ curves. The PC has no control for `echoBeats` and `delayBeats` yet: a drawing
+   keeps the time it came with.
+
+## 13. The Looping lane
+
+Asked for 2026-11-25: 25 of Spotify's mixes loop the playing song (`spotify-mixes.md` rule 6), and a
+mix imported from Spotify should do the same. Functions on the PC: `LOOP_BEATS`, `presetCurves` in
+`src/automix/automix.js`; `handOver`, `rampOutgoing`, `steadyOutgoing` in `src/automix/crossfade.js`.
+
+1. **[all] The lane** (`lanes.looping`, drawn here in `#5FD39A`): `loop1`, `loop2`, `loop4`, `loop8`
+   or `loop16`, a shape only (never drawn). Missing is none, and none is not stored, as for the
+   Effects lane (§12 rule 1). A preset other than Custom has none; the loop mix (§2) ignores it.
+
+2. **[all] What it does:** from the window's start (A's mix-out) A plays its first N beats again
+   and again until it ends, under A's fader, EQ and filters as they move. A's beat is the plan's
+   beat (§10 rule 4), 0.5 s without one.
+
+3. **[all] To the plan:** `curves.loopBeats` (N), and `loopSec` (N × the beat, in A's seconds)
+   on the plan (plan.schema.json).
+
+4. **[PC] Playing it:** on A's copy at x1 the copy loops [mix-out, mix-out + loopSec] and still stops
+   where A would have ended; on the stretch deck (a speed-up or a song's speed) the deck loops the
+   same span at A's rate. A glide (§4) plays no loop: its rate steps every beat.
+
+5. **[each app] In the editor:** a "Looping" dropdown under Customize after Effects, with None and
+   Loop 1, 2, 4, 8 and 16 beats, and no Draw….

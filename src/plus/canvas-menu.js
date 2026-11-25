@@ -11,7 +11,12 @@
   const CS = globalThis.__viviCanvasSettings;
   const songs = () => window.__viviCanvasSongs;
   const reCheck = () => { try { window.__viviPlus?.content?.reCheckCanvas?.(); } catch { /* the next song shows it */ } };
-  const songId = () => new URLSearchParams(location.search).get('v') || '';
+  // (the URL has no ?v= on a radio or album page start: the player's own song then, as best-part.js)
+  const songId = () => {
+    const fromUrl = new URLSearchParams(location.search).get('v');
+    if (fromUrl) return fromUrl;
+    try { return (document.querySelector('#movie_player, ytmusic-player')?.getVideoData?.() || window.__viviPageVideoData?.())?.video_id || ''; } catch { return ''; }
+  };
   const fmt = (ms) => `${Math.floor(ms / 60000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, '0')}`;
   const NAMES = { video: 'Music video', spotify: 'Spotify canvas', apple: 'Animated cover' };
 

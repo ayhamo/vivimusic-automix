@@ -37,6 +37,7 @@
   'use strict';
   const C = globalThis.__viviAddonClient || (typeof require === 'function' ? require('./client.js') : null);
   const Pick = globalThis.__viviAddonPick || (typeof require === 'function' ? require('./pick.js') : null);
+  const FileCache = globalThis.__viviAddonFileCache || (typeof require === 'function' ? require('./file-cache.js') : null);
 
   const TIERS = ['LOSSLESS', 'HIRES', 'CD', 'HIGH', 'LOW'];   // (LOSSLESS: the addon's best)
   const DEFAULTS = { addonsEnabled: false, addonsList: [], addonsTier: 'LOSSLESS', addonsSlackSec: 5, addonsCacheMB: 512 };
@@ -248,12 +249,12 @@
     async function refresh(ticket) {
       const t = tickets.get(ticket);
       if (!t) return { none: 'ticket expired' };
+      tickets.delete(ticket);   // (first: a download still running for it is then not kept, fetchFile)
       const cleared = client.forget?.(t.song, t.found) || 0;
       let dropped = 0;
       for (const f of t.found) for (const row of f.rows) { const k = cacheKey(f.addon, row, t.opt); if (k && await files.drop(k).catch(() => false)) dropped++; }
       const k = t.got && cacheKey(t.got.addon, t.got.row, t.opt);
       if (k && await files.drop(k).catch(() => false)) dropped++;
-      tickets.delete(ticket);
       return { ok: true, cleared, files: dropped };
     }
     const cacheKey = (addon, row, opt) => files && addon?.id && row?.id ? files.keyOf(addon.id, row.id, addon.quality ?? opt?.tier) : null;
@@ -263,7 +264,7 @@
         for (const row of rows) {
           const key = cacheKey(addon, row, t.opt);
           const meta = key && await files.has(key).catch(() => null);
-          if (meta && floor(meta.stream || {}) === true) return { addon: { base: addon.base, name: addon.name, host: addon.host, id: addon.id }, row, stream: meta.stream || {}, tried: [...t.tried], cacheKey: key };
+          if (meta && floor(meta.stream || {}) === true) return { addon: { base: addon.base, name: addon.name, host: addon.host, id: addon.id, quality: addon.quality ?? null }, row, stream: meta.stream || {}, tried: [...t.tried], cacheKey: key };
         }
       }
       return null;
@@ -302,6 +303,7 @@
         t.opened = null; t.got = null;   // the browser let it go: OPEN again
         return { none: 'the cached file is gone' };
       }
+      const got = t.got;   // (what is downloaded: the ticket may move on meanwhile)
       const ctl = new AbortController();
       const timer = setTimeout(() => ctl.abort(), FILE_TIMEOUT_MS);
       try {
@@ -312,10 +314,14 @@
         const bytes = await readCapped(r, FILE_MAX_BYTES);   // (no Content-Length: counted as it comes)
         if (!bytes) return { none: `the file is too big (over ${Math.round(FILE_MAX_BYTES / 1e6)} MB)` };
         const ct = (r.headers.get('content-type') || '').split(';')[0].trim();
+        // §8.1.6: a playlist or manifest (by the answer's own type or its first bytes) is not audio: never kept, never played
+        if (FileCache?.isManifest(bytes, ct)) return { none: 'the file is a playlist or manifest, not audio', refused: true };
         const mime = /^audio\//.test(ct) ? ct : s.mimeType || mimeOf(s.codec);
-        // kept for the next play (§8.1.6): the stream's facts, never its URL or headers
-        const key = cacheKey(t.got.addon, t.got.row, t.opt);
-        if (key) files.put(key, bytes, { mime, stream: outward(t.got).stream }).catch(() => {});
+        // kept for the next play (§8.1.6): the stream's facts, never its URL or headers; under the
+        // downloaded row's own key, and not when the song was dropped meanwhile ("Upgrade quality"
+        // forgot it while this ran: its files are gone and must not come back)
+        const key = cacheKey(got.addon, got.row, t.opt);
+        if (key && tickets.get(ticket) === t) files.put(key, bytes, { mime, stream: outward(got).stream }).catch(() => {});
         return { bytes, mime };
       } catch (e) {
         return { none: ctl.signal.aborted ? 'the file took too long' : C.scrub(`the file failed: ${e?.message || e}`) };
@@ -355,9 +361,9 @@
     const FC = globalThis.__viviAddonFileCache;
     const files = FC && globalThis.caches ? FC.create({ storage: chrome.storage.local, maxBytes: async () => (await chrome.storage.local.get({ addonsCacheMB: DEFAULTS.addonsCacheMB })).addonsCacheMB * 1e6 }) : null;
     const store = create({ storage: chrome.storage.local, files });
-    // content scripts (YouTube Music's tab) may only FIND, OPEN, UPGRADE, REFRESH and FETCH; the list and its
+    // content scripts (YouTube Music's tab) may only FIND, ISRC, OPEN, UPGRADE, REFRESH and FETCH; the list and its
     // settings change only from the extension's own pages (the popup)
-    const PAGE_TYPES = new Set(['VIVI_ADDONS_FIND', 'VIVI_ADDONS_OPEN', 'VIVI_ADDONS_NEXT', 'VIVI_ADDONS_UPGRADE', 'VIVI_ADDONS_REFRESH', 'VIVI_ADDONS_FETCH']);
+    const PAGE_TYPES = new Set(['VIVI_ADDONS_FIND', 'VIVI_ADDONS_ISRC', 'VIVI_ADDONS_OPEN', 'VIVI_ADDONS_NEXT', 'VIVI_ADDONS_UPGRADE', 'VIVI_ADDONS_REFRESH', 'VIVI_ADDONS_FETCH']);
     const ours = (sender) => typeof sender?.url === 'string' && sender.url.startsWith(chrome.runtime.getURL(''));
     chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       if (typeof msg?.type !== 'string' || !msg.type.startsWith('VIVI_ADDONS_')) return undefined;

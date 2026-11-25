@@ -12,7 +12,8 @@ async function listenbrainzValidateToken(token) {
     headers: {
       Authorization: `Token ${token}`,
       Accept: 'application/json'
-    }
+    },
+    signal: AbortSignal.timeout(15000)
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok || !data.valid) {
@@ -34,7 +35,8 @@ async function listenbrainzSubmitListens(token, listenType, payload) {
     body: JSON.stringify({
       listen_type: listenType,
       payload
-    })
+    }),
+    signal: AbortSignal.timeout(15000)
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok || data.status !== 'ok') {

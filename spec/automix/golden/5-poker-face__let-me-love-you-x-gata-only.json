@@ -4123,7 +4123,7 @@
     "earliest": 146.7,
     "plays": "filter",
     "loop": {
-      "none": "no instrumental bars in the opening of the next song"
+      "none": "no instrumental bars near the end of the playing song"
     },
     "blend": {
       "style": "filter",
@@ -8224,7 +8224,7 @@
     "earliest": 146.7,
     "plays": "blend",
     "loop": {
-      "none": "no instrumental bars in the opening of the next song"
+      "none": "no instrumental bars near the end of the playing song"
     },
     "blend": {
       "style": "blend",

@@ -1223,6 +1223,7 @@
 
   window.addEventListener('message', (evt) => {
     const msg = evt.data;
+    if (evt.origin !== chrome.runtime.getURL('').slice(0, -1)) return; // vivi+ (audit 2026-11-24): only our apple-canvas-player frames
     if (!msg || !msg.__viviAppleCanvas || !msg.id) return;
     const pending = applePendingFrames.get(msg.id);
     if (!pending) return;
@@ -1360,6 +1361,7 @@
   function makeAppleHlsIframe(url, className, fit, appleOverlay, onError, onPlaying, radius) {
     const frame = document.createElement('iframe');
     const id = `vivi-apple-${++appleCanvasFrameSeq}`;
+    if (applePendingFrames.size >= 20) applePendingFrames.delete(applePendingFrames.keys().next().value); // vivi+ (audit 2026-11-24): frames removed before 'playing'/'error' never report
     applePendingFrames.set(id, { onError, onPlaying });
     const r = Math.max(0, Math.round(radius || 0));
     const src = chrome.runtime.getURL(`src/apple-canvas-player.html?fit=${fit}&id=${encodeURIComponent(id)}&r=${r}#${encodeURIComponent(url)}`);
@@ -2652,7 +2654,7 @@
     document.documentElement.classList.toggle('vivi-background-tab', hidden);
     document.querySelectorAll('.vivi-canvas-media, .vivi-canvas-player-media, .vivi-lyrics-dancer').forEach((media) => {
       if (media.tagName === 'IFRAME') {
-        try { media.contentWindow?.postMessage({ __viviAppleCanvasControl: hidden ? 'pause' : 'resume' }, '*'); } catch (_) {}
+        try { media.contentWindow?.postMessage({ __viviAppleCanvasControl: hidden ? 'pause' : 'resume' }, chrome.runtime.getURL('').slice(0, -1)); } catch (_) {} // vivi+ (audit 2026-11-24): our frame's origin, not '*'
         return;
       }
       if (hidden) {
@@ -3769,6 +3771,7 @@
       const toStore = {};
       for (const [trackKey, entry] of Object.entries(incoming)) {
         if (!entry || (!entry.videoUrl && !entry.imageUrl)) continue; // skip malformed/empty rows
+        if ([entry.videoUrl, entry.fallbackVideoUrl, entry.imageUrl].some((u) => u && !/^https:\/\//i.test(String(u)))) continue; // vivi+ (audit 2026-11-24): imported URLs must be https
         toStore[cacheKeyFor(trackKey)] = entry;
       }
       const keys = Object.keys(toStore);

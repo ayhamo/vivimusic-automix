@@ -745,7 +745,8 @@
     } else if (d.type === 'prepare') {
       const out = await buildTail(d);
       if (!out.ok) log('buildTail failed:', out.why, '| sinks:', sinks.length, '| parts:', sinks.map((s) => s.parts.length));
-      say({ type: 'tail', id: d.id, ...out });
+      // (the decoded channels are copies of their own: handed over, not cloned)
+      window.postMessage({ ch: CHANNEL, dir: 'out', type: 'tail', id: d.id, ...out }, window.location.origin, out.channels?.map((c) => c.buffer) || []);
     } else if (d.type === 'prefetch') {
       if (capturing) prefetchSong(String(d.id || ''), !!d.retry);
     } else if (d.type === 'bytes') {
@@ -783,6 +784,39 @@
       mixing = !!d.on;
     } else if (d.type === 'set-volume') {
       setPlayerVolume(d.volume);
+    } else if (d.type === 'queue-songs') {
+      queueSongs(Array.isArray(d.ids) ? d.ids.map(String).slice(0, 601) : [])
+        .then((n) => say({ type: 'queued', rid: d.rid, ok: true, n }), (e) => say({ type: 'queued', rid: d.rid, ok: false, why: String(e?.message || e) }));
     }
   });
+
+  // "Play these mixes" (spec/automix/mix-file.md rule 7): a fresh queue of the file's songs, in order,
+  // made the way YouTube Music makes its own (music/get_queue for the items, then the queue store's
+  // CLEAR, ADD_ITEMS and SET_INDEX), and the first of them plays; when it is the playing song, it plays
+  // on. (Adding after the playing song instead let YouTube Music merge a song already in its queue, and
+  // the wrong song played first.)
+  async function queueSongs(ids) {
+    const store = document.querySelector('ytmusic-player-queue')?.queue?.store?.store;
+    const app = document.querySelector('ytmusic-app');
+    const q = store?.getState?.()?.queue;
+    if (!q || typeof app?.networkManager?.fetch !== 'function') throw new Error("YouTube Music's queue isn't ready");
+    if (!(q.items?.length > 0) || !(q.selectedItemIndex >= 0)) throw new Error('play any song first, then Play these mixes');
+    if (!ids.length) return 0;
+    const res = await app.networkManager.fetch('/music/get_queue', { queueContextParams: q.queueContextParams, queueInsertPosition: 'INSERT_AFTER_CURRENT_VIDEO', videoIds: ids });
+    const items = (res?.queueDatas || []).map((x) => x?.content).filter(Boolean);
+    if (!items.length) throw new Error('YouTube Music found none of the songs');
+    const mp = moviePlayer();
+    const keep = ids[0] === (mp?.getVideoData?.()?.video_id || '');
+    store.dispatch({ type: 'CLEAR' });
+    store.dispatch({ type: 'ADD_ITEMS', payload: { nextQueueItemId: store.getState().queue.nextQueueItemId, index: 0, items, shuffleEnabled: false, shouldAssignIds: true } });
+    // ADD_ITEMS puts a song YouTube Music had queued before first: the items back in the file's order
+    const idOf = (it) => (it?.playlistPanelVideoRenderer || it?.playlistPanelVideoWrapperRenderer?.primaryRenderer?.playlistPanelVideoRenderer)?.videoId;
+    const pool = store.getState().queue.items.slice(), ordered = [];
+    for (const id of ids) { const k = pool.findIndex((it) => idOf(it) === id); if (k >= 0) ordered.push(pool.splice(k, 1)[0]); }
+    ordered.push(...pool);
+    if (ordered.some((it, k) => it !== store.getState().queue.items[k])) store.dispatch({ type: 'RESET_ITEMS', payload: ordered });
+    if (!keep) store.dispatch({ type: 'SET_INDEX', payload: 0 });
+    log('a fresh queue of', items.length, 'songs from a mix file');
+    return items.length;
+  }
 })();

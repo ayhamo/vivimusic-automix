@@ -18,11 +18,16 @@
  */
 'use strict';
 
-const VIVI_EXT_ORIGIN = (() => { try { return new URL(chrome.runtime.getURL('/')).origin; } catch { return 'moz-extension://'; } })();
+// This extension's own base URL ("moz-extension://<uuid>/"). Only requests from
+// it get the Spotify login and spoofed headers: any other extension's
+// moz-extension:// origin, or a failed lookup (null), never matches.
+const VIVI_EXT_BASE = (() => {
+  try { const b = chrome.runtime.getURL(''); return /^[a-z-]+:\/\/[^/]+\/$/.test(b) ? b : null; } catch { return null; }
+})();
 
 function viviIsFromExtension(details) {
   const o = details.originUrl || details.documentUrl || '';
-  return o.startsWith('moz-extension://') || o.startsWith(VIVI_EXT_ORIGIN) || details.tabId === -1 && !o;
+  return !!VIVI_EXT_BASE && o.startsWith(VIVI_EXT_BASE) || details.tabId === -1 && !o;
 }
 
 function viviSetHeader(headers, name, value) {
@@ -35,12 +40,13 @@ function viviGetHeader(headers, name) {
   return headers.find((h) => h.name.toLowerCase() === lower)?.value;
 }
 
+// canvas.md §4 rule 0: the listener's own login, read from the browser's default
+// cookie store by getSpDc (src/plus/bg-plus.js), which answers null after Sign out.
 async function viviSpDcForCookie() {
   try {
-    const { spotifySpDc } = await chrome.storage.local.get('spotifySpDc');
-    if (spotifySpDc) return spotifySpDc;
-  } catch { /* ignore */ }
-  try {
+    if (typeof getSpDc === 'function') return (await getSpDc()) || null;
+    const { spotifyDisconnected } = await chrome.storage.local.get('spotifyDisconnected');
+    if (spotifyDisconnected) return null;
     const c = await chrome.cookies.get({ url: 'https://open.spotify.com/', name: 'sp_dc' });
     return c?.value || null;
   } catch { return null; }
@@ -106,22 +112,26 @@ try {
  * Music's policy doesn't list moz-extension:/data:, so those loads can be
  * silently blocked (e.g. the Vivimusic tab icon never appears). Append the
  * extra sources — this only ever LOOSENS img/media/font/style/frame for this
- * extension's own scheme, nothing else is touched.
+ * extension's own origin (moz-extension://<uuid>), nothing else is touched.
  */
 try {
+  // this extension's own origin only (moz-extension://<uuid>), not every extension's: no lookup, no patch
+  const EXT = VIVI_EXT_BASE ? VIVI_EXT_BASE.slice(0, -1) : null;
+  if (!EXT) throw new Error('no extension origin');
   const CSP_DIRECTIVES = {
-    'img-src': ['data:', 'moz-extension:'],
-    'media-src': ['moz-extension:', 'blob:'],
-    'font-src': ['data:', 'moz-extension:'],
-    'style-src': ['moz-extension:'],
-    'style-src-elem': ['moz-extension:'],
-    'frame-src': ['moz-extension:'],
-    'child-src': ['moz-extension:'],
+    'img-src': ['data:', EXT],
+    'media-src': [EXT, 'blob:'],
+    'font-src': ['data:', EXT],
+    'style-src': [EXT],
+    'style-src-elem': [EXT],
+    'frame-src': [EXT],
+    'child-src': [EXT],
   };
   const patchCsp = (value) => {
     const parts = value.split(';').map((p) => p.trim()).filter(Boolean);
     const map = new Map();
-    parts.forEach((p) => { const [n, ...v] = p.split(/\s+/); map.set(n.toLowerCase(), v); });
+    // a repeated directive is ignored by the browser (CSP3 §2.2.1): keep the first, as it does
+    parts.forEach((p) => { const [n, ...v] = p.split(/\s+/); const k = n.toLowerCase(); if (!map.has(k)) map.set(k, v); });
     const def = map.get('default-src');
     for (const [name, extra] of Object.entries(CSP_DIRECTIVES)) {
       let cur = map.get(name);
@@ -194,6 +204,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     const ctrl = new AbortController(); const timer = setTimeout(() => ctrl.abort(), 15000);
     try {
       const res = await fetch(msg.url, { ...opts, signal: ctrl.signal });
+      // a redirect is followed by the browser: its target must be allowed too, or nothing is returned
+      if (res.url && !viviProxyHostOk(res.url)) return { ok: false, error: 'redirect not allowed' };
       const buf = await res.arrayBuffer();
       const headers = {}; res.headers.forEach((v, k) => { headers[k] = v; });
       return { ok: true, status: res.status, statusText: res.statusText, headers, body: viviB64(buf) };
@@ -202,3 +214,44 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   })().then(sendResponse);
   return true;
 });
+
+/* ---- VIVI_NET_FETCH (background.js, the relay behind net.js) ----
+ * Its callers are content scripts' cross-origin fetch() calls (net.js), none of
+ * which send credentials. So: no cookies ever, a time limit, and no host where
+ * this extension adds a login itself (Spotify: the sp_dc cookie above). A
+ * redirect's target is checked the same way before anything is returned.
+ */
+const VIVI_NET_TIMEOUT_MS = 120000;   // whole song files from googlevideo come through here
+function viviNetHostRefused(hostname) {
+  const h = String(hostname || '').toLowerCase();
+  return h === 'spotify.com' || h.endsWith('.spotify.com');
+}
+function viviNetUrlOk(url, hostAllowed) {
+  try {
+    const u = new URL(url);
+    return u.protocol === 'https:' && hostAllowed(u.hostname) && !viviNetHostRefused(u.hostname);
+  } catch { return false; }
+}
+
+/* ---- Account actions answer extension pages only ----
+ * Signing in or out, Spotify transfer and the YouTube Music transfer are sent by
+ * the popup, transfer.html and their scripts. A content script in a web tab
+ * (its sender.url is the web page) is refused.
+ */
+const VIVI_PAGE_ONLY = new Set([
+  'VIVI_SPOTIFY_SET_COOKIE', 'VIVI_SPOTIFY_CONNECT', 'VIVI_SPOTIFY_LOGOUT',
+  'VIVI_SPOTIFY_TRANSFER_USER', 'VIVI_SPOTIFY_TRANSFER_PLAYLISTS', 'VIVI_SPOTIFY_TRANSFER_PLAYLIST_TRACKS', 'VIVI_SPOTIFY_TRANSFER_PLAYLIST_COUNT',
+  'VIVI_YTM_TRANSFER',
+  'VIVI_LASTFM_LOGIN', 'VIVI_LASTFM_WEB_START', 'VIVI_LASTFM_WEB_CANCEL', 'VIVI_LASTFM_LOGOUT',
+  'VIVI_LISTENBRAINZ_LOGIN', 'VIVI_LISTENBRAINZ_LOGOUT',
+  'VIVI_DISCORD_LOGIN', 'VIVI_DISCORD_CALLBACK', 'VIVI_DISCORD_LOGOUT',
+]);
+function viviFromExtensionPage(sender) {
+  return !!sender && sender.id === chrome.runtime.id && !!VIVI_EXT_BASE && String(sender.url || '').startsWith(VIVI_EXT_BASE);
+}
+// true (and answered) when msg is an account action from anywhere but our own pages
+function viviRefuseFromTab(msg, sender, sendResponse) {
+  if (!VIVI_PAGE_ONLY.has(msg?.type) || viviFromExtensionPage(sender)) return false;
+  try { sendResponse({ ok: false, error: 'Only the add-on settings can do that.' }); } catch { /* port gone */ }
+  return true;
+}

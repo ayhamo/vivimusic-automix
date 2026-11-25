@@ -25,7 +25,13 @@
   });
 
   const video = () => document.querySelector('video');
-  const songId = () => new URLSearchParams(location.search).get('v') || '';
+  // the playing song: the URL's ?v= (the player page), else the player's own (a song playing under the
+  // home page, a playlist or a search has no ?v=); the chain content.js and lyrics-ui.js use
+  const songId = () => {
+    const fromUrl = new URLSearchParams(location.search).get('v');
+    if (fromUrl) return fromUrl;
+    try { return (document.querySelector('#movie_player, ytmusic-player')?.getVideoData?.() || window.__viviPageVideoData?.())?.video_id || ''; } catch { return ''; }
+  };
   const posMs = () => Math.round((video()?.currentTime || 0) * 1000);
   const durMs = () => Math.round((video()?.duration || 0) * 1000);
   const fmt = (ms) => `${Math.floor(ms / 60000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, '0')}`;
@@ -82,7 +88,7 @@
     #vivi-best-part:hover { background: rgba(255,255,255,.16); }
     #vivi-best-part svg { width: 12px; height: 12px; }
     .vivi-best-mark { position: absolute; top: 50%; width: 3px; height: 9px; margin-left: -1.5px; transform: translateY(-50%);
-      border-radius: 2px; background: #ff9e3d; pointer-events: none; z-index: 2; }
+      border-radius: 2px; background: #ff9e3d; z-index: 2; }
     #vivi-best-editor { position: fixed; z-index: 1001; width: 300px; transform: translateX(-50%); padding: 14px 16px 12px;
       border-radius: 14px; background: rgba(28,28,28,.96); border: 1px solid rgba(255,255,255,.12); color: #fff;
       font: 13px/1.4 Roboto, Arial, sans-serif; box-shadow: 0 8px 28px rgba(0,0,0,.5); }

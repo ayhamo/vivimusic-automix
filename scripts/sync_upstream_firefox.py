@@ -74,7 +74,7 @@ def main():
     a = ap.parse_args()
     sys.stdout.reconfigure(encoding='utf-8')
 
-    meta = json.load(urllib.request.urlopen(AMO_API))
+    meta = json.load(urllib.request.urlopen(AMO_API, timeout=60))
     ver = meta['current_version']['version']
     url = meta['current_version']['file']['url']
     tag = a.tag or 'v' + ver
@@ -82,7 +82,7 @@ def main():
     if git('rev-parse', '--verify', '--quiet', f'refs/tags/{tag}', check=False).returncode != 0:
         sys.exit(f'tag {tag} not found: run `git fetch {a.remote} --tags`, or pass --tag')
 
-    raw = urllib.request.urlopen(url).read()
+    raw = urllib.request.urlopen(url, timeout=300).read()
     if a.save_xpi:
         os.makedirs(AMO_DIR, exist_ok=True)
         for old in os.listdir(AMO_DIR):
@@ -92,41 +92,44 @@ def main():
         print(f'saved upstream-amo/vivimusicweb-{ver}.xpi')
     xpi = zipfile.ZipFile(io.BytesIO(raw))
     conflicts, changed, added = [], [], []
-    tmp = tempfile.mkdtemp(prefix='vivi-sync-')
-    for name in sorted(xpi.namelist()):
-        if name.endswith(('/', '.orig')) or name.startswith('META-INF/') or name in SKIP:
-            continue
-        theirs = xpi.read(name)
-        local = os.path.join(ROOT, name)
-        base_r = git('show', f'{tag}:{name}', check=False)
-        if base_r.returncode != 0:            # file only exists in the AMO build
-            if not os.path.exists(local):
-                added.append(name)
-                if a.apply:
-                    os.makedirs(os.path.dirname(local), exist_ok=True)
-                    open(local, 'wb').write(theirs)
-            continue
-        base = base_r.stdout
-        if not name.endswith(TEXT_EXT):
-            if theirs != base:
-                print(f'  binary changed upstream (copy by hand if wanted): {name}')
-            continue
-        if lf(theirs) == lf(base) or not os.path.exists(local):
-            continue
-        ours = open(local, 'rb').read()
-        crlf = b'\r\n' in ours
-        paths = {}
-        for k, data in (('ours', lf(ours)), ('base', lf(base)), ('theirs', lf(theirs))):
-            paths[k] = os.path.join(tmp, k)
-            open(paths[k], 'wb').write(data)
-        favour = ['--ours'] if name in KEEP_OURS else []
-        r = git('merge-file', *favour, '-L', 'ours', '-L', tag, '-L', f'amo-{ver}', paths['ours'], paths['base'], paths['theirs'], check=False)
-        merged = open(paths['ours'], 'rb').read()
-        if merged == lf(ours):
-            continue
-        (conflicts if r.returncode > 0 else changed).append(name)
-        if a.apply:
-            open(local, 'wb').write(merged.replace(b'\n', b'\r\n') if crlf else merged)
+    with tempfile.TemporaryDirectory(prefix='vivi-sync-') as tmp:
+        for name in sorted(xpi.namelist()):
+            if name.endswith(('/', '.orig')) or name.startswith('META-INF/') or name in SKIP:
+                continue
+            local = os.path.normpath(os.path.join(ROOT, name))
+            if os.path.isabs(name) or not local.startswith(os.path.join(ROOT, '')):   # a zip entry may not point out of the repo
+                print(f'  skipped, path outside the repo: {name}')
+                continue
+            theirs = xpi.read(name)
+            base_r = git('show', f'{tag}:{name}', check=False)
+            if base_r.returncode != 0:            # file only exists in the AMO build
+                if not os.path.exists(local):
+                    added.append(name)
+                    if a.apply:
+                        os.makedirs(os.path.dirname(local), exist_ok=True)
+                        open(local, 'wb').write(theirs)
+                continue
+            base = base_r.stdout
+            if not name.endswith(TEXT_EXT):
+                if theirs != base:
+                    print(f'  binary changed upstream (copy by hand if wanted): {name}')
+                continue
+            if lf(theirs) == lf(base) or not os.path.exists(local):
+                continue
+            ours = open(local, 'rb').read()
+            crlf = b'\r\n' in ours
+            paths = {}
+            for k, data in (('ours', lf(ours)), ('base', lf(base)), ('theirs', lf(theirs))):
+                paths[k] = os.path.join(tmp, k)
+                open(paths[k], 'wb').write(data)
+            favour = ['--ours'] if name in KEEP_OURS else []
+            r = git('merge-file', *favour, '-L', 'ours', '-L', tag, '-L', f'amo-{ver}', paths['ours'], paths['base'], paths['theirs'], check=False)
+            merged = open(paths['ours'], 'rb').read()
+            if merged == lf(ours):
+                continue
+            (conflicts if r.returncode > 0 else changed).append(name)
+            if a.apply:
+                open(local, 'wb').write(merged.replace(b'\n', b'\r\n') if crlf else merged)
 
     # manifest: report what changed since the AMO manifest we last handled
     m_amo = xpi.read('manifest.json').decode()

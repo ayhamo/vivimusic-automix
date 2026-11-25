@@ -18,7 +18,7 @@ record of how Original and Advanced differed.
 
 | Part | Behaviour |
 |---|---|
-| Loop mix | Same planner (`planLoopMix`), same sung-part check (synced lyrics, else the vocal mask), same schedule and curves (`loopCurves`). The loop on Vaina Loca → SI NO ES CONTIGO comes from here. Its loops sit on the blend's bar lines: rules under "Loop on the blend's bars" below. |
+| Loop mix | Same planner (`planLoopMix`), same sung-part check (synced lyrics, else the vocal mask), same schedule and curves (`loopCurves`). The loop on Vaina Loca → SI NO ES CONTIGO comes from here. It plays as the user's baseline (d26dc16): rules under "The loop mix's baseline" below. |
 | Which style | Loop mix when the pair has one, else blend, else filter mix, else a plain crossfade of the user's crossfade length (1–12 s; 12 s where the platform has no such setting). |
 | Tempo | Only ever speeds up (the slower song is brought up), at most +25% (−10% for the folded case), the playing song ramps 0.75% per beat before the mix-out; half/double time folded. |
 | Blend length | Auto (phone rules: usually 4 bars, 8 when both songs are calm, never over 12–16 s) or "up to N bars"; shortened on a weak grid (`effectiveBlendBars`). |
@@ -135,7 +135,8 @@ Orchard `pairTransitionEvidence.js` and `earmark/analysis/track.rs`, Prism
 
 ### Tempo too far apart
 
-A pair over 8% apart can't be beatmatched (`V2_MAX_STRETCH`). Until now
+A pair over 8% apart can't be beatmatched (`V2_MAX_STRETCH`; songs at a playlist speed: their
+played tempos, spotify-mixes.md rule 10). Until now
 Automix v2 handed it over in 1.5 s at the music's end; on the phone 4 of 5
 mixes in one listening were that. Now, Automix v2's own plan (not a pick from
 the editor, not a length picked), in this order:
@@ -166,30 +167,86 @@ Fixture rules: Stereo Love → Midnight Sun (11% apart) plays a filter mix;
 Unethical → Escapism (24%) and Poker Face → Let Me Love You (19%) play an echo
 out (both would sing about half of a filter mix).
 
-### Loop on the blend's bars
+### The loop mix's baseline
 
-Found 2026-11-24 on Vaina Loca → SI NO ES CONTIGO: the loop brought the next
-song in on a different drum than the blend did.
+The user, 2026-11-24, on their recording of 2026-11-08 (extension d26dc16,
+Vaina Loca → SI NO ES CONTIGO): "this is the baseline, and all should follow
+it". The recipe, its constants and the recording's measured times are in
+`YT Clients/research/automix-baseline-2026-11-08.md`.
 
-1. **[all]** A loop's bars start and end on the same bar lines the blend uses:
-   the playing song's end grid (`tailGrid`, else its main grid) and the next
-   song's main grid (`firstDownbeatSec` + whole bars of 4 `beatIntervalSec`).
-2. **[all]** The beat model's own downbeats (`headBeats`, `tailBeats`) are used
-   for a loop's seams only where they sit on those bar lines (within a quarter
-   beat). Where too few do, the loop is cut on the grid itself.
-3. **[all]** A loop whose incoming bars start on a 4-bar phrase line of the
-   next song (counted from its first downbeat, within a quarter beat; `phrase`
-   on the loop's `in` side) gets 0.01 added to its score in "Loop or blend".
-   Not required: any whole bar on the grid is the same drum.
-4. Why: SI NO ES CONTIGO's grid has its downbeats at 6.00 s + 2.40 s × k
-   (100 BPM). The model's own list is 6.00, then 7.17, 9.60, 12.00, 14.40 …:
-   from 7.17 s on it is 2 beats after the grid. The loop took B's 4 bars from
-   9.60 s, 2.5 bars from the blend's cue at 15.60 s (grid bar 4). The listener
-   heard B come in on a different drum; the blend's cue sounded right. Now the
-   loop takes B from 10.80 s (grid bar 2) to 20.40 s.
-5. Fixture rule: in every pair, each loop's start in both songs is a whole
-   number of bars on these grids. Vaina Loca's loop (B from grid bar 2) gets
-   no phrase bonus and still plays: loop 0.2403 against the blend's 0.1687.
+1. **[all]** The loop mix plans and plays as d26dc16 did: `planLoopMix`,
+   `loopSchedule` and the decks' gains, bass swap and high-pass. A's loop is
+   the latest instrumental one in its last 60 s, B's the earliest in its first
+   45 s, each on the beat model's own downbeats where it has them (else the
+   constant grid); a synced line is padded 0.15 s before and 0.35 s after and
+   lasts to its end, else to the next line, 10 s at most
+   (`loopSpansFromLines`; blends keep "Where a song is sung"). Gains: A 1 over
+   the 4 entry bars, 0.6 at the ramp's end, 0 at the release; B 0.55 at the
+   entry's end, 1 at the ramp's end. No trim. The -1 dBFS limiter
+   ("The mix's ceiling") sits on it as a clip guard only.
+2. **[all]** Fixture rule, planned by itself: Vaina Loca → SI NO ES CONTIGO
+   plays a 4-bar loop at 153.31 s (94 BPM) into a 4-bar loop at 9.60 s
+   (100 BPM), ramp 3 bars, 12 bars, the player taking over 34.4 s after the
+   loop starts (`test_automix_plan.mjs`). No song ids or song constants.
+3. **[all]** Withdrawn with it (2026-11-24): the loop on the blend's bar lines
+   (B had moved to 10.80 s), A's end grid and carved spans for the loop, the
+   -3 dB trim on A and the limiter's relative target for the loop.
+4. **[all]** Kept from after d26dc16, none changes the plan or its curves:
+   Automix v2's gates that offer no loop at all (tempos over its stretch,
+   different sub-bass styles, a severe key clash). **[PC]** The take-over
+   machinery: the outgoing deck starts 0.5 s early on the song before its loop
+   (`PREROLL_SEC`), the incoming deck is caught up with the player by ear
+   (`alignByEar`) and its level matched to the player's (`matchInLevel`)
+   before the take-over, and the addon deck.
+5. **[all]** The baseline's two flaws are fixed, not kept. (1) Beat slips at
+   the deck hand-overs (98 ms onto A's deck, 92 ms at the player's take-over
+   in the recording): **[PC]** the stretch library already offsets its own
+   latency in its time map (it reads ahead by its input latency and plays the
+   map at the clock plus its output latency), so nothing more is subtracted.
+   d26dc16 started the deck cold at the loop start and held the player by the
+   clock alone; the preroll and the take-over by ear are meant for those two
+   slips. Live 2026-11-24 the plan came out by itself as rule 2, the player
+   took over at 24.00 s of B with its level matched 1.00 -> 0.96. Recorded
+   the same day from the graph's output (`research/rec-2026-11-24-vaina.wav`
+   in YT Clients, measured at 1 ms): A onto its deck +12 ms (the baseline
+   98 ms), the release and the take-over on one grid within 1 ms (the
+   baseline 92 ms), no click, peaks held at -1.0 dBFS by the clip guard. (2) No jump in the decks' audio on the
+   tempo ramp: every deck change starts where the last one got to, the loop's
+   wrap and the release included (`test_automix_plan.mjs`).
+6. **[all]** A timed lyric line that isn't sung counts for nothing in the loop's
+   sung spans: a line starting before 0; one with no letter or digit (symbols
+   only); one that is the song's title or artist (or holds both, "Artist -
+   Title"), compared without case, accents or punctuation; and a credit, a
+   line opening with a credit word followed by ":", "：", " - " or "by":
+   作词 作詞 作曲 编曲 編曲 词 詞 曲 制作人 製作人 监制 監製 混音 母带 母帶 和声 和聲
+   录音 錄音 出品 发行 發行, letra, música, compositor(es), autor(es), lyric(s),
+   lyricist, written, writer(s), words, music, composed, composer,
+   composition, arranged, arrangement, arranger, produced, producer(s),
+   prod(.), mixed, mixing, mastered, mastering, recorded, engineer(ed); and
+   any line opening "prod. ". Such a line also doesn't end the line before
+   it. Why: NetEase sends credits as timed lines with no end;
+   SI NO ES CONTIGO's "作曲: …" at 0.00 s, read the baseline way, counted its
+   first 10 s as sung (found on the phone, 2026-11-24). **[PC]** `lineShapes`
+   marks them `notSung` (from the text and the song's title and artist, the
+   text then dropped), `loopSpansFromLines` skips them. Vaina Loca's plan is
+   the same with or without the credit line (`test_automix_plan.mjs`).
+
+### The filter mix's pulse
+
+Visual only on both apps: no filter, gain or rate moves with it, and the plan
+is unchanged. What pulses is the progress light during a mix, brighter on each
+beat.
+
+1. **[all]** A filter mix's plan has no `beatSec`, so its beat is A's bar / 4
+   (`barSec / 4`, on A's end grid).
+2. **[phone]** The seek bar: `Mix.java` sets `m.beats` every `barSec / 4`
+   (over the mix's rate) for a filter mix, and only `Automix.mixUi()` reads
+   them, for the seek bar's brightness (`Mix.pulse`).
+3. **[PC]** The player bar's light (`crossfade.js` `mixBeat`), once a beat at
+   `live.beatSec` = 60 / the plan's `bpm`. A filter mix's plan carries A's end
+   grid (`filterMix`: `barSec` and `bpm` of `fromGrid`), and a grid's `bpm` and
+   `beatSec` are one tempo, so that beat is `barSec / 4` too (checked
+   2026-11-24).
 
 ### Where a song is sung
 
@@ -265,8 +322,9 @@ voice to finish a line: it never pauses, and the song's own end cuts it too.
 
 Prism `MixMoves.pick`. The same effect three mixes running sounds like a trick.
 
-1. **[all]** The moves heard are kept in order, the last 16 (each one when its
-   hand-over is reached, so a mix aborted before it doesn't count). A mix's
+1. **[all]** The moves heard are kept in order, the last 16 (each one when the
+   mix reaches its real end, not at its hand-over, so a mix called off before
+   or during it doesn't count; audit 2026-11-24). A mix's
    move is its shape: filter mix, echo out, drop-in, muffle, loop, blend,
    bridge, hand-over or crossfade.
 2. **[all]** When the last two are the same **effect move** (filter mix, echo
@@ -278,6 +336,8 @@ Prism `MixMoves.pick`. The same effect three mixes running sounds like a trick.
 3. **[all]** Not effects: the blend, the loop, the bridge, the hand-over and the
    plain crossfade may repeat. A pick from the editor is never changed by this.
 4. **[PC]** The list lives in the page and starts empty on each page load.
+   `crossfade.js` `finishLive` reports a mix to `heard` once it has played
+   (phase `mixing`); `abortLive` never does.
 
 ### Analysis length
 
@@ -304,3 +364,28 @@ Simplified from Orchard: the key confidence is the analysis's own key
 strength (Orchard's is its key margin); the loop-vs-blend score keeps only the
 parts that differ between the two (Orchard scores eleven) and favours a passed loop instead of charging it; a short blend stands
 in for Orchard's filtered class.
+
+## The mix's ceiling [all]
+
+Found on the phone (2026-11-24, level logging): two songs summed overshoot full scale. The echo out's catch (the echo, B, and A's last beat) peaked at +5.4 dB, and a loop mix reached full scale.
+
+1. **[all]** While a mix runs, a peak limiter sits on the mix's output: ceiling -1 dBFS, about 5 ms look-ahead, about 100 ms release. On the loop mix it is a clip guard only ("The loop mix's baseline"). It stays on as long as a deck sounds, from the deck's fade-in (the hand-over) to the player's take-over. That includes one song alone on a deck: B's run-on after the loop's release, which clipped on the phone without it (7ea1005, 2026-11-25). A song on YouTube's own player with no deck sounding (no mix) is never touched by it. **PC:** already so: `crossfade.js` engages it at the hand-over and releases it in `finishLive` (`mixEnd`, the player's take-over plus 0.15 s, then 0.25 s more) or `abortLive`.
+2. **[all]** It comes after everything of ours that can add gain (the mix's own stages). A listener's effect the app doesn't own may come after it: the phone's EQ preset. **PC:** the last stage, after upstream's safety compressor (`equalizer.js`: threshold -6 dB, knee 12, ratio 4, attack 3 ms, release 250 ms). That compressor alone doesn't hold the sum: Web Audio's compressor adds its own make-up gain. Measured in Firefox (OfflineAudioContext, 2026-11-24): +5.4 dB in → +2.0 dBFS out on a steady tone, +2.65 dBFS on an echo-catch shape, hundreds of samples over full scale.
+3. **PC:** `src/automix/limiter-worklet.js`, an AudioWorklet after the compressor (`src/plus/fx-plus.js` `limitFor`), engaged by `crossfade.js` from the hand-over to the mix's end or abort. Off, it passes every sample unchanged, with a fixed 5 ms delay. That delay means it goes in while nothing is heard, never mid-song: at once when the audio context isn't running yet or the song is paused (the graph is usually built before the first play), else at the next pause, song change or context stop. If a mix starts before that, it goes in at the mix's start under a 30 ms blend of the two paths, so no 5 ms skip is heard. Once it is in, `__viviAudioGraph.out` is the limiter (what the speakers get). If the AudioWorklet is missing or wiring it fails, the compressor keeps playing directly. One limiter per audio context. A sample that is not a finite number plays as silence. The log line "limiter: the mix took up to N dB off its peaks" says how much it took off. Checked in node: a +5.4 dB sum comes out at -1.000 dBFS; under the ceiling, or off, every sample is unchanged (`test_automix_plan.mjs`). Live in Firefox, 2026-11-24, YouTube's volume at 100: UNETHICAL into the radio's next song, a filter mix, logged "limiter: the mix took up to 0.8 dB off its peaks".
+4. **Phone:** `automix/Limiter.java`, on the deck's output (6951a6e). Each deck is held to ±1 after its filters and before its level (4bdbb3b). The listener's EQ preset, an Android effect on the deck's track as on YouTube's own player, comes after it. Log: "limiter: down to N dB at most, N ms lowered in all". A plain blend, 2026-11-24: -1.1 dB at most.
+5. **[all]** The measure: during a mix the limiter takes no more off than it takes off the louder song playing alone (hot masters trip the ceiling on their own, so a fixed figure cannot hold). On the loop mix the limiter is a clip guard only: no trim and no relative target with it ("The loop mix's baseline" rule 1). Offline (2026-11-24, the baseline's schedule and gains on the real audio, the limiter's algorithm, no compressor), Vaina Loca into SI NO ES CONTIGO: the sum peaks at +2.4 dBFS 1.3 s into the entry, where B is barely in (Vaina Loca alone peaks +1.6 dBFS), and the guard takes 3.4 dB off there; at most 3.0 dB on the ramp, 2.6 dB while A drains, 1.1 dB on B alone after the release.
+6. **[all]** A drop-in trims the playing song at least -1.5 dB (a larger loudness trim stands). Why: B lands at full level on A's first beat. Offline (2026-11-24, real audio, the limiter's algorithm, no compressor): on the fixture pairs as planned, B on its first downbeat (an intro), the limiter took 0.0 dB off against 1.3-2.2 dB off the louder song alone. With B dropped on its loudest two bars instead, Stereo Love into Midnight Sun took 2.5 dB off against 2.4 dB off Midnight Sun alone (4.3 dB untrimmed); with the floor, 2.3 dB. The phone's Dusk Till Dawn into Starboy (-4.4 dB over 5.9 s, A at -5.9 dB) is judged against Starboy alone. **PC:** `automix.js` `DROP_IN_OUT_DB`, `dropInTrim` on the plan's `trim`, so the overview and the engine play the same fader.
+
+## The player's level at a take-over [all]
+
+Found on the phone (7ea1005, 2026-11-25): it muted YouTube's player 12 ms ahead on the mixer, but a mute is heard one output latency later. So YouTube's player and the deck both played A at full level for that latency less 12 ms: about 200 ms on LDPlayer, 28 ms on the S21. That made a burst of clipping at the take-over, which the Nov 8 recording didn't have.
+
+1. **[all]** Any change of level on YouTube's player at a hand-over (the deck takes A over) or a take-over (the player takes B back) is sent one output latency ahead of the time the deck is heard, so both are heard at the same moment. The player and the deck are never both heard at full level on the same song.
+2. **PC:** nothing to add. YouTube's `<video>` plays through the same audio context as the decks (`equalizer.js` `createMediaElementSource`, then the crossfade gate `__viviAudioGraph.gate`). `crossfade.js` sets every level change at a hand-over or take-over on that gate, on the context's clock, so the gate and the decks reach the speakers through the same output latency. `v.volume` is only read, never set.
+3. **Phone:** YouTube's player and the deck are separate outputs, so the player's volume change is sent one output latency ahead of the deck's heard clock (7ea1005).
+
+## The outgoing level after the player moves on [all]
+
+Found on the phone (2026-11-24): about 0.67 s after YouTube moves to the next song, YouTube fades its old player to 0 within about 0.3 s. A deck that copied that volume lost the echo tail, or a blend's outgoing half, about 1 s after the catch.
+
+1. **[all]** The outgoing song's level follows the player's volume only while the player still plays that song. After it moves on, the outgoing deck keeps its own level. **PC:** a mute is still followed (`crossfade.js` `driveLive`); the tail is our own decoded copy, and the web player has one element, which YouTube doesn't fade. **Phone:** nothing is followed (55cf8b5): YouTube fades its old player to 0, which looks the same as a mute.

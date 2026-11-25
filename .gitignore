@@ -13,3 +13,6 @@ graphify-out/
 
 # local analysis cache (decoded real songs and each side's results; never committed)
 .cache/
+
+# agent audit reports (local, never committed)
+agent-audit/

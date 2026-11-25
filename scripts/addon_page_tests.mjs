@@ -82,6 +82,15 @@ const again = await P.openFor('s1');
 check("then FIND and OPEN again, with YouTube's bitrate", [again.state, types().slice(-2), sent.at(-1).ytKbps], ['ready', ['VIVI_ADDONS_FIND:Poker Face', 'VIVI_ADDONS_OPEN:t-Poker Face'], 150]);
 storageListeners.forEach((f) => f({ addonsEnabled: { newValue: false } }, 'local'));
 check('turned off: off, forgotten', P.statusOf('s1').state, 'off');
+{
+  // (audit 2026-11-24) turned on again on the same song: it is asked for again
+  const n = sent.length;
+  storageListeners.forEach((f) => f({ addonsEnabled: { newValue: true } }, 'local'));
+  state('s1', '');
+  for (let i = 0; i < 6; i++) await tick();
+  check('turned on again on the same song: FIND and OPEN again', [types().slice(n), P.statusOf('s1').state], [['VIVI_ADDONS_FIND:Poker Face', 'VIVI_ADDONS_OPEN:t-Poker Face'], 'ready']);
+  storageListeners.forEach((f) => f({ addonsEnabled: { newValue: false } }, 'local'));
+}
 
 // protocol.md 8.1.3: the next song is opened only from 25 s before the transition
 check('read-ahead: 26 s before the mix-out: not yet; 25 s: now; past it: still', [P.openDue(174, 200), P.openDue(175, 200), P.openDue(199, 200)], [false, true, true]);

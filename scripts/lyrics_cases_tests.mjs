@@ -107,6 +107,24 @@ for (const c of cases.activeLines) check('activeLines (PC)', c.name, PC.activeLi
   const parseWith = (c) => shape(c.input.format === 'enhancedLrc' ? L.parseEnhancedLRC(c.input.text) : L.parseLRC(c.input.text));
   for (const c of cases.parse) check('parse (PC)', c.name, parseWith(c), c.expect);
   for (const c of cases.lrcOffset) check('lrcOffset (PC)', c.name, parseWith(c), c.expect);
+  // (ours, audit 2026-11-24) a main word without an end tag runs to the line's end, not into the inline [bg: ...] part
+  const ends = (t) => L.parseEnhancedLRC(t).lines[0].words.map((w) => [w.text, w.end]);
+  check('parse (PC)', 'the last main word is not cut by an earlier inline background vocal',
+    ends('[00:01.00]<00:01.00>Lead <00:03.00>word [bg:<00:02.00>echo <00:02.50>now]\n[00:06.00]<00:06.00>Next'),
+    [['Lead', 3000], ['word', 6000], ['echo', 2500], ['now', 6000]]);
+  check('lrcOffset (PC)', 'a BOM before a first-line [offset:] tag (ours, audit 2026-11-24)',
+    parseWith({ input: { format: 'lrc', text: '﻿[offset:+500]\n[00:01.00]a\n[00:03.00]b' } }), [{ start: 500 }, { start: 2500 }]);
+}
+// (ours, 2026-11-24) the default priority order is the user's: lrc.red, Better Lyrics Unison, Better Lyrics, with
+// priority and "wait 2 s" on, the same in the page, the popup and the one-time migration (saved settings are kept)
+{
+  const src = (f) => readFileSync(new URL('../' + f, import.meta.url), 'utf8');
+  const want = "['lrcred', 'unison', 'betterlyrics']";
+  check('defaults (PC)', 'lyrics.js priority order', src('src/lyrics.js').match(/DEFAULT_PRIORITY_ORDER = (\[[^\]]*\])/)?.[1], want);
+  check('defaults (PC)', 'background.js migration order', src('src/background.js').match(/DEFAULT_PRIORITY_ORDER = (\[[^\]]*\])/)?.[1], want);
+  const pop = src('src/popup.js').match(/\{ lyricsPriorityEnabled: (\w+), lyricsPriorityOrder: (\[[^\]]*\]), lyricsPriorityWaitEnabled: (\w+) \}/);
+  check('defaults (PC)', 'popup priority defaults', pop && [pop[1], pop[2], pop[3]], ['true', want, 'true']);
+  check('defaults (PC)', 'lyrics.js wait default on, 2 s', [/let priorityWaitEnabled = true;/.test(src('src/lyrics.js')), /PRIORITY_WAIT_MS\s*=\s*2000;/.test(src('src/lyrics.js'))], [true, true]);
 }
 console.log('skip  the PC: no pure currentLine function (the PC lights lines by activeLines, §2.4 is the strip\'s)');
 console.log(`\nlyrics cases: ${ok} ok, ${failed} DIFF`);

@@ -85,6 +85,7 @@
         redirect_uri: chrome.identity.getRedirectURL('discord'),
         ...params,
       }),
+      signal: AbortSignal.timeout(15000), // vivi+ (audit 2026-11-24): a hung request never stalls the presence queue
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.error_description || data.message || `OAuth error ${res.status}`);
@@ -106,6 +107,7 @@
       method: body === undefined ? 'GET' : 'POST',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       body: body === undefined ? undefined : JSON.stringify(body),
+      signal: AbortSignal.timeout(15000), // vivi+ (audit 2026-11-24): a hung request never stalls the presence queue
     });
     if (res.status === 204) return null;
     const json = await res.json().catch(() => ({}));
@@ -362,6 +364,7 @@
   /* ------------------------------------------------------------ messages */
   chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (!msg || typeof msg.type !== 'string' || !msg.type.startsWith('VIVI_DISCORD_')) return false;
+    if (typeof viviRefuseFromTab === 'function' && viviRefuseFromTab(msg, sender, sendResponse)) return false; // vivi+ (audit 2026-11-24): sign-in from our own pages only (fx-headers.js)
     const done = (p) => p.then((r) => sendResponse({ ok: true, ...(r || {}) }),
                                (e) => sendResponse({ ok: false, error: e.message || String(e) }));
     switch (msg.type) {

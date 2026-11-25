@@ -28,10 +28,10 @@ async function callLastfm(method, params, httpMethod = 'GET') {
   let res;
   if (httpMethod === 'POST') {
     const body = new URLSearchParams(full);
-    res = await fetch(LASTFM_API_ROOT, { method: 'POST', body });
+    res = await fetch(LASTFM_API_ROOT, { method: 'POST', body, signal: AbortSignal.timeout(15000) }); // vivi+ (audit 2026-11-24): a time limit
   } else {
     const url = LASTFM_API_ROOT + '?' + new URLSearchParams(full).toString();
-    res = await fetch(url);
+    res = await fetch(url, { signal: AbortSignal.timeout(15000) }); // vivi+ (audit 2026-11-24): a time limit
   }
   const data = await res.json().catch(() => ({}));
   if (data.error) {
@@ -39,6 +39,7 @@ async function callLastfm(method, params, httpMethod = 'GET') {
     err.lastfmCode = data.error;
     throw err;
   }
+  if (!res.ok) throw new Error(`Last.fm HTTP ${res.status}`); // vivi+ (audit 2026-11-24): a 5xx page without Last.fm's error JSON is not a success
   return data;
 }
 

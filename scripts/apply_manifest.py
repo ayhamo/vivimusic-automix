@@ -71,7 +71,8 @@ def background_helpers(ref):
     if not m:
         problems.append('background: no importScripts() in upstream background.js')
         return []
-    return ['src/' + s for s in re.findall(r"'([^']+)'", m.group(1))]
+    # importScripts('a.js', "b.js", `c.js`): any of JavaScript's string quotes
+    return ['src/' + q[1] for q in re.findall(r"""(['"`])([^'"`]+)\1""", m.group(1))]
 
 
 def build(ref):

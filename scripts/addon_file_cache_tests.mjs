@@ -204,6 +204,56 @@ const cacheWith = (maxBytes, st = fakeStorage(), c = fakeCache()) => ({ st, c, F
   const stored = [...c.m.keys()].find((u) => u.endsWith('m'));
   c.m.set(stored, txt('#EXTM3U\n'));   // the store holds a playlist under that key
   check('a stored playlist is not served, and is dropped', [await F.get('m'), await F.has('m'), c.m.has(stored)], [null, null, false]);
+  // (audit 2026-11-24) a comment or doctype before the MPD tag, or the tag in lowercase
+  check('a DASH manifest after a comment and a doctype, lowercase: not kept', [
+    await F.put('d2', txt('<?xml version="1.0"?>\n<!-- made by x -->\n<!DOCTYPE mpd>\n<MPD>')),
+    await F.put('d3', txt('<mpd type="static">'))], [false, false]);
+}
+
+// ---- FETCH: a manifest is not handed to the page or kept; a copy opened with a quality pick is kept under that pick ----
+{
+  const st = fakeStorage({ addonsEnabled: true, addonsList: [{ id: 'idQ', base: 'https://q.example/SECRET-Q', name: 'Q', host: 'q.example', quality: 'max' }] });
+  const c = fakeCache();
+  const files = FC.create({ open: () => c, storage: st, maxBytes: async () => 512e6, now: () => ++T });
+  let opens = 0, body = () => ({ ct: 'audio/flac', bytes: bytes(500, 9) });
+  // as client.open answers: the addon with its quality pick
+  const client = {
+    health: () => ({}),
+    find: async (song, addons) => ({ found: addons.map((a) => ({ addon: { ...a, name: a.id, host: 'q.example' }, rows: [{ id: 'q1' }] })), tried: [] }),
+    open: async (found) => { opens++; const f = found[0]; return { addon: { base: f.addon.base, name: f.addon.name, host: f.addon.host, id: f.addon.id, quality: f.addon.quality ?? null }, row: f.rows[0], stream: { url: 'https://cdn/SECRET', codec: 'flac', transport: 'file' }, tried: [] }; },
+  };
+  let hold = null;   // (a download still running: its body waits for this)
+  const fetch = async () => { const b = body(); return { ok: true, status: 200, headers: { get: (h) => (h.toLowerCase() === 'content-type' ? b.ct : null) }, arrayBuffer: async () => { await hold; return b.bytes; } }; };
+  const S = A.create({ storage: st, client, fetch, files });
+  const play = async (title) => {
+    const f = await S.handle({ type: 'VIVI_ADDONS_FIND', song: { title, artist: 'X', durationSec: 200 } });
+    const o = await S.handle({ type: 'VIVI_ADDONS_OPEN', ticket: f.ticket });
+    const file = await S.handle({ type: 'VIVI_ADDONS_FETCH', ticket: f.ticket });
+    await new Promise((r) => setTimeout(r, 10));
+    return { o, file };
+  };
+  await play('Pick');
+  const again = await play('Pick');
+  check('a quality pick: kept under it, the replay comes from the cache', [opens, again.o.cached, Object.keys(st.data[FC.INDEX])], [1, true, ['idQ|q1|max']]);
+  await files.clear();
+  body = () => ({ ct: 'application/vnd.apple.mpegurl', bytes: bytes(500, 9) });
+  const m1 = await play('Hls');
+  body = () => ({ ct: 'application/octet-stream', bytes: new TextEncoder().encode('<!-- x -->\n<mpd>').buffer });
+  const m2 = await play('Dash');
+  check('FETCH: a manifest by its type or its bytes is not handed over, nor kept', [m1.file.none, m2.file.none, (await files.stats()).files], ['the file is a playlist or manifest, not audio', 'the file is a playlist or manifest, not audio', 0]);
+  // (audit 2026-11-24) a download dropped while it runs ("Upgrade quality") does not come back into the cache
+  body = () => ({ ct: 'audio/flac', bytes: bytes(500, 9) });
+  let release;
+  hold = new Promise((r) => { release = r; });
+  const f = await S.handle({ type: 'VIVI_ADDONS_FIND', song: { title: 'Dropped', artist: 'X', durationSec: 200 } });
+  await S.handle({ type: 'VIVI_ADDONS_OPEN', ticket: f.ticket });
+  const running = S.handle({ type: 'VIVI_ADDONS_FETCH', ticket: f.ticket });
+  await new Promise((r) => setTimeout(r, 5));
+  const rf = await S.handle({ type: 'VIVI_ADDONS_REFRESH', ticket: f.ticket });
+  release(); hold = null;
+  const got = await running;
+  await new Promise((r) => setTimeout(r, 10));
+  check('FETCH: a download dropped mid-flight (REFRESH) is handed over but not kept', [rf.ok, got.bytes?.byteLength, (await files.stats()).files], [true, 500, 0]);
 }
 
 console.log(failed ? `\n${failed} failed` : '\nall passed');

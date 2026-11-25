@@ -7,7 +7,7 @@
   "sides": "lyrics.md §5.2. Metrolist LyricsUtils.kt:160-235 (assignLineAlignments). agents: optional {id: 'person' | 'group' | 'other'}; a line's agent may be null. respect: the sides setting. Expect left, right or center per line.",
   "gaps": "lyrics.md §6.1. Metrolist LyricsListIndexing.kt:28-53. A line starts at min(its tag, its first timed word) (5f58b4081). Expect [start, end] per gap, in order.",
   "parse": "lyrics.md §11.6. Metrolist MlxParser.kt (EnhancedLrcPrefixTest, 0bc6ec068; LyricsEditor BOM, 459059bb2). input: {format: lrc | enhancedLrc, text}. Expect per line its start and, for word lines, [text, start] per word plus 'bg' for a background vocal.",
-  "lrcOffset": "lyrics.md §3.5. Metrolist LrcTiming.kt: the last [offset:N] on a line of its own, added to every time, none below 0. Same input and expect as parse."
+  "lrcOffset": "lyrics.md §3.5, the LRC standard (Morphe LRCParser.java:719; the reverse of Metrolist LrcTiming.kt): the last [offset:N] on a line of its own, taken from every time, none below 0. Same input and expect as parse."
  },
  "currentLine": [
   { "name": "before the first line", "input": { "starts": [1000, 5000, 9000], "position": 500 }, "expect": -1 },
@@ -58,9 +58,10 @@
   {"name": "a BOM before an enhanced LRC line is ignored", "input": {"format": "enhancedLrc", "text": "﻿[00:01.00]<00:01.00>a <00:01.50>b<00:02.00>"}, "expect": [{"start": 1000, "words": [["a", 1000], ["b", 1500]]}]}
  ],
  "lrcOffset": [
-  {"name": "a positive offset shows the lyrics later (Metrolist's sign)", "input": {"format": "lrc", "text": "[ar:x]\n[offset:+500]\n[00:01.00]a\n[00:03.00]b"}, "expect": [{"start": 1500}, {"start": 3500}]},
-  {"name": "a negative offset, never below 0", "input": {"format": "lrc", "text": "[offset:-1500]\n[00:01.00]a\n[00:03.00]b"}, "expect": [{"start": 0}, {"start": 1500}]},
-  {"name": "the last [offset:] counts; word times move with their line", "input": {"format": "enhancedLrc", "text": "[offset:100]\n[offset:250]\n[00:01.00]<00:01.00>a <00:01.50>b<00:02.00>"}, "expect": [{"start": 1250, "words": [["a", 1250], ["b", 1750]]}]},
+  {"name": "a positive offset shows the lyrics earlier (the LRC standard)", "input": {"format": "lrc", "text": "[ar:x]\n[offset:+500]\n[00:01.00]a\n[00:03.00]b"}, "expect": [{"start": 500}, {"start": 2500}]},
+  {"name": "a positive offset past a line's time: never below 0", "input": {"format": "lrc", "text": "[offset:1500]\n[00:01.00]a\n[00:03.00]b"}, "expect": [{"start": 0}, {"start": 1500}]},
+  {"name": "a negative offset shows them later", "input": {"format": "lrc", "text": "[offset:-1500]\n[00:01.00]a\n[00:03.00]b"}, "expect": [{"start": 2500}, {"start": 4500}]},
+  {"name": "the last [offset:] counts; word times move with their line", "input": {"format": "enhancedLrc", "text": "[offset:100]\n[offset:250]\n[00:01.00]<00:01.00>a <00:01.50>b<00:02.00>"}, "expect": [{"start": 750, "words": [["a", 750], ["b", 1250]]}]},
   {"name": "an [offset:] inside a line isn't one", "input": {"format": "lrc", "text": "[00:01.00]a [offset:500]\n[00:03.00]b"}, "expect": [{"start": 1000}, {"start": 3000}]}
  ]
 }

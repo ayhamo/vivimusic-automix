@@ -31,7 +31,13 @@
       if (job) { jobs.delete(e.data.fileKey); job(e.data); return; }
       reply(e.data);
     };
-    worker.onerror = (e) => reply({ type: 'fatal', message: String(e?.message || 'worker error') });
+    worker.onerror = (e) => {
+      const message = String(e?.message || 'worker error');
+      // the songs it held are answered too (their analyzeSong would wait for good)
+      for (const job of jobs.values()) job({ type: 'error', message });
+      jobs.clear();
+      reply({ type: 'fatal', message });
+    };
     worker.postMessage({
       type: 'init',
       wasmUrl: chrome.runtime.getURL('src/vendor/automix/ort-wasm-simd-threaded.wasm'),
@@ -325,6 +331,7 @@
     });
 
     reply({ type: 'progress', fileKey, stage: 'models' });
+    if (!worker) throw new Error('analysis worker not running');
     const res = await new Promise((resolve) => {
       jobs.set(fileKey, resolve);
       worker.postMessage(
@@ -393,6 +400,7 @@
     } else if (d.type === 'analyze') {
       // a bare clip (the model warm-up): its own Beat This! window
       const { fileKey, samples, sampleRate, offsetSec } = d;
+      if (!worker) { reply({ type: 'error', fileKey, message: 'analysis worker not running' }); return; }
       worker.postMessage({ fileKey, samples, sampleRate, beatWindows: [{ offsetSec, pcm: samples }], vocalWindows: [] }, [samples.buffer]);
     }
   });
