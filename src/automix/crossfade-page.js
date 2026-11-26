@@ -234,9 +234,15 @@
     if (j.playabilityStatus?.status !== 'OK' && !visitor && fresh) j = await callPlayer(id, client, fresh);
     const ps = j.playabilityStatus || {};
     if (ps.status !== 'OK') throw new Error('player ' + ps.status + (ps.reason ? ' (' + ps.reason + ')' : ''));
-    const audio = (j.streamingData?.adaptiveFormats || [])
+    const all = (j.streamingData?.adaptiveFormats || [])
       .filter((f) => f.url && /^audio\//.test(f.mimeType || '') && Number(f.contentLength) > 0)
       .sort((a, b) => (Number(b.bitrate) || 0) - (Number(a.bitrate) || 0));
+    // never YouTube's DRC ("Stable volume") variant while a plain one is there: the add-on copy's level
+    // is measured against this file, and a compressed one would leave the add-on quieter (the phone,
+    // 2026-11-26: Morphe's "Disable DRC audio")
+    const isDrc = (f) => f.isDrc === true || /(^|[;,])drc=1\b/.test(String(f.xtags || '')) || /drc/i.test(String(f.audioTrack?.id || ''));
+    const plain = all.filter((f) => !isDrc(f));
+    const audio = plain.length ? plain : all;
     const picks = [audio.find((f) => /webm/.test(f.mimeType)), audio.find((f) => /mp4/.test(f.mimeType))].filter(Boolean);
     if (!picks.length) throw new Error('no plain audio URL');
     // BitChord's rule: a picture wider than 1.2:1 is a music video; a square
