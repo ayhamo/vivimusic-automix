@@ -119,6 +119,17 @@ const flat = (v) => new Array(W * H).fill(v);
     { mimeType: 'video/mp4; codecs="avc1.4d4015"', url: 'u5', height: 360, fps: 30, initRange: {}, indexRange: {} },
   ] }, 720);
   check('format: H.264 ≤ 720p, ≤ 30 fps', f && f.url === 'u3', f && f.url);
+  // (phone audit F5-1) the cut's ranges are checked before a byte is read: the head and the part are bounded
+  const throws = (fn) => { try { fn(); return false; } catch { return true; } };
+  const head = V.headOf({ initRange: { start: '0', end: '740' }, indexRange: { start: '741', end: '1500' } });
+  check('cut: the init and sidx ranges as YouTube gives them', head.initLen === 741 && head.indexAt === 741 && head.indexEnd === 1500, JSON.stringify(head));
+  check('cut: a bad init/index range is refused', throws(() => V.headOf({ initRange: { end: '2000' }, indexRange: { start: '741', end: '1500' } }))
+    && throws(() => V.headOf({ initRange: { end: '-1' }, indexRange: { start: '0', end: '10' } }))
+    && throws(() => V.headOf({ initRange: { end: '740' }, indexRange: { start: '741', end: 'x' } }))
+    && throws(() => V.headOf({ initRange: { end: '740' }, indexRange: { start: '741', end: String(64 * 1024 * 1024) } }))
+    && throws(() => V.headOf({})));
+  check('cut: a part within MAX_CUT is read, a longer or backwards one is refused', !throws(() => V.checkPart(1501, 1500 + V.MAX_CUT))
+    && throws(() => V.checkPart(1501, 1501 + V.MAX_CUT)) && throws(() => V.checkPart(2000, 1999)) && throws(() => V.checkPart(NaN, 10)));
 }
 
 // ───────────── extra: remux round trip ─────────────

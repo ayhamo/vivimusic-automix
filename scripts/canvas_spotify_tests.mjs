@@ -113,6 +113,12 @@ ok(await c.readJson(streamed(new Uint8Array(300 * 1024).fill(32))).then(() => fa
   vm.runInContext(fx.slice(fx.indexOf('async function viviReadCapped('), fx.indexOf('\nchrome.runtime.onMessage.addListener((msg, _sender')), ctx5);
   const body = (n) => ({ headers: { get: () => null }, body: { getReader: () => { let left = 3; return { read: async () => (left-- > 0 ? { done: false, value: new Uint8Array(n) } : { done: true }), cancel: async () => {} }; } } });
   ok((await ctx5.viviReadCapped(body(4), 12)).byteLength === 12 && await ctx5.viviReadCapped(body(5), 12) === null, 'relays: an answer past the cap is refused');
+  // (phone F5-6) bg-plus.js reads every answer through plusRead, capped: Apple's pages, bundles, lists and lyrics
+  vm.runInContext(plus.slice(plus.indexOf('const PLUS_JSON_MAX'), plus.indexOf('\n}\n', plus.indexOf('async function plusRead(')) + 2) + '\nthis.plusRead = plusRead;', Object.assign(ctx5, { TextDecoder, JSON }));
+  const text = (s, n = 1) => ({ headers: { get: () => null }, body: { getReader: () => { let left = n; return { read: async () => (left-- > 0 ? { done: false, value: new TextEncoder().encode(s) } : { done: true }), cancel: async () => {} }; } } });
+  ok((await ctx5.plusRead(text('{"a":1}'), 100, 'json')).a === 1 && await ctx5.plusRead(text('abc', 2), 6) === 'abcabc', 'plusRead: an answer under the cap is read');
+  ok(await ctx5.plusRead(text('abcd', 2), 6).then(() => false, () => true), 'plusRead: an answer past the cap fails');
+  ok(!/\.(json|text)\(\)/.test(plus.replace(/^.*\/\/ \(the node tests' stand-ins\)$/m, '').replace(/^\s*const data = await res\.json\(\);$/m, '')), 'bg-plus.js: no uncapped .json() or .text() outside the update check');
   ok(/const buf = await viviReadCapped\(res, VIVI_FETCH_MAX\);/.test(fx) && /const buf = await viviReadCapped\(res, VIVI_NET_FETCH_MAX\);/.test(bg) && /const VIVI_FETCH_MAX = 10e6;/.test(fx) && /const VIVI_NET_FETCH_MAX = 64e6;/.test(fx), 'relays: 10 MB and 64 MB');
   ok(/chrome\.webRequest\.onBeforeRedirect\.addListener/.test(fx) && /\|\| viviRedirectedIn\.has\(details\.requestId\);\n\s+if \(host === 'open\.spotify\.com' && !anonymous\)/.test(fx), 'no sp_dc on a request redirected onto Spotify');
 }

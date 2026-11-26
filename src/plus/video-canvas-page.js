@@ -999,8 +999,30 @@
     return { bytes: cat([...head, moof, mdat]), fromSec: k.pts / init.mediaTs, lenSec: total / init.mediaTs };
   }
 
+  // ═════════════════════════════ the cut's bytes (VideoCanvas.cut, phone audit F5-1) ═════════════════════════════
+  // The stream's head (init and sidx) is at most 4 MB and the part at most MAX_CUT bytes: a long full video at a
+  // high quality is refused (not this time) instead of read whole into the tab's memory.
+  const MAX_HEAD = 4 * 1024 * 1024, MAX_CUT = 160 * 1024 * 1024;
+
+  /** The format's init and index ranges as { initLen, indexAt, indexEnd }; throws when they don't fit together. */
+  function headOf(f) {
+    const initLen = Number(f && f.initRange && f.initRange.end) + 1;
+    const indexAt = Number(f && f.indexRange && f.indexRange.start), indexEnd = Number(f && f.indexRange && f.indexRange.end);
+    if (![initLen, indexAt, indexEnd].every(Number.isSafeInteger) || initLen <= 0 || indexAt < initLen || indexEnd < indexAt || indexEnd >= MAX_HEAD) {
+      throw new Error('bad initRange/indexRange');
+    }
+    return { initLen, indexAt, indexEnd };
+  }
+
+  /** Throws unless [from, to] is a byte range of at most MAX_CUT bytes. */
+  function checkPart(from, to) {
+    if (!Number.isSafeInteger(from) || !Number.isSafeInteger(to) || to < from || to - from + 1 > MAX_CUT) {
+      throw new Error('part too big or bad: bytes ' + from + '-' + to);
+    }
+  }
+
   const core = {
-    CLIP_SEC, W, H, NEVER, OTHER_TAKE,
+    CLIP_SEC, W, H, NEVER, OTHER_TAKE, MAX_CUT, headOf, checkPart,
     norm, artists, officialChannel, titleCore, matches, searchResults, pickFormat,
     heatmapOf, partStart, chorusMs, noFrames, pick, titleSays, findOn, snap, bestPartShows, videoChoices, choiceTag,
     grid, bars, area, diff, still, windows, choose, runnersUp, judge, cropX, change, cuts, flashing, end: loopEnd, cropRect,
@@ -1063,12 +1085,29 @@
     else w.reject(new Error(d.why || 'extension fetch failed'));
   }
 
+  // an answer's bytes, at most GET_MAX as the relay's (video-canvas.js FETCH_MAX; phone audit F5-1): more is refused, not asked again
+  const GET_MAX = 8e6;
+  async function capped(r) {
+    if (Number(r.headers.get('content-length')) > GET_MAX) { try { await r.body.cancel(); } catch { /* gone */ } throw refused('answer too big'); }
+    if (!r.body || !r.body.getReader) { const b = await r.arrayBuffer(); if (b.byteLength > GET_MAX) throw refused('answer too big'); return b; }
+    const rd = r.body.getReader(), parts = [];
+    let n = 0;
+    for (;;) {
+      const { done, value } = await rd.read();
+      if (done) break;
+      n += value.byteLength;
+      if (n > GET_MAX) { try { await rd.cancel(); } catch { /* gone */ } throw refused('answer too big'); }
+      parts.push(value);
+    }
+    return cat(parts);
+  }
+
   const viaExtension = new Set();
   async function getUrl(url, key) {
     if (viaExtension.has(key)) return relay(url);
     try {
       return await timed(url, { credentials: 'omit' }, 20000,
-        async (r) => new Response([204, 205, 304].includes(r.status) ? null : await r.arrayBuffer(), { status: r.status }));
+        async (r) => new Response([204, 205, 304].includes(r.status) ? null : await capped(r), { status: r.status }));
     } catch (e) {
       if (!(e instanceof TypeError)) throw e;
       if (viaExtension.size > 20) viaExtension.clear();
@@ -1240,11 +1279,12 @@
   /** The fragments holding [start, end] (video seconds), parsed: init facts, bytes and the chosen samples. */
   async function fetchCut(f, start, end) {
     const url = f.url;
-    const initEnd = Number(f.indexRange.end), initLen = Number(f.initRange.end) + 1;
+    const { initLen, indexAt, indexEnd: initEnd } = headOf(f);   // (checked: a bad range is never read past)
     const head = await fetchBytes(url, 0, initEnd);
-    const sidx = parseSidx(head, Number(f.indexRange.start));
+    const sidx = parseSidx(head, indexAt);
     if (!sidx) throw new Error('no sidx');
     const [from, to] = sidxRange(sidx, start, end - start, initEnd + 1);
+    checkPart(from, to);
     const body = await fetchBytes(url, from, to);
     const u = cat([head.subarray(0, initLen), body]);
     const init = parseInit(u, initLen);

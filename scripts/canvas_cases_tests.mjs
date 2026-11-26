@@ -36,7 +36,15 @@ const apCtx = {
 };
 // (bg-plus.js's time-limited fetch, defined above the Apple block: the context's fetch as the cases set it)
 apCtx.plusFetch = (u, i) => apCtx.fetch(u, i);
+// bg-plus.js's capped body read, as written (the cases' stand-in answers have no stream: read plainly)
+const plusReadSrc = (() => {
+  const s = readFileSync(new URL('src/plus/bg-plus.js', root), 'utf8').replace(/\r\n/g, '\n');
+  const a = s.indexOf('const PLUS_JSON_MAX'), b = s.indexOf('\n}\n', s.indexOf('async function plusRead('));
+  if (a < 0 || b < 0) throw new Error("bg-plus.js: plusRead's markers moved");
+  return s.slice(a, b + 2);
+})();
 vm.createContext(apCtx);
+vm.runInContext(plusReadSrc, apCtx);
 vm.runInContext(readFileSync(new URL('src/apple-canvas.js', root), 'utf8'), apCtx, { filename: 'src/apple-canvas.js' });
 {
   const lines = readFileSync(new URL('src/plus/bg-plus.js', root), 'utf8').split(/\r?\n/);
@@ -66,11 +74,14 @@ function report(group, name, got, want, tol) {
   if (same(got, want, tol)) { ok++; console.log(`ok    ${group}: ${name}`); }
   else { diff++; console.log(`DIFF  ${group}: ${name}\n        PC ${show(got)}  expected ${show(want)}`); }
 }
+const seen = new Set();   // the groups run or skipped: one the cases add and this file doesn't know fails
 function skip(group, why) {
+  seen.add(group);
   skipped += cases[group].length;
   console.log(`skip  ${group} (${cases[group].length} cases; no PC function: ${why})`);
 }
 async function run(group, fn, tol) {
+  seen.add(group);
   for (const c of cases[group]) {
     let got;
     try { got = await fn(c); } catch (e) { got = 'threw ' + (e && e.message); }
@@ -145,6 +156,7 @@ function appleTokenCtx(nowMs, bundles, rejectedJwts = []) {
   };
   ctx.plusFetch = (u, i) => ctx.fetch(u, i);   // (bg-plus.js's time-limited fetch)
   vm.createContext(ctx);
+  vm.runInContext(plusReadSrc, ctx);
   vm.runInContext(readFileSync(new URL('src/apple-canvas.js', root), 'utf8'), ctx);
   const lines = readFileSync(new URL('src/plus/bg-plus.js', root), 'utf8').split(/\r?\n/);
   const a = lines.findIndex((l) => l.startsWith('// ── apple-canvas.js (ported'));
@@ -179,11 +191,26 @@ await run('appleMotion', async (c) => {
   const primary = apCtx.extractEditorialVideoUrl(c.video, false);
   if (!primary) return null;
   const tall = apCtx.extractEditorialVideoUrl(c.video, true);
-  // the alternate rides along to resolveAppleCanvasDirect's answer (fallbackUrl)
-  apCtx.__setSearch({ results: { songs: { data: [{ id: 'h', type: 'songs', attributes: { name: c.name, artistName: 'Artist', albumName: 'Album', editorialVideo: c.video }, relationships: { albums: { data: [{ id: '1' }] } } }] } } });
+  // the alternate rides along to resolveAppleCanvasDirect's answer (fallbackUrl); it takes only Apple's
+  // own https hosts, so the cases' file names are put on one there and taken off again
+  const CDN = 'https://mvod.itunes.apple.com/itunes-assets/';
+  const onCdn = JSON.parse(JSON.stringify(c.video, (k, v) => (typeof v === 'string' && /\.m3u8$/.test(v) ? CDN + v : v)));
+  apCtx.__setSearch({ results: { songs: { data: [{ id: 'h', type: 'songs', attributes: { name: c.name, artistName: 'Artist', albumName: 'Album', editorialVideo: onCdn }, relationships: { albums: { data: [{ id: '1' }] } } }] } } });
   const r = await apCtx.resolveAppleCanvasDirect({ song: c.name, artist: 'Artist', album: 'Album' }, 'us')   // one cache key per case;
-  return { primary, alternate: (r && r.fallbackUrl) || null, tall: tall || null };
+  return { primary, alternate: (r && r.fallbackUrl && r.fallbackUrl.replace(CDN, '')) || null, tall: tall || null };
 });
+{
+  // (phone F5-3) a motion link off Apple's https hosts is not played: the trusted alternate instead, else none
+  const ask = async (name, video) => {
+    apCtx.__setSearch({ results: { songs: { data: [{ id: 'h', type: 'songs', attributes: { name, artistName: 'Artist', albumName: 'Album', editorialVideo: video } }] } } });
+    return apCtx.resolveAppleCanvasDirect({ song: name, artist: 'Artist', album: 'Album' }, 'us');
+  };
+  const good = 'https://mvod.itunes.apple.com/a/raw.m3u8';
+  const r1 = await ask('Untrusted square', { motionDetailSquare: { video: 'https://evil.example/sq.m3u8' }, motionDetailRaw: { video: good } });
+  const r2 = await ask('Plain http square', { motionDetailSquare: { video: 'http://mvod.itunes.apple.com/sq.m3u8' } });
+  report('appleMotion', 'an untrusted primary: the trusted alternate is played, an http one is none',
+    { v1: r1 && r1.videoUrl, f1: r1 && r1.fallbackUrl, r2 }, { v1: good, f1: null, r2: null });
+}
 
 // Spotify: bg-canvas.js matches(title, artist, album, duration, foundTitle, foundArtist, foundAlbum, foundDuration, primary, foundPrimary)
 await run('spotifyMatch', (c) => {
@@ -271,5 +298,6 @@ await run('videoArtists', (c) => V.artists(c.input.artist));
 await run('videoChoices', (c) => V.videoChoices(c.input.pairing, c.input.found, c.input.rejected));
 skip('badge', 'the shimmer is CSS only (plus.css:467-482); needs bandCentre(progress, width) and chromeWhite(alpha) if the PC adopts the chrome');
 
+for (const g of Object.keys(cases).filter((k) => k !== 'notes' && !seen.has(k))) { diff++; console.log(`DIFF  ${g}: a group of the cases this file neither runs nor skips`); }
 console.log(`\ncanvas cases: ${ok} ok, ${diff} DIFF, ${skipped} skipped`);
 process.exit(diff ? 1 : 0);

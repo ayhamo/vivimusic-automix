@@ -13,6 +13,17 @@ function plusFetch(url, init = {}, ms = 15000) {
   return fetch(url, { ...init, signal: init.signal && AbortSignal.any ? AbortSignal.any([init.signal, t]) : t });
 }
 
+// an answer's body, read to at most [max] bytes (fx-headers.js viviReadCapped; more fails the request) as
+// text, or parsed when [as] is 'json' (audit 2026-11-26, phone F5-6: no host's answer is read uncapped)
+const PLUS_JSON_MAX = 4e6, PLUS_PAGE_MAX = 8e6;
+async function plusRead(r, max, as) {
+  if (!r.body?.getReader || typeof viviReadCapped !== 'function') return as === 'json' ? r.json() : r.text();   // (the node tests' stand-ins)
+  const b = await viviReadCapped(r, max);
+  if (!b) throw new Error(`answer over ${max / 1e6} MB`);
+  const t = new TextDecoder().decode(b);
+  return as === 'json' ? JSON.parse(t) : t;
+}
+
 // ── Chrome/Edge: Spotify web-player Origin/Referer (and SimpMusic's User-Agent) for this extension's own requests ──
 // Firefox does this in fx-headers.js (blocking webRequest) and has no DNR here.
 const SPOTIFY_HEADER_RULE_ID = 9002;
@@ -196,7 +207,7 @@ async function getAppleArtistArt(artistName) {
     const searchUrl = `https://itunes.apple.com/search?term=${encodeURIComponent(cleanArtist)}&entity=musicArtist&limit=5`;
     const searchRes = await plusFetch(searchUrl);
     if (!searchRes.ok) return null;
-    const searchData = await searchRes.json();
+    const searchData = await plusRead(searchRes, PLUS_JSON_MAX, 'json');
     const results = searchData?.results || [];
 
     const norm = (s) => (s || '').toLowerCase().normalize('NFD').replace(/[^\p{L}\p{N}]/gu, '');
@@ -214,7 +225,7 @@ async function getAppleArtistArt(artistName) {
       }
     });
     if (!pageRes.ok) return null;
-    const html = await pageRes.text();
+    const html = await plusRead(pageRes, PLUS_PAGE_MAX);
 
     const marker = html.indexOf('id="serialized-server-data"');
     if (marker < 0) return null;
@@ -255,7 +266,9 @@ async function getAppleArtistArt(artistName) {
 
     const fillUrl = (template, w, h, fmt) => {
       if (!template || typeof template !== 'string' || !template.includes('{w}')) return null;
-      return template.replace('{w}', String(w)).replace('{h}', String(h)).replace('{c}', 'bb').replace('{f}', fmt);
+      const u = template.replace('{w}', String(w)).replace('{h}', String(h)).replace('{c}', 'bb').replace('{f}', fmt);
+      // the art comes from Apple's page: only Apple's own https image hosts are shown (phone F5-6)
+      try { const x = new URL(u); return x.protocol === 'https:' && /(^|\.)(mzstatic\.com|apple\.com)$/i.test(x.hostname) ? u : null; } catch { return null; }
     };
 
     let heroUrl = null;
@@ -334,7 +347,7 @@ async function getPaxsenixLyrics(track) {
       headers: { 'Accept': 'application/json, text/xml, */*' },
     });
     if (!paxRes.ok) return null;
-    const json = await paxRes.json();
+    const json = await plusRead(paxRes, PLUS_JSON_MAX, 'json');
     return json?.content || (typeof json === 'string' ? json : null);
   } catch (e) {
     console.warn('[Vivi] Paxsenix fetch failed:', e?.message || e);
@@ -357,7 +370,7 @@ async function getGeniusLyrics(track) {
       }
     });
     if (!searchRes.ok) return null;
-    const data = await searchRes.json();
+    const data = await plusRead(searchRes, PLUS_JSON_MAX, 'json');
     const sections = data?.response?.sections || [];
     const songSec = sections.find((s) => s.type === 'song');
     const hits = songSec?.hits?.map((h) => h.result).filter(Boolean) || [];
@@ -391,7 +404,7 @@ async function getGeniusLyrics(track) {
       }
     });
     if (!pageRes.ok) return null;
-    return await pageRes.text();
+    return await plusRead(pageRes, PLUS_PAGE_MAX);
   } catch (e) {
     console.warn('[Vivi] Genius fetch failed:', e?.message || e);
     return null;
@@ -415,7 +428,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     // lyrics.md §10: Google's keyless endpoint (it answers any origin)
     if (typeof msg.body !== 'string' || msg.body.length > 20000) { sendResponse({ ok: false }); return undefined; }
     plusFetch('https://translate.googleapis.com/translate_a/single', { method: 'POST', body: new URLSearchParams(msg.body), credentials: 'omit' })
-      .then((r) => (r.ok ? r.text() : null))
+      .then((r) => (r.ok ? plusRead(r, PLUS_JSON_MAX) : null))
       .then((body) => sendResponse({ ok: !!body, body: body || null }))
       .catch((e) => sendResponse({ ok: false, error: String(e?.message || e) }));
     return true;
@@ -425,7 +438,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     const id = String(msg.videoId || '');
     if (!/^[\w-]{11}$/.test(id)) { sendResponse({ ok: false }); return undefined; }
     plusFetch('https://api-lyrics.simpmusic.org/v1/' + id, { headers: { 'User-Agent': 'SimpMusicLyrics/1.0', Accept: 'application/json' }, credentials: 'omit' })
-      .then((r) => (r.ok ? r.text() : null))
+      .then((r) => (r.ok ? plusRead(r, PLUS_JSON_MAX) : null))
       .then((body) => sendResponse({ ok: !!body, body: body || null }))
       .catch((e) => sendResponse({ ok: false, error: String(e?.message || e) }));
     return true;
@@ -573,7 +586,7 @@ getSecretDict = async function getSecretDict() {
   try {
     const r = await plusFetch(SPOTIFY_SECRET_URL, { cache: 'no-store' }, 8000);   // (soon back to the bundled secret)
     if (r.ok) {
-      spotifySecretCache = await r.json();
+      spotifySecretCache = await plusRead(r, PLUS_JSON_MAX, 'json');
       return spotifySecretCache;
     }
   } catch {}
@@ -710,7 +723,7 @@ getSecretDict = async function getSecretDict() {
 
   async function scrapeAmpToken(now) {
     const htmlRes = await plusFetch('https://music.apple.com/us/browse');
-    const html = await htmlRes.text();
+    const html = await plusRead(htmlRes, PLUS_PAGE_MAX);
     const scripts = [...new Set(html.match(/\/assets\/index(?:-legacy)?[~-][a-zA-Z0-9_-]+\.js/g) || [])];
     // Every bundle is read before picking: the web player's own token may sit in
     // a later bundle than an unlabelled one (audit 2026-11-24).
@@ -718,7 +731,7 @@ getSecretDict = async function getSecretDict() {
     for (const scriptPath of scripts) {
       let scriptText;
       try {
-        scriptText = await (await plusFetch(`https://music.apple.com${scriptPath}`)).text();
+        scriptText = await plusRead(await plusFetch(`https://music.apple.com${scriptPath}`), 16e6);   // (a bundle is a few MB)
       } catch { continue; }
       for (const t of scriptText.match(/ey[a-zA-Z0-9_-]+\.ey[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+/g) || []) {
         if (!rejectedAmpTokens.has(t) && !candidates.some((c) => c.t === t)) candidates.push({ t, exp: jwtExpiryMs(t) });
@@ -779,7 +792,7 @@ getSecretDict = async function getSecretDict() {
     }
     if (!res.ok) return null;
     try {
-      return await res.json();
+      return await plusRead(res, PLUS_JSON_MAX, 'json');
     } catch {
       return null;
     }
@@ -910,7 +923,11 @@ getSecretDict = async function getSecretDict() {
     let result = null;
     try {
       const motion = await searchAndFetchMotion(song, artist, album || null, storefront, 'songs');
-      if (motion) result = { videoUrl: motion.animated || null, fallbackUrl: motionAltByPrimary.get(motion.animated) || null, tallUrl: motion.animatedTall || null };
+      // only Apple's own https hosts are played: an untrusted link is no motion art (phone F5-3, trustedPair);
+      // content.js plays any non-Apple URL in a plain <video>
+      const ok = (u) => (u && trustedApple(u) ? u : null);
+      const v = ok(motion?.animated), alt = ok(motion && motionAltByPrimary.get(motion.animated));
+      if (v || alt) result = { videoUrl: v || alt, fallbackUrl: v ? alt : null, tallUrl: ok(motion.animatedTall) };
     } catch (e) {
       // A failed lookup (network, token) is not "this song has no Canvas":
       // report it and keep it out of the cache so it is tried again.
@@ -941,7 +958,7 @@ getSecretDict = async function getSecretDict() {
     const r = await plusFetch(url);
     if (!r.ok) throw new Error('artist id lookup HTTP ' + r.status);
     const target = profileName(name);
-    const ids = [...new Set(((await r.json())?.results || [])
+    const ids = [...new Set(((await plusRead(r, PLUS_JSON_MAX, 'json'))?.results || [])
       .filter((x) => profileName(x.artistName) === target && x.artistId > 0).map((x) => x.artistId))];
     return ids.length === 1 ? ids[0] : null;   // none, or ambiguous
   }
@@ -951,7 +968,7 @@ getSecretDict = async function getSecretDict() {
     const CS = globalThis.__viviCanvasSettings;
     const r = await plusFetch(master);
     if (!r.ok) return null;
-    const lines = (await r.text()).split(/\r?\n/);
+    const lines = (await plusRead(r, 512e3)).split(/\r?\n/);
     const vs = [];
     for (let i = 0; i < lines.length; i++) {
       if (!lines[i].startsWith('#EXT-X-STREAM-INF:')) continue;
