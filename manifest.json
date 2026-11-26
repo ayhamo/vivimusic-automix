@@ -105,7 +105,8 @@
         "src/automix/crossfade-page.js",
         "src/seek-page.js",
         "src/plus/video-canvas-page.js",
-        "src/plus/music-only-page.js"
+        "src/plus/music-only-page.js",
+        "src/plus/autoplay-row-page.js"
       ],
       "run_at": "document_start",
       "world": "MAIN"

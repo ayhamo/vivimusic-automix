@@ -62,7 +62,8 @@
         "replace": { "src/crossfade-page.js": "src/automix/crossfade-page.js" },
         "insert": [
           { "item": "src/plus/video-canvas-page.js", "after": "src/seek-page.js" },
-          { "item": "src/plus/music-only-page.js", "after": "src/plus/video-canvas-page.js" }
+          { "item": "src/plus/music-only-page.js", "after": "src/plus/video-canvas-page.js" },
+          { "item": "src/plus/autoplay-row-page.js", "after": "src/plus/music-only-page.js" }
         ]
       }
     },
