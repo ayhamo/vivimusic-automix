@@ -203,8 +203,9 @@
     const s = songs.get(id);
     if (!enabled || s?.state !== 'ready') return { none: 'not opened' };
     let r = await ask({ type: 'VIVI_ADDONS_FETCH', ticket: s.ticket });
-    // the background was suspended since OPEN and its tickets went with it: search and open again, once
-    if (r.none === 'ticket expired' || r.none === 'not opened') {
+    // the background was suspended since OPEN and its tickets went with it, or the browser let the
+    // cached copy go (the cache has forgotten it): search and open again, once
+    if (r.none === 'ticket expired' || r.none === 'not opened' || r.none === 'the cached file is gone') {
       Object.assign(s, { state: 'looking', find: null, open: null, ticket: null });
       const again = await openFor(id);
       if (again?.state === 'ready') r = await ask({ type: 'VIVI_ADDONS_FETCH', ticket: again.ticket });
