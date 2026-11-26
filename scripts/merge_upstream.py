@@ -92,7 +92,13 @@ def main():
     r = git('merge', '--no-ff', '--no-commit', tag, check=False)
     print(r.stdout + r.stderr)
     unmerged = [p for p in git('diff', '--name-only', '--diff-filter=U').stdout.splitlines() if p]
+    merging = git('rev-parse', '-q', '--verify', 'MERGE_HEAD', check=False).returncode == 0
+    # a merge that failed without conflicts (a bad tag, a dirty tree, an untracked file in the way): nothing merged
+    if r.returncode != 0 and not unmerged and not merging:
+        print('git merge failed, nothing merged')
+        return r.returncode
     left = []
+    rebuilt = False
     for p in unmerged:
         if p in DELETED_HERE:
             git('rm', '-q', '--', p)
@@ -102,6 +108,7 @@ def main():
             print('manifest.json: only the version differed, kept ours')
         elif p == 'manifest.json' and rebuild_manifest(tag, base):
             git('add', '--', p)
+            rebuilt = True
             print('manifest.json: rebuilt from upstream', tag, '+ manifest-plus.json')
         else:
             left.append(p)
@@ -113,6 +120,14 @@ def main():
     if left:
         print('needs a human, unresolved conflicts in:', ', '.join(left))
         return 2
+    # Firefox's background.scripts come from upstream's importScripts list (apply_manifest.py): whenever
+    # upstream changed the manifest or background.js, the manifest is rebuilt, conflict or not
+    if (merging or unmerged) and not rebuilt and ('manifest.json' in changed or 'src/background.js' in changed):
+        if not rebuild_manifest(tag, base):
+            print('manifest.json: the rebuild needs a human (above)')
+            return 2
+        git('add', '--', 'manifest.json')
+        print('manifest.json: rebuilt from upstream', tag, '+ manifest-plus.json (upstream changed', ' and '.join(p for p in ('manifest.json', 'src/background.js') if p in changed) + ')')
     # Never commit a file that still carries conflict markers.
     for p in git('diff', '--cached', '--name-only').stdout.splitlines():
         f = os.path.join(ROOT, p)

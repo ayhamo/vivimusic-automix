@@ -14,16 +14,16 @@
     // popup.js: where the update button leads (upstream's points at its own AMO listing)
     updatePage: 'https://github.com/ayhamo/vivimusic-automix/releases/latest',
     // popup-ui.js: the ListenBrainz home card, after Last.fm, and the Addons card, after Audio
-    // playback (its section title reads "Addons Test" with the tag; without an entry here it
-    // would fall into the hidden Updates slot and could not be opened)
+    // playback (keyed by its plain title "Addons": its Test badge is drawn by CSS, data-badge, so the
+    // title's text never changes; without an entry here it would fall into the hidden Updates slot)
     extendCards(rsNotes, meta, order) {
       rsNotes.listenbrainz = 'ListenBrainz scrobbling is paused while Optimized & resource saving mode is on.';
       meta.ListenBrainz = ['ListenBrainz', 'Open-source scrobbling to ListenBrainz', 'listenbrainz', 'static'];
       const at = order.indexOf('Last.fm');
       if (!order.includes('ListenBrainz')) order.splice(at < 0 ? order.length : at + 1, 0, 'ListenBrainz');
-      meta['Addons Test'] = ['Addons', 'Play songs from your addons, lossless when they have it', 'addons', 'static'];
+      meta.Addons = ['Addons', 'Play songs from your addons, lossless when they have it', 'addons', 'static'];
       const ap = order.indexOf('Audio playback');
-      if (!order.includes('Addons Test')) order.splice(ap < 0 ? order.length : ap + 1, 0, 'Addons Test');
+      if (!order.includes('Addons')) order.splice(ap < 0 ? order.length : ap + 1, 0, 'Addons');
     },
     // popup.js: the "new update available" card. Firefox updates the add-on itself, so it
     // links to the store page instead of upstream's download / one-click install. Returns
@@ -40,7 +40,9 @@
       const hue = (h >>> 4) % 360;         // unique colour shift per release
       const speed = (0.8 + ((h >>> 12) % 9) / 10).toFixed(2); // 0.8x–1.6x
       const ff = /firefox/i.test(navigator.userAgent);   // the Edge/Chrome zip has no store that updates it
-      const href = ff && /^https:\/\/addons\.mozilla\.org\//.test(result.releaseUrl || '') ? result.releaseUrl : this.updatePage;
+      // (an AMO listing updates itself; our GitHub releases are installed by hand, the .xpi or the zip)
+      const isAmo = ff && /^https:\/\/addons\.mozilla\.org\//.test(result.releaseUrl || '');
+      const href = isAmo ? result.releaseUrl : this.updatePage;
       updateStatus.innerHTML =
         `<div class="update-hero uh-t${theme}" style="--uh-hue:${hue}deg;--uh-speed:${speed}">` +
         `<span class="uh-bg"><i></i><i></i><i></i></span><span class="uh-glass"></span>` +
@@ -48,9 +50,10 @@
         `<span class="uh-eyebrow">VIVIMUSIC XTEN</span>` +
         `<span class="uh-badge">New update available</span>` +
         `<span class="uh-version">v${esc(ver)}</span>` +
-        `<span class="uh-sub">You're on v${esc(chrome.runtime.getManifest().version)}${ff ? ' · Firefox updates this extension automatically' : ''}</span>` +
-        `<a class="uh-btn" href="${esc(href)}" target="_blank" rel="noopener">${ff ? 'Check in Add-on Store' : 'Open the release'} <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 17 17 7M8 7h9v9"/></svg></a>` +
-        (ff ? `<span class="uh-note">Firefox will install the update on its own. Want it right now? Open <b>about:addons</b> → click the ⚙ gear → <b>Check for Updates</b>, and Firefox will force the update immediately.</span></div>`
+        `<span class="uh-sub">You're on v${esc(chrome.runtime.getManifest().version)}${isAmo ? ' · Firefox updates this extension automatically' : ''}</span>` +
+        `<a class="uh-btn" href="${esc(href)}" target="_blank" rel="noopener">${isAmo ? 'Check in Add-on Store' : 'Open the release'} <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 17 17 7M8 7h9v9"/></svg></a>` +
+        (isAmo ? `<span class="uh-note">Firefox will install the update on its own. Want it right now? Open <b>about:addons</b> → click the ⚙ gear → <b>Check for Updates</b>, and Firefox will force the update immediately.</span></div>`
+          : ff ? `<span class="uh-note">Download the Firefox .xpi from the release and open it in Firefox to install it over this one.</span></div>`
           : `<span class="uh-note">Download the Edge/Chrome zip from the release and load it in place of this one.</span></div>`);
       return true;
     },
@@ -70,6 +73,9 @@
     .view-settings[data-feature="listenbrainz"] { --panel-accent: #eb743b; }
     .home-card[data-feature="addons"] { --card-accent: #38bdf8; }
     .view-settings[data-feature="addons"] { --panel-accent: #38bdf8; }
+    /* a title's badge outside its text (popup-ui.js keys the cards by the title's text) */
+    .vivi-badged::after { content: attr(data-badge); display: inline-block; margin: 0 4px 0 6px; padding: 2px 6px 1px; border-radius: 999px;
+      background: rgba(255,255,255,0.15); color: #fff; font-size: 8.5px; font-weight: 800; letter-spacing: .09em; text-transform: uppercase; line-height: 1.3; vertical-align: middle; }
   `;
   document.head.appendChild(style);
 
@@ -750,7 +756,7 @@
    * this page only ever sees each addon's name and host, never its link.
    * ------------------------------------------------------------------------- */
   place(`  <div class="section" id="addonsSection">
-    <div class="section-title"><span class="dot-ico"></span>Addons <span class="beta-tag" style="background:rgba(255,255,255,0.15);color:#fff;">Test</span></div>
+    <div class="section-title vivi-badged" data-badge="Test"><span class="dot-ico"></span>Addons</div>
     <div class="row">
       <span class="row-label">Play songs from addons</span>
       <label class="switch">

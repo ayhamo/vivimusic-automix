@@ -1,7 +1,8 @@
 // The lyrics cases of spec/lyrics/lyrics.md (spec/lyrics/lyrics-cases.json), checked against a port of
 // Metrolist's own functions kept here (the rule's reference), so the expectations every port reads are
-// the original's. The PC's lyrics-ui.js has no pure functions for these yet (lyrics.md §12): when it
-// gets them, they are checked here too.
+// the original's. The PC's own pure rules (src/plus/lyrics-rules.js: gaps, sides, offsetOf, activeLines)
+// and parsers (src/lyrics.js: parseLRC, parseEnhancedLRC) are checked against the same cases; only
+// currentLine is skipped, as the PC lights its lines by activeLines.
 //
 //   node scripts/lyrics_cases_tests.mjs        (exit 1 on a failure)
 import { readFileSync } from 'node:fs';

@@ -23,30 +23,9 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: 24
-      - name: Automix planner against the golden plans
-        run: node scripts/automix_fixtures.mjs
-      - name: Automix planner unit tests
-        run: node --test scripts/test_automix_plan.mjs
-      - name: Transition editor (presets, lanes, window positions)
-        run: node scripts/editor_cases.mjs
-      - name: Addon matcher (BitChord's cases)
-        run: node scripts/addon_matcher_fixtures.mjs --matcher src/addons/track-matcher.js
-      - name: Addon pick rules and client readings
-        run: node scripts/addon_pick_tests.mjs
-      - name: Addon offset fit and level
-        run: node scripts/addon_offset_fixtures.mjs
-      - name: Addon client, store and page
-        run: |
-          node scripts/addon_client_tests.mjs
-          node scripts/addon_store_tests.mjs
-          node scripts/addon_file_cache_tests.mjs
-          node scripts/addon_page_tests.mjs
-      - name: Canvas
-        run: |
-          node scripts/video_canvas_tests.mjs
-          node scripts/canvas_spotify_tests.mjs
-          node scripts/canvas_cases_tests.mjs
-      - name: Lyrics
-        run: node scripts/lyrics_cases_tests.mjs
-      - name: Analysis, synthetic songs on the real analyser
-        run: node scripts/analysis_cases.mjs
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      # the suites themselves are listed in scripts/run_spec.sh (the release runs the same, after its merge)
+      - name: Spec suites
+        run: bash scripts/run_spec.sh

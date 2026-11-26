@@ -204,5 +204,25 @@ const flat = (v) => new Array(W * H).fill(v);
   check('bg-canvas: the JSON read inside the time limit', /json: await readJson\(r\) \};\n\s+\} finally \{ clearTimeout\(t\); \}/.test(src('src/plus/bg-canvas.js')));
   check('captions: 6 s each, body and all', /await timed\(q\.href, \{ credentials: 'include' \}, 6000,/.test(src('src/plus/video-canvas-page.js')));
 }
+// ── (audit 2026-11-26) the popup: the Addons card keyed by its plain title; the update card's words follow where the link goes ──
+{
+  const { readFileSync } = await import('node:fs');
+  const vm = await import('node:vm');
+  const pp = readFileSync(new URL('../src/plus/popup-plus.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+  check('Addons card: its title is plain text, its badge a data attribute', /<div class="section-title vivi-badged" data-badge="Test"><span class="dot-ico"><\/span>Addons<\/div>/.test(pp) && !/Addons Test/.test(pp));
+  // extendCards and renderUpdate, run
+  const obj = pp.slice(pp.indexOf('    extendCards(rsNotes, meta, order) {'), pp.indexOf('\n  };\n', pp.indexOf('    renderUpdate(')));
+  const nav = { userAgent: 'Firefox' };
+  const ctx = vm.createContext({ navigator: nav, chrome: { runtime: { getManifest: () => ({ version: '1.0' }) } } });
+  vm.runInContext('var P = { updatePage: "https://github.com/x/releases/latest",\n' + obj + '\n};', ctx);
+  const meta = {}, order = ['Audio playback', 'Lyrics'];
+  vm.runInContext('P.extendCards', ctx).call(ctx.P, {}, meta, order);
+  check('extendCards: meta and order by "Addons"', meta.Addons?.[2] === 'addons' && order.join() === 'Audio playback,Addons,Lyrics,ListenBrainz', JSON.stringify(order));
+  const el = { classList: { add() {} } };
+  ctx.P.renderUpdate({ ok: true, updateAvailable: true, latestVersion: '2.0', releaseUrl: 'https://github.com/x/releases/tag/v2' }, el);
+  check('Firefox, a GitHub release: no "updates automatically", the release and the .xpi note', !/automatically|Add-on Store/.test(el.innerHTML) && /Open the release/.test(el.innerHTML) && /\.xpi/.test(el.innerHTML));
+  ctx.P.renderUpdate({ ok: true, updateAvailable: true, latestVersion: '2.0', releaseUrl: 'https://addons.mozilla.org/firefox/addon/x/' }, el);
+  check('Firefox, an AMO listing: the store words', /updates this extension automatically/.test(el.innerHTML) && /Check in Add-on Store/.test(el.innerHTML));
+}
 console.log(`\n${n - failed}/${n} passed`);
 process.exit(failed ? 1 : 0);

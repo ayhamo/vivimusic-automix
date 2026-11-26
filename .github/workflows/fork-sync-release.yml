@@ -50,6 +50,10 @@ jobs:
           set -euo pipefail
           gh_tag=$(gh release view -R "$UPSTREAM_REPO" --json tagName --jq .tagName)
           amo_version=$(curl -fsSL "https://addons.mozilla.org/api/v5/addons/addon/$AMO_SLUG/" | jq -r .current_version.version)
+          # (both come from outside: only a plain version or tag goes on, never anything a shell would read)
+          for v in "$gh_tag" "$amo_version"; do
+            if ! [[ "$v" =~ ^[vV]?[0-9A-Za-z._-]+$ ]]; then echo "refusing an upstream version that isn't plain: '$v'"; exit 1; fi
+          done
           ours=$(gh api "repos/$GITHUB_REPOSITORY/commits/${GITHUB_REF_NAME}" --jq .sha)
           # the build number before the commit: GitHub sorts same-day releases by tag name, and a bare
           # hash put 11.5.0.42 (e07f670) above 11.5.0.43 (1db61b0). b<run number, 5 digits> = the version's last part.
@@ -68,7 +72,7 @@ jobs:
             echo "build=true" >> "$GITHUB_OUTPUT"
           fi
 
-  # the spec suites first: a release is never built and signed with a failing spec
+  # the spec suites first (and again in build, on the merged code): a release is never built and signed with a failing spec
   spec:
     needs: check
     if: needs.check.outputs.build == 'true'
@@ -89,19 +93,28 @@ jobs:
 
       - uses: actions/setup-node@v5
         with:
-          node-version: 22
+          node-version: 24
 
+      # (upstream's tag and AMO version reach the shell as variables only, never pasted into the script)
       - name: merge upstream GitHub release (Chrome source)
+        env:
+          GH_TAG: ${{ needs.check.outputs.gh_tag }}
         run: |
           set -euo pipefail
           git config user.name "github-actions"
           git config user.email "github-actions@users.noreply.github.com"
           git remote add upstream "https://github.com/$UPSTREAM_REPO.git"
           git fetch --tags upstream
-          python scripts/merge_upstream.py "${{ needs.check.outputs.gh_tag }}" --commit
+          python scripts/merge_upstream.py "$GH_TAG" --commit
 
       - name: merge upstream AMO build (Firefox port)
-        run: python scripts/sync_upstream_firefox.py --apply --remote upstream --tag "v${{ needs.check.outputs.amo_version }}"
+        env:
+          AMO_VERSION: ${{ needs.check.outputs.amo_version }}
+        run: python scripts/sync_upstream_firefox.py --apply --remote upstream --tag "v$AMO_VERSION"
+
+      # M22: the spec suites on the merged code, the one that is signed and published
+      - name: spec suites on the merged code
+        run: bash scripts/run_spec.sh
 
       - name: set a higher version and build the zips
         id: build
@@ -125,11 +138,12 @@ jobs:
       - name: lint with addons-linter (fails on errors)
         env:
           UPDATE_URL: ${{ vars.UPDATE_URL }}
+          VERSION: ${{ steps.build.outputs.version }}
         run: |
           set -euo pipefail
           # with an update_url the add-on updates from our own releases: lint it as self-hosted
           self=""; if [ -n "${UPDATE_URL}" ]; then self="--self-hosted"; fi
-          npx --yes addons-linter "out/vivimusic-automix-${{ steps.build.outputs.version }}-firefox.zip" $self --output json > lint.json || true
+          npx --yes addons-linter "out/vivimusic-automix-${VERSION}-firefox.zip" $self --output json > lint.json || true
           jq '.summary' lint.json
           jq -r '.errors[] | "ERROR \(.code): \(.message) \(.file // "")"' lint.json
           test "$(jq '.summary.errors' lint.json)" = "0"
