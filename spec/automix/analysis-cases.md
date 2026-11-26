@@ -258,6 +258,8 @@ From the Spotify benchmark, 2026-11-25. No rule: an app keeps its beat model's t
 
 From the Spotify benchmark, 2026-11-25. No rule: the planners keep their mix-out. The numbers below
 compare Spotify's mix-out in the four exports with the PC's plan of the same pair (339 mixes).
+(The PC's bench analyses had no music end then, so its plans here ran without the end trim the
+extension uses: "Where the song ends" below has the corrected comparison.)
 
 | | Spotify | PC |
 |---|---|---|
@@ -339,30 +341,82 @@ Automix v2 (version 3) only; Classic is unchanged.
     match).
   - Bazovyy Minimum → Montagem Fama blends, but both would sing over the curator's 8 bars, so it
     falls back.
-- PC bench, Automix v2, 339 planned mixes: 201 are blends, 109 of them plain beat-matched blends.
-  - 44 of those 109 become curator blends.
-  - The others fall back: 35 on the key score, 1 on untrusted keys, 29 on voices, intro or too
+- PC bench, Automix v2, 339 planned mixes (rerun 2026-11-26 on the PC analyses with their music end,
+  and the median fixed; see "Where the song ends"): 199 are blends, 106 of them plain beat-matched
+  blends.
+  - 45 of those 106 become curator blends.
+  - The others fall back: 34 on the key score, 1 on untrusted keys, 26 on voices, intro or too
     late.
   - Across all 339 the plan's styles don't change.
-- On the 45 mixes that change (44 plain blends, and 1 that the usual rules made a muffle), against
-  Spotify's own mix:
+- On the 45 mixes that change, against Spotify's own mix:
 
   | | Before | After |
   |---|---|---|
-  | Mix-out, median distance from Spotify's | 40 beats | 26 beats |
-  | Mix-out within 1 beat | 0% | 7% |
-  | Mix-out within 1 beat of a Spotify cue | 51% | 24% |
-  | Mix-in, median distance | 24 beats | 27.9 beats |
-  | Mix-in within 1 beat | 16% | 27% |
-  | Mix-in within 1 beat of a Spotify cue | 51% | 53% |
-  | Blend length, median | 14.5 s | 15.2 s |
+  | Mix-out, median distance from Spotify's | 31.9 beats | 25.9 beats |
+  | Mix-out within 1 beat | 4% | 4% |
+  | Mix-out within 1 beat of a Spotify cue | 47% | 18% |
+  | Mix-in, median distance | 30.6 beats | 30.6 beats |
+  | Mix-in within 1 beat | 18% | 27% |
+  | Mix-in within 1 beat of a Spotify cue | 56% | 56% |
+  | Blend length, median | 13.7 s | 15.2 s |
 
-  The mix-out moves 13.5 s earlier (median).
-- **Note on the drop:** the mix-out is on a Spotify cue less often (51% → 24%). The usual blend's
+  The mix-out moves 13.7 s earlier (median).
+- **Note on the drop:** the mix-out is on a Spotify cue less often (47% → 18%). The usual blend's
   anchor search sits on section changes and the music's end, where Spotify's `fadeOut` cues are. The
   curator's point is a time before the end, as Spotify's editors place theirs, and they are on their
   own `mixOut` cue only 11% of the time. This is a taste change chosen by ear; the bench isn't
   asked to improve.
+
+## Where the song ends [all]
+
+Checked 2026-11-26. **Rule (all three apps):** plan against the music's end, `contentEndSec` (the
+end with trailing silence cut), the way the PC's `musicEnd` does:
+- only when the music ends more than 1 s before the file does;
+- never cutting more than 20 s.
+
+Every mix point that counts from the song's end uses it: the Classic blend's natural mix-out, the
+Automix v2 anchors, and the curator blend's 31 s.
+
+**What was found.**
+- The PC already did this live. The bench's PC analyses didn't carry `contentEndSec`, so its PC
+  plans ran without the trim and looked different from the phone's and BitChord's. The bench now
+  keeps it (`--analyse` adds it, `--content-end` backfills older analyses), measured with host.js's
+  own `contentEnd`.
+- The three apps measure the same end: the PC's matches the phone's on all 323 songs (median 0 s).
+  The music ends a median 2.65 s before the file; 1 s or more on 260 songs, more than 20 s on 1.
+- **A bench bug:** two of Spotify's mixes (straight cuts) have no start time. Their NaN distance in
+  the sort made every printed mix-out median wrong before this date (an earlier "PC 9 beats against
+  the phone's 22" was that). The bench now leaves them out of the mix-out (337 measured). The
+  within-1-beat and on-cue shares weren't affected.
+
+**Measured:** the PC planner on each app's analyses, with no trim, `musicEnd`, and the whole silence
+cut (durationSec set to contentEndSec). 337 mix-outs and 339 mix-ins against Spotify's.
+
+| Classic (version 2) | No trim | `musicEnd` | Whole cut |
+|---|---|---|---|
+| Mix-out median, PC / phone / BitChord analyses | 30.1 / 30.1 / 32 beats | 25.7 / 25.7 / 27.6 | 26 / 26 / 27.7 |
+| Mix-out within 1 beat | 5 / 5 / 5% | 4 / 4 / 3% | 3 / 4 / 3% |
+| Mix-out on a Spotify cue | 46 / 46 / 47% | 42 / 41 / 42% | 42 / 42 / 43% |
+| Mix-in median | 16 / 16 / 16 beats | 16 / 16 / 16 | 16 / 16 / 16 |
+| Mix-in within 1 beat | 27 / 26 / 26% | 27 / 26 / 27% | 27 / 26 / 27% |
+| Mix-in on a Spotify cue | 75 / 76 / 75% | 76 / 77 / 75% | 76 / 77 / 75% |
+
+| Automix v2 with the curator blend | No trim | `musicEnd` | Whole cut |
+|---|---|---|---|
+| Mix-out median | 40 / 38.1 / 39 beats | 34.8 / 34.3 / 35.5 | 34.6 / 34.1 / 35 |
+| Mix-out on a Spotify cue | 39 / 39 / 39% | 40 / 39 / 39% | 39 / 36 / 38% |
+| Mix-in within 1 beat | 33 / 35 / 35% | 32 / 34 / 34% | 33 / 34 / 34% |
+| Curator blends | 45 / 46 / 51 | 47 / 48 / 51 | 47 / 48 / 51 |
+
+**Why this rule.**
+- The trim brings the mix-out 4–5 beats closer to Spotify's (median), as Spotify's editors leave
+  earlier than any of us.
+- It costs 1 point within 1 beat and 4 points on a cue in Classic, because Spotify's `fadeOut` cues
+  are counted from the file's end.
+- Mix-in doesn't move. The curator blend gets closer (40 → 35 beats) with the same cue share.
+- The whole cut is no better than `musicEnd` and risks cutting a long quiet outro whole, so the 1 s and
+  20 s guards stay.
+- Vaina Loca → SI NO ES CONTIGO: no PC change, so all five goldens are unchanged.
 
 ## Known misses (found 2026-11-19, kept as found)
 

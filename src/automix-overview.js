@@ -177,7 +177,8 @@
     const outRate = m.outRate || 1, rate = m.rate || 1;
     return {
       out: (t) => (t < 0 ? m.mixOutTrackTime + t : t <= D ? m.mixOutTrackTime + t * outRate : null),
-      in: (t) => (t < 0 ? null : t <= D ? m.mixInTrackTime + t * rate : m.mixInTrackTime + D * rate + (t - D)),
+      // (a late entry: B is silent, and not drawn, until inDelaySec into the mix)
+      in: (t) => (t < (m.inDelaySec || 0) ? null : t <= D ? m.mixInTrackTime + (t - (m.inDelaySec || 0)) * rate : m.mixInTrackTime + (D - (m.inDelaySec || 0)) * rate + (t - D)),
       gOut: (t) => (t < 0 ? 1 : t > D ? 0 : sample(s.gOut, t / D)),
       gIn: (t) => (t < 0 ? 0 : t > D ? 1 : sample(s.gIn, t / D)),
     };
@@ -312,6 +313,14 @@
     winReset.title = 'The planner places the window';
     winReset.addEventListener('click', () => { if (!winReset.disabled) pick({ window: null }); });
     nudges.append(winReset);
+    // B's late entry (mix-file.md rule 2): seconds into the mix before B starts at its mix-in
+    const lateIn = el('input');
+    lateIn.type = 'number'; lateIn.min = '0'; lateIn.max = '60'; lateIn.step = '0.1'; lateIn.value = '0';
+    lateIn.title = 'B comes in this long after the mix starts, silent until then (a late entry, as in a Spotify mix); 0: with the mix';
+    lateIn.addEventListener('change', () => setLate(Number(lateIn.value)));
+    const late = el('label', 'vivi-amx-ov-repeat');
+    late.append(document.createTextNode('B in after'), lateIn, document.createTextNode('s'));
+    nudges.append(late);
     winRow.append(nudges);
     const actions = el('div', 'vivi-amx-ov-actions');
     const lock = el('button', 'vivi-amx-ov-btn', 'Lock');
@@ -357,7 +366,7 @@
     root.append(card);
     root.addEventListener('pointerdown', (e) => { if (e.target === root) hide(); });
     document.body.append(root);
-    ui = { root, card, sub, songsRow, canvas, msg, clock, prog, progText, progFill, presetRow, custom, laneSel, matchRow, barsRow, nudgeBtns, winReset, preview, lock, reset, badge, note,
+    ui = { root, card, sub, songsRow, canvas, msg, clock, prog, progText, progFill, presetRow, custom, laneSel, matchRow, barsRow, nudgeBtns, winReset, lateIn, preview, lock, reset, badge, note,
       drawRow, curveChips, repUnit, repBtn, undoBtn, undoReplace, drawHint, importBtn, exportPair, exportAll, playMixes, fileNote };
     canvas.addEventListener('dblclick', (e) => pointDelete(e));
     canvas.addEventListener('contextmenu', (e) => { if (drawOn(xf()?.overview?.())) { e.preventDefault(); pointDelete(e); } });
@@ -462,7 +471,7 @@
   function readout(s, out, inn) {
     // (a position in seconds only, from a mix file, has no bar until it is moved here)
     const bar = (p) => (Number.isInteger(p.bar) ? ` (bar ${barNo(p)})` : '');
-    return `A mixes out at ${fmtSec(out.sec)}${bar(out)} · B enters at ${fmtSec(inn.sec)}${bar(inn)}`;
+    return `A mixes out at ${fmtSec(out.sec)}${bar(out)} · B enters at ${fmtSec(inn.sec)}${bar(inn)}${inn.delaySec ? `, ${inn.delaySec} s into the mix` : ''}`;
   }
   function windowEditable(s) {
     const ov = A().migratePick(s?.pick);
@@ -515,6 +524,8 @@
   // now, so the planner's own moves of an unsaved side (capIncomingSkip, the vocal re-route) don't
   // move it once the window is the user's.
   function windowWith(s, ov, side, pos) {
+    // (a moved mix-in keeps its late entry, unless the move sets one)
+    if (side === 'in' && ov?.window?.in?.delaySec && !('delaySec' in pos)) pos = { ...pos, delaySec: ov.window.in.delaySec };
     const w = { ...(ov?.window || {}), [side]: pos }, other = side === 'out' ? 'in' : 'out';
     if (!w[other]) w[other] = positionOf(other === 'out' ? s.mix.mixOutTrackTime : s.mix.mixInTrackTime, gridFor(s, other), false, false);
     return w;
@@ -543,6 +554,17 @@
     if (r.refused === 'max') { refused = { pair: s.pairKey, text: `Nudges reach ${NUDGE_MAX_MS / 1000} s at most: drag the song instead` }; return; }
     if (r.refused) { refused = { pair: s.pairKey, text: `Held: ${LIMIT_WHY[side][r.refused === 'lo' ? 0 : 1]}` }; return; }
     pick({ window: windowWith(s, ov, side, r.pos) });
+  }
+
+  // B's late entry, in seconds (0 clears it): saved on the mix-in, placed where the plan has it if unsaved
+  function setLate(v) {
+    const s = xf()?.overview?.();
+    if (!windowEditable(s) || !Number.isFinite(v)) return;
+    const ov = A().migratePick(s.pick);
+    const now = ov?.window?.in || positionOf(s.mix.mixInTrackTime, gridFor(s, 'in'), false, false);
+    const want = Math.round(Math.min(Math.max(v, 0), 60) * 1000) / 1000;
+    if (want === (now.delaySec || 0)) return;
+    pick({ window: windowWith(s, ov, 'in', { ...now, delaySec: want }) });
   }
 
   // ───────── drawn curves (editor.md §10) ─────────
@@ -912,7 +934,7 @@
 
   const setIf = (node, key, v) => { if (node[key] !== v) node[key] = v; };
   function setControls(s) {
-    const { presetRow, custom, laneSel, matchRow, barsRow, nudgeBtns, winReset, preview, lock, reset, badge, note } = ui;
+    const { presetRow, custom, laneSel, matchRow, barsRow, nudgeBtns, winReset, lateIn, preview, lock, reset, badge, note } = ui;
     const ov = A()?.migratePick?.(s?.pick) || {};
     const has = !!s?.pick;
     const preset = ov.preset || 'auto', bm = ov.beatMatch || 'auto';
@@ -963,6 +985,8 @@
     const winOn = windowEditable(s);
     for (const b of nudgeBtns) b.disabled = !winOn;
     winReset.disabled = !winOn || !ov.window;
+    lateIn.disabled = !winOn;
+    if (document.activeElement !== lateIn) setIf(lateIn, 'value', String(ov.window?.in?.delaySec || 0));
     mark(winReset, !ov.window);
     lock.disabled = !has;
     lock.setAttribute('aria-pressed', String(!!ov.lock));

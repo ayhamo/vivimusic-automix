@@ -36,9 +36,10 @@ Test: `node --test scripts/test_automix_plan.mjs` (the "Spotify mix exports" tes
      `toStartMs`: 0. Positions in seconds only (editor.md §6 "Seconds only"): each plays at that
      song's nearest beat, so no app needs Spotify's grid.
    - A negative `toStartMs` (22 of the 4 exports' mixes, −6 to −14486 ms): in Spotify, B's 0:00
-     comes in that long after the mix starts. Here B starts with the mix: `in` `{ sec: 0 }`, the
-     drawings as they are, and the summary says so (rule 9). An older export wrote these unsigned
-     (2^64 − x): any `toStartMs` of 2^53 or more counts as negative.
+     comes in that long after the mix starts. Here too: `in` `{ sec: 0, delaySec: −toStartMs / 1000 }`
+     (mix-file.md rule 2, B's late entry), the drawings as they are. An older export wrote these
+     unsigned (2^64 − x), too far off in a double to read back: any `toStartMs` of 2^53 or more
+     counts as negative, B starts with the mix (`{ sec: 0 }`), and the summary says so (rule 9).
    - `gridBpm`: `fromBpm`; with no `fromBpm` and bars, `bars × 4 × 60 / (durationMs / 1000)`.
    - All times rounded to 1 ms.
 
@@ -122,8 +123,8 @@ Test: `node --test scripts/test_automix_plan.mjs` (the "Spotify mix exports" tes
 9. **[all] Afterwards**, mix-file.md rule 7's line, then, when there are any:
    - "N lanes in a Spotify style with no match here play the default shape";
    - "not carried: …", the kinds of rule 6 the file used (filter resonance);
-   - "N mixes bring B in late in Spotify (up to X s): here B starts with the mix" (rule 3), X the
-     latest, to 0.1 s;
+   - "N mixes bring B in late in an older export's unsigned time: here B starts with the mix"
+     (rule 3);
    - while an app doesn't play song speeds yet (rule 10): "N mixes set a song's speed: saved, but
      this app plays every song at x1 for now". The PC plays them and has no such line.
 

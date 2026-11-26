@@ -7,6 +7,7 @@
 //   node scripts/spotify_bench.mjs --score [app]      score an app (pc): print the report, write report-<app>.json
 //     [--bench DIR]                                   the bench folder (default: the shared one in YT Clients)
 //     [--only id,id]                                  some songs only
+//     [--content-end]                                 --analyse: only add the music's end to analyses made before it was kept
 //     [--version 2|3]                                 --plan: the Automix version (default 2, Classic)
 //     [--curator]                                     --plan, version 3: the curator blend (analysis-cases.md "The curator blend")
 import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync } from 'node:fs';
@@ -109,6 +110,18 @@ async function key() {
 
 // ───────── rule 4: the PC's analyses ─────────
 let PHASE = null;
+// host.js's contentEnd (where the music ends), read from the extension's own file: the analysis keeps it
+// as the extension saves it (automix.js musicEnd plans against it)
+let CONTENT_END = null;
+function contentEndOf(mono) {
+  if (!CONTENT_END) {
+    const host = readFileSync(ROOT + 'src/automix/host.js', 'utf8'), i = host.indexOf('function contentEnd(');
+    let d = 0, j = host.indexOf('{', i);
+    for (; j < host.length; j++) { if (host[j] === '{') d++; else if (host[j] === '}' && !--d) break; }
+    CONTENT_END = new Function('return ' + host.slice(i, j + 1))();
+  }
+  return CONTENT_END(mono, ANALYSIS_SR);
+}
 async function analyseAll() {
   const k = readJson(BENCH + 'key.json');
   mkdirSync(BENCH + 'pc', { recursive: true });
@@ -116,6 +129,15 @@ async function analyseAll() {
   for (const id of Object.keys(k.songs)) {
     if (ONLY && !ONLY.has(id)) continue;
     const out = BENCH + `pc/${id}.json`;
+    if (existsSync(out) && args.includes('--content-end')) {
+      const a = readJson(out);
+      if (a.contentEndSec !== undefined) continue;
+      const st = decode(audioOf(id), ANALYSIS_SR, 2), n = st.length >> 1, mono = new Float32Array(n);
+      for (let i = 0; i < n; i++) mono[i] = (st[2 * i] + st[2 * i + 1]) / 2;
+      writeFileSync(out, JSON.stringify({ ...a, contentEndSec: contentEndOf(mono) }));
+      done++;
+      continue;
+    }
     if (existsSync(out) && !args.includes('--again')) continue;
     const file = audioOf(id);
     const st = decode(file, ANALYSIS_SR, 2), n = st.length >> 1;
@@ -123,6 +145,9 @@ async function analyseAll() {
     const L = new Float32Array(n), R = new Float32Array(n);
     for (let i = 0; i < n; i++) { L[i] = st[2 * i]; R[i] = st[2 * i + 1]; }
     const r = await analyse(id, L, R, decode(file, BEAT_SR, 1));
+    const mono = new Float32Array(n);
+    for (let i = 0; i < n; i++) mono[i] = (L[i] + R[i]) / 2;
+    r.contentEndSec = contentEndOf(mono);
     // as the extension keeps it: the bar phase is set on load (automix.js withBarPhase)
     writeFileSync(out, JSON.stringify({ side: 'pc', videoId: id, fileKey: id, ...(PHASE ??= loadAutomix().withBarPhase)(r) }));
     done++;
@@ -144,7 +169,10 @@ function planAll() {
   for (const [name, e] of Object.entries(exports())) for (const m of e.mixes) {
     const a = m.from?.youtubeVideoId, b = m.to?.youtubeVideoId;
     if (!side[a] || !side[b] || a === b) continue;
-    const p = A.plan({ fromId: a, toId: b, from: side[a], to: side[b], durationSec: side[a].durationSec, pos: 30, earliest: 34.5, curator: args.includes('--curator') });
+    const args0 = { fromId: a, toId: b, from: side[a], to: side[b], durationSec: side[a].durationSec, pos: 30, earliest: 34.5 };
+    let p = A.plan(args0);
+    // --curator: as crossfade.js asks for it, only over Auto's plain blend (the bench has no loop mix)
+    if (args.includes('--curator') && p.style === 'blend' && !p.shape) { const k = A.plan({ ...args0, curator: true }); if (k.curator) p = k; }
     plans.push({ playlist: name, index: m.index, from: a, to: b, style: p.style, ...(p.curator ? { curator: true } : {}), mixOutTrackTime: r3(p.mixOutTrackTime), mixInTrackTime: r3(p.mixInTrackTime), durationSec: r3(p.durationSec), bars: p.bars });
   }
   writeFileSync(BENCH + app + '/plans.json', JSON.stringify({ format: 'spotify-bench-plans', version: 1, app, analysisVersion: Object.values(side)[0]?.analysisVersion || null, plans }));
@@ -234,7 +262,8 @@ function score() {
     for (const p of plans) {
       const m = mixOf(p);
       if (!m) continue;
-      if (p.from === id) {
+      // (a straight cut has no mix-out time in Spotify's export: nothing to measure; its NaN once broke the median's sort)
+      if (p.from === id && Number.isFinite(m.fromStartMs)) {
         const spot = m.fromStartMs / 1000 + s.offsetSec, cues = s.cues ? [s.cues.mixOut, ...s.cues.fadeOut].filter((x) => x != null) : [];
         row.mixOut.push({ playlist: p.playlist, index: p.index, ours: p.mixOutTrackTime, spotify: r3(spot), beats: Math.round((Math.abs(p.mixOutTrackTime - spot) / beat) * 10) / 10, nearCue: within(cues, p.mixOutTrackTime, beat) });
       }

@@ -519,6 +519,18 @@
         p.speedIn = planSpeed.in;
         if (p.style !== 'blend') p.rate = planSpeed.in;
       }
+      // B's late entry (mix-file.md rule 2): B stays silent that long into the mix, then starts at its
+      // mix-in; the curves stay where they are. Only a plain blend or crossfade plays it.
+      const late = ov?.preset !== 'loop' ? ov?.window?.in?.delaySec : null;
+      if (late > 0) {
+        if (p.fallback || p.handoff || p.bridge || p.shape || p.glide || !['blend', 'crossfade'].includes(p.style)) {
+          p.warnings = [...(p.warnings || []), `B's late start (${late} s) isn't played in this kind of mix: B starts with it`];
+        } else {
+          const most = Math.max(0, p.durationSec - 0.5);
+          if (late > most + 1e-6) p.warnings = [...(p.warnings || []), `B's late start of ${late} s is past the mix's end: ${most.toFixed(1)} s`];
+          p.inDelaySec = Math.round(Math.min(late, most) * 1e3) / 1e3;
+        }
+      }
       return p;
     } finally { pinnedBars = null; planSpeed = null; fallbackSec = FALLBACK_SEC; curatorAsk = false; }
   }
@@ -566,7 +578,9 @@
       // (no bar: a position in seconds only, as a mix file from another app gives it: editor.md §6)
       const pos = (p) => p && Number.isFinite(p.sec) && (Number.isInteger(p.bar) || p.bar == null)
         ? { ...(Number.isInteger(p.bar) ? { bar: p.bar, ...([1, 2, 3].includes(p.beat) ? { beat: p.beat } : {}) } : {}), ...(nudge(p.nudgeMs) ? { nudgeMs: nudge(p.nudgeMs) } : {}), sec: Math.round(p.sec * 1e3) / 1e3 } : null;
-      const w = { out: pos(o.window?.out), in: pos(o.window?.in) };
+      // (B's late entry, mix-file.md rule 2: on the mix-in only, 1 ms to 60 s)
+      const late = (p) => (Number.isFinite(p?.delaySec) && p.delaySec >= 0.001 ? { delaySec: Math.round(Math.min(p.delaySec, 60) * 1e3) / 1e3 } : {});
+      const w = { out: pos(o.window?.out), in: pos(o.window?.in) && { ...pos(o.window.in), ...late(o.window.in) } };
       if (w.out || w.in) n.window = Object.fromEntries(Object.entries(w).filter(([, v]) => v));
       // (Loop: the loop decks do their own tempo ramp, editor.md §2)
       if (['sync', 'glide', 'off'].includes(o.beatMatch)) n.beatMatch = o.beatMatch;
@@ -709,7 +723,7 @@
     if (!Array.isArray(j.mixes) || !j.mixes.length) return { refused: 'the mix file has no mixes' };
     if (j.mixes.length > MIX_MAX) return { refused: `the mix file has ${j.mixes.length} mixes: ${MIX_MAX} is the most` };
     const song = (t) => (t && VIDEO_ID.test(t.youtubeVideoId || '') ? { videoId: t.youtubeVideoId, title: t.title, artist: Array.isArray(t.artists) ? t.artists.join(', ') : undefined } : null);
-    const lost = { unnamed: 0, notCarried: new Set(), late: 0, lateMs: 0 };
+    const lost = { unnamed: 0, notCarried: new Set(), late: 0 };
     const items = j.mixes.map((m, i) => {
       const n = Number.isInteger(m?.index) ? m.index : i + 1;
       const from = song(m?.from), to = song(m?.to);
@@ -726,7 +740,7 @@
     if (lost.unnamed) notes.push(`${lost.unnamed} lane${lost.unnamed === 1 ? '' : 's'} in a Spotify style with no match here play the default shape`);
     if (lost.notCarried.size) notes.push(`not carried: ${[...lost.notCarried].join(', ')}`);
     // (rule 10: saved with the mix; this app doesn't play a song's speed yet)
-    if (lost.late) notes.push(`${lost.late} mix${lost.late === 1 ? '' : 'es'} bring${lost.late === 1 ? 's' : ''} B in late in Spotify (up to ${(lost.lateMs / 1000).toFixed(1)} s): here B starts with the mix`);
+    if (lost.late) notes.push(`${lost.late} mix${lost.late === 1 ? '' : 'es'} bring${lost.late === 1 ? 's' : ''} B in late in an older export's unsigned time: here B starts with the mix`);
     return { ...r, queue, notes, name: textOf(j.playlist?.name) };
   }
   // One Spotify mix as an override (spotify-mixes.md rules 3 to 6)
@@ -736,7 +750,9 @@
     // (an older export carries a negative time read as unsigned, 2^64 − x: negative too)
     const ms = (v) => (Number.isFinite(v) && v >= 0 && v < 2 ** 53 ? v : null);
     // a negative B start: B's 0:00 comes in that long after the mix starts (spotify-mixes.md rule 3)
-    if (m.toStartMs < 0 || m.toStartMs >= 2 ** 53) { lost.late++; if (m.toStartMs < 0) lost.lateMs = Math.max(lost.lateMs, -m.toStartMs); }
+    // (an unsigned one is too far off to read back: B starts with the mix, and the summary says so)
+    if (m.toStartMs >= 2 ** 53) lost.late++;
+    const late = m.toStartMs < 0 && Number.isFinite(m.toStartMs) ? r3(-m.toStartMs / 1000) : 0;
     if (!(D > 0) || ms(m.fromStartMs) === null) return null;
     const bars = [2, 4, 8, 16, 32].includes(m.bars) ? m.bars : null;
     const unit = bars ? 'beat' : 'sec', N = bars ? bars * 4 : r3(D);
@@ -845,8 +861,8 @@
     return mixOverride({
       v: 1, preset: 'custom', lanes,
       ...(bars ? { bars } : { beatMatch: 'off' }),
-      // B's start: none or a negative one → from 0, with the mix (rule 3)
-      window: { out: { sec: r3(m.fromStartMs / 1000) }, in: { sec: r3((ms(m.toStartMs) ?? 0) / 1000) } },
+      // B's start: none → from 0; a negative one → from 0, that long after the mix starts (rule 3)
+      window: { out: { sec: r3(m.fromStartMs / 1000) }, in: { sec: r3((ms(m.toStartMs) ?? 0) / 1000), ...(late >= 0.001 ? { delaySec: late } : {}) } },
       ...(gridBpm ? { gridBpm } : {}),
       ...(speed ? { speed } : {}),
     });
@@ -866,7 +882,7 @@
     const a = mixOverride(was) || {}, b = mixOverride(now) || {};
     const lane = (o, k) => (o.preset !== 'custom' ? (o.preset === 'loop' ? 'loop' : o.preset ? o.preset + "'s" : 'auto') : o.lanes?.[k] == null ? 'none' : typeof o.lanes[k] === 'string' ? o.lanes[k] : 'drawn');
     // (a position in seconds only, editor.md §6, as its time: "218.142 s")
-    const pos = (p) => (p ? `${Number.isInteger(p.bar) ? `bar ${p.bar}${p.beat ? '.' + (p.beat + 1) : ''}` : `${p.sec} s`}${p.nudgeMs ? ` ${p.nudgeMs > 0 ? '+' : ''}${p.nudgeMs} ms` : ''}` : null);
+    const pos = (p) => (p ? `${Number.isInteger(p.bar) ? `bar ${p.bar}${p.beat ? '.' + (p.beat + 1) : ''}` : `${p.sec} s`}${p.nudgeMs ? ` ${p.nudgeMs > 0 ? '+' : ''}${p.nudgeMs} ms` : ''}${p.delaySec ? `, ${p.delaySec} s into the mix` : ''}` : null);
     const rows = [
       ['preset', a.preset || 'auto', b.preset || 'auto'],
       ...['volume', 'eq', 'effect', 'fx', 'looping'].map((k) => [k === 'fx' ? 'effects' : k, lane(a, k), lane(b, k)]),

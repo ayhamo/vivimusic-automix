@@ -79,7 +79,10 @@ function planPair(pair, version, lyrics = null, mixed = false) {
   const pick = A.loopOrBlend(blend, loop);
   // Automix v2 with no loop mix: the curator blend (analysis-cases.md "The curator blend"), chosen after
   // the loop-or-blend score, which keeps the usual blend's numbers
-  if (version === 3 && !pick.loop) blend = A.plan({ fromId: a.id, toId: b.id, from: a.analysis, to: b.analysis, durationSec: a.analysis.durationSec, pos, earliest, curator: true });
+  if (version === 3 && !pick.loop && blend.style === 'blend' && !blend.shape) {
+    const k = A.plan({ fromId: a.id, toId: b.id, from: a.analysis, to: b.analysis, durationSec: a.analysis.durationSec, pos, earliest, curator: true });
+    if (k.curator) blend = k;
+  }
   return round({ pos, earliest, plays: pick.loop ? 'loop' : blend.style, ...(pick.why ? { choice: pick.why } : {}), loop, blend });
 }
 

@@ -714,10 +714,36 @@
   const glideOf = (m) => (m?.style === 'blend' && m.glide ? window.__viviAutomix.glideSteps(m.glide.q, m.glide.beats, m.glide.beatOutSec) : null);
   // the playing song needs the stretch deck: a speed-up before the blend, or a glide in it
   const needsOutDeck = (m) => m?.style !== 'loop' && (m?.outRate > 1.0001 || !!m?.glide || off1(m?.speedOut || 1));
+  // B's second at the mix start: its mix-in, less a late entry (mix-file.md rule 2: B comes in
+  // inDelaySec into the mix), so before 0 while B is still silent
+  const inStartOf = (m) => m.mixInTrackTime - (m.inDelaySec || 0) * (m.rate || 1);
+  // B's gain with a late entry: 0 until `late` s into the curve whatever it says, then up to the curve
+  // in 10 ms, so nothing of B before its mix-in is heard (a pre-roll, a player started early).
+  // A sampled shape (fadeCurve) over d seconds, and a preset's events [t, v, step]:
+  const LATE_RAMP = 0.01;
+  function lateShape(shape, d, late) {
+    if (!(late > 0) || !shape?.length) return shape;
+    const out = shape.slice(), n = out.length;
+    for (let i = 0; i < n && (d * i) / (n - 1) < late + LATE_RAMP; i++) out[i] = 0;
+    return out;
+  }
+  function lateEvents(ev, late) {
+    if (!(late > 0) || !ev?.length) return ev;
+    const b = late + LATE_RAMP;
+    let v = ev[ev.length - 1][1];
+    for (let i = 1; i < ev.length; i++) {
+      if (ev[i][0] < b) continue;
+      const [t1, v1] = ev[i - 1], [t2, v2] = ev[i];
+      v = ev[i][2] || t2 <= t1 ? (b >= t2 ? v2 : v1) : v1 + ((v2 - v1) * (b - t1)) / (t2 - t1);
+      break;
+    }
+    return [[0, 0, false], [late, 0, false], [b, v, false], ...ev.filter((e) => e[0] > b + 1e-6)];
+  }
   // The next song's second at audio time t of a blend that started at t0.
   function inTrackAt(m, t0, t) {
     const G = glideOf(m), dt = t - t0;
-    if (!G) return m.mixInTrackTime + dt * (m.rate || 1);
+    // (during a late entry's wait B is at its mix-in: a skip then lands there, not before it)
+    if (!G) return dt < (m.inDelaySec || 0) ? m.mixInTrackTime : inStartOf(m) + dt * (m.rate || 1);
     if (dt >= G.total) return m.mixInTrackTime + m.glide.beats * G.beatInSec + (dt - G.total);
     let k = 0;
     while (k + 1 < G.at.length && G.at[k + 1] <= dt) k++;
@@ -1941,7 +1967,9 @@
     deck?.cancel();
     deck = new PlayerDeck(g, v, st.id);
     if (matched) {
-      deck.playAt(t0, m.mixInTrackTime + (t0 - live.t0) * rate, rate);
+      // (a late entry: B's gain stays 0 until B's start comes, below; the player is there by then,
+      // held when that is before the song's 0:00)
+      deck.playAt(t0, m.mixInTrackTime - (m.inDelaySec || 0) * rate + (t0 - live.t0) * rate, rate);
       deck.glideToUnity(rate, t0 + D, m.speedIn || 1);
     } else {
       log('automix: the queue played', st.id, 'instead of', m.nextId || '(nothing)', '- crossfading into it as it is');
@@ -1956,8 +1984,9 @@
     const inn = g.gate.gain, out = live.fade.gain;
     inn.cancelScheduledValues(now); inn.setValueAtTime(0, now);
     out.cancelScheduledValues(now); out.setValueAtTime(1, now);
-    if (preset) { const [eIn, eOut] = presetGains(m, D, skip); playEvents(inn, eIn, t0, t0, false); playEvents(out, eOut, t0, t0, false); }
-    else { const [cIn, cOut] = gainCurves(m, style, D); fadeCurve(inn, cIn, t0, D); fadeCurve(out, cOut, t0, D); }
+    const late = matched ? (m.inDelaySec || 0) - skip : 0;   // (its seconds still to come)
+    if (preset) { const [eIn, eOut] = presetGains(m, D, skip); playEvents(inn, lateEvents(eIn, late), t0, t0, false); playEvents(out, eOut, t0, t0, false); }
+    else { const [cIn, cOut] = gainCurves(m, style, D); fadeCurve(inn, lateShape(cIn, D, late), t0, D); fadeCurve(out, cOut, t0, D); }
 
     blendShape(g, style, t0, D, rate, preset, skip);
     log(`automix: ${style}${style !== 'crossfade' ? ' of ' + m.bars + ' bars' : ''}, ${D.toFixed(1)} s, starting in ${(t0 - now).toFixed(2)} s; next song from ${m.mixInTrackTime.toFixed(2)} s at x${rate.toFixed(3)}${m.reason ? ' (' + m.reason + ')' : ''}${djNote(m, preset ? m.style : style)}`);
@@ -2103,7 +2132,7 @@
   // The deck holds the next song far enough for this blend (and a late take-over).
   function inDeckFits(g, m, D) {
     return !!inDeck && inDeckGraph === g && inPrep.state === 'ready' && inPrep.key === m.nextId && inDeck.loadedKey === m.nextId
-      && m.mixInTrackTime + (D + 8) * (m.rate || 1) <= inPrep.end;
+      && inStartOf(m) + (D + 8) * (m.rate || 1) <= inPrep.end;
   }
   function stopInDeck(soft) {
     if (!inDeck) return;
@@ -2118,24 +2147,27 @@
     deck?.cancel();   // (a glide left from the last mix: the old song is silent on the player now)
     inBus.gain.cancelScheduledValues(now); inBus.gain.setValueAtTime(live.muted ? 0 : live.inBase * live.k, now);
     // (started PREROLL_SEC early, silent, so it is warm when the blend brings it in)
-    const pre = Math.min(PREROLL_SEC, m.mixInTrackTime / rate);
+    const pre = Math.min(PREROLL_SEC, m.mixInTrackTime / rate), late = m.inDelaySec || 0;
     // A stretched next song glides back to its own speed here, on the deck,
     // after the blend; the player takes over only once it is at x1.0. (Stepping
     // the <video>'s playbackRate instead restarts the browser's stretcher at
     // every step, heard as a glitch after the mix.)
     const G = glideOf(m);
     live.deckGlide = G ? deckGlideIn(m, t0, G) : deckGlideBack(m, t0, D, rate);
-    inDeck.schedule([{ output: t0 - pre, input: m.mixInTrackTime - pre * rate, rate, active: true, loop: null }, ...(live.deckGlide?.points || [])]);
+    // (a late entry, mix-file.md rule 2: the deck starts that long into the mix, silent and unstarted
+    // until then; the curves below still run from t0)
+    inDeck.schedule([{ output: t0 + late - pre, input: m.mixInTrackTime - pre * rate, rate, active: true, loop: null }, ...(live.deckGlide?.points || [])]);
     const ig = inDeck.gain.gain, out = live.fade.gain;
     ig.cancelScheduledValues(0); ig.setValueAtTime(0, now);
     out.cancelScheduledValues(now); out.setValueAtTime(1, now);
-    if (presetOn(m, m.style)) { const [eIn, eOut] = presetGains(m, D); playEvents(ig, eIn, t0, t0, false); playEvents(out, eOut, t0, t0, false); }
-    else { const [cIn, cOut] = gainCurves(m, m.style, D); fadeCurve(ig, cIn, t0, D); fadeCurve(out, cOut, t0, D); }
+    // (a late entry: the deck's gain 0 until B's start, so its warm-up pre-roll isn't heard)
+    if (presetOn(m, m.style)) { const [eIn, eOut] = presetGains(m, D); playEvents(ig, lateEvents(eIn, late), t0, t0, false); playEvents(out, eOut, t0, t0, false); }
+    else { const [cIn, cOut] = gainCurves(m, m.style, D); fadeCurve(ig, lateShape(cIn, D, late), t0, D); fadeCurve(out, cOut, t0, D); }
     blendShape(g, m.style, t0, D, rate);
     live.handoffAt = t0 + D / 2;
-    addonEvent('blend', { id: m.nextId, t0, D, rate, mixIn: m.mixInTrackTime, mixOut: m.mixOutTrackTime, glide: !!G, inAddon: !!inPrep.addon });
+    addonEvent('blend', { id: m.nextId, t0, D, rate, mixIn: m.mixInTrackTime, mixOut: m.mixOutTrackTime, glide: !!G, inAddon: !!inPrep.addon, ...(late ? { inDelay: late } : {}) });
     live.src.onended = null;   // the mix may run on the deck past the old song's end (a late take-over)
-    log(`automix: ${m.style}, ${D.toFixed(1)} s, starting in ${(t0 - now).toFixed(2)} s on the incoming deck (next song from ${m.mixInTrackTime.toFixed(2)} s at x${rate.toFixed(3)}); the player moves on in ${(live.askAt - now).toFixed(2)} s${djNote(m, m.style)}`);
+    log(`automix: ${m.style}, ${D.toFixed(1)} s, starting in ${(t0 - now).toFixed(2)} s on the incoming deck (next song from ${m.mixInTrackTime.toFixed(2)} s at x${rate.toFixed(3)}${late ? `, ${late.toFixed(2)} s into the mix` : ''}); the player moves on in ${(live.askAt - now).toFixed(2)} s${djNote(m, m.style)}`);
   }
   // Automix v2's kick lock (automix.js kickLock): the next song's cue moves a
   // few ms so both songs' kicks land together. The playing song's side is its
@@ -2143,7 +2175,7 @@
   // the deck's opening.
   function kickLockFor(L, p, off) {
     const A = window.__viviAutomix, m = L.mix;
-    if (A.getVersion() !== 3 || m?.style !== 'blend' || m.shape === 'echo' || !inPrep.kick || inPrep.key !== m.nextId || !p?.mono) return;
+    if (A.getVersion() !== 3 || m?.style !== 'blend' || m.shape === 'echo' || m.inDelaySec || !inPrep.kick || inPrep.key !== m.nextId || !p?.mono) return;
     try {
       const t = performance.now();
       const k = A.kickLock(m, { data: p.mono, rate: p.rate, origin: p.start - off }, inPrep.kick);
@@ -2171,7 +2203,7 @@
     const to = m.speedIn || 1;   // B's own speed after the mix (spotify-mixes.md rule 10), else x1
     if (Math.abs(rate - to) < 0.002) return null;
     const n = Math.ceil(Math.abs(rate - to) / GLIDE_STEP), points = [];
-    let output = t0 + D, input = m.mixInTrackTime + D * rate, r = rate;
+    let output = t0 + D, input = inStartOf(m) + D * rate, r = rate;
     for (let i = 1; i <= n; i++) {
       input += GLIDE_STEP_SEC * r; output += GLIDE_STEP_SEC;
       r = i === n ? to : rate + (to - rate) * (i / n);
@@ -2188,8 +2220,8 @@
     // just after the curves end (an event inside one is refused), or later if the player came late
     // (a next song cued near its opening: the player only plays from where the plan reaches 0:00, so
     // the deck plays on until the player has played long enough to be matched by ear, alignByEar)
-    const tk = Math.max((G ? G.end : L.t0 + L.D) + 0.02, now + 1.6, G ? 0 : L.t0 - m.mixInTrackTime / rate + 4);
-    const trackAt = (t) => (G && t >= G.end ? G.trackAtEnd + (t - G.end) * to : m.mixInTrackTime + (t - L.t0) * rate);
+    const tk = Math.max((G ? G.end : L.t0 + L.D) + 0.02, now + 1.6, G ? 0 : L.t0 - inStartOf(m) / rate + 4);
+    const trackAt = (t) => (G && t >= G.end ? G.trackAtEnd + (t - G.end) * to : inStartOf(m) + (t - L.t0) * rate);
     if (trackAt(tk + 0.5) > inPrep.end) { abortLive('the player came too late for the incoming deck'); return; }
     deck?.cancel();
     deck = new PlayerDeck(g, v, st.id);

@@ -51,7 +51,7 @@
       "additionalProperties": false,
       "properties": {
         "out": { "$ref": "#/$defs/position", "description": "A's mix-out, on A's end grid" },
-        "in": { "$ref": "#/$defs/position", "description": "B's mix-in, on B's opening grid" }
+        "in": { "$ref": "#/$defs/position", "description": "B's mix-in, on B's opening grid; only here, delaySec (mix-file.md rule 2)" }
       }
     },
     "lock": { "type": "boolean", "description": "kept past the 300-override cap; a lock beyond 300 locked is refused" },
@@ -93,7 +93,8 @@
         "bar": { "type": "integer", "description": "the downbeat index on that song's grid, counted from its first downbeat (0); negative before it. Absent: a position in seconds only (a mix file from another app), played at the song's nearest beat to sec (editor.md §6)" },
         "beat": { "type": "integer", "minimum": 0, "maximum": 3, "description": "a beat within the bar (snapped to beats); absent: on the downbeat. Only with bar" },
         "nudgeMs": { "type": "integer", "minimum": -2000, "maximum": 2000, "description": "10 ms steps on top of the snapped position" },
-        "sec": { "type": "number", "description": "the song time this meant when saved: the fallback when a re-analysis moves the grid by more than a beat" }
+        "sec": { "type": "number", "description": "the song time this meant when saved: the fallback when a re-analysis moves the grid by more than a beat" },
+        "delaySec": { "type": "number", "minimum": 0.001, "maximum": 60, "description": "window.in only (mix-file.md rule 2 [all]): B's late entry, the seconds after the mix starts that B stays silent before it starts at sec; the curves still run from the mix start. Absent: B starts with the mix. Ignored on window.out" }
       }
     }
   }

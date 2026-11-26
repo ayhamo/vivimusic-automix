@@ -995,15 +995,110 @@ test('Spotify mix exports import directly (spotify-mixes.md): mixes, skips, the 
   // Effects style 2 (Reverb cut end) is named: the shape, nothing left out
   assert.equal(o2.lanes.fx, 'reverbCutEnd');
   assert.ok(!/not carried/.test(r2.notes.join(' | ')), r2.notes.join(' | '));
-  // a negative B start (B's 0:00 comes in 1.972 s and 14.486 s after the mix starts): B from 0, with
-  // the mix, and the summary says so; an older export's unsigned 2^64 − x reads the same
+  // a negative B start (B's 0:00 comes in 1.972 s and 14.486 s after the mix starts): B from 0, that
+  // long into the mix (mix-file.md rule 2, B's late entry), no note
   const late = (v) => JSON.stringify({ ...exp, mixes: [{ ...exp.mixes[0], toStartMs: v }, { ...exp.mixes[0], index: 4, from: S2, to: S3, toStartMs: -14486 }] });
   const rl = A.readMixFile(late(-1972));
-  assert.equal(JSON.stringify(rl.mixes[0].override.window), JSON.stringify({ out: { sec: 218.142 }, in: { sec: 0 } }));
-  assert.equal(rl.mixes[1].override.window.in.sec, 0);
-  assert.ok(rl.notes.includes('2 mixes bring B in late in Spotify (up to 14.5 s): here B starts with the mix'), rl.notes.join(' | '));
-  const wrapped = late(0).replace('"toStartMs":0', '"toStartMs":18446744073709549644');
-  assert.equal(A.readMixFile(wrapped).mixes[0].override.window.in.sec, 0);
+  assert.equal(JSON.stringify(rl.mixes[0].override.window), JSON.stringify({ out: { sec: 218.142 }, in: { sec: 0, delaySec: 1.972 } }));
+  assert.equal(JSON.stringify(rl.mixes[1].override.window.in), JSON.stringify({ sec: 0, delaySec: 14.486 }));
+  assert.ok(!rl.notes.some((n) => /late/.test(n)), rl.notes.join(' | '));
+  // an older export's unsigned 2^64 − x can't be read back: B with the mix, and the summary says so
+  const wrapped = A.readMixFile(late(0).replace('"toStartMs":0', '"toStartMs":18446744073709549644'));
+  assert.equal(JSON.stringify(wrapped.mixes[0].override.window.in), JSON.stringify({ sec: 0 }));
+  assert.ok(wrapped.notes.includes("1 mix brings B in late in an older export's unsigned time: here B starts with the mix"), wrapped.notes.join(' | '));
+});
+
+test("B's late entry (mix-file.md rule 2): normalized, a mix file round trip, the plan, the changes list", () => {
+  const A = loadAutomix('auto');
+  const js = JSON.stringify;
+  // on the mix-in only, 1 ms to 60 s, to 1 ms; on the mix-out ignored
+  const ov = A.normalizeOverride({ v: 1, bars: 8, window: { out: { sec: 50, delaySec: 2 }, in: { sec: 0, delaySec: 3.21749 } } });
+  assert.equal(js(ov.window), js({ out: { sec: 50 }, in: { sec: 0, delaySec: 3.217 } }));
+  assert.equal(A.normalizeOverride({ v: 1, window: { in: { sec: 0, delaySec: 0 } } }).window.in.delaySec, undefined);
+  assert.equal(A.normalizeOverride({ v: 1, window: { in: { sec: 0, delaySec: 99 } } }).window.in.delaySec, 60);
+  // written and read back: the same override
+  const file = js(A.writeMixFile([{ from: { videoId: 'rCwSRV7P6hY' }, to: { videoId: '0X3Y2m9wj5c' }, override: ov }]));
+  assert.match(file, /"delaySec":3.217/);
+  assert.equal(js(A.readMixFile(file).mixes[0].override), js(ov));
+  // a changed delay is a change in the mix-in row
+  const ch = A.mixChanges({ v: 1, bars: 8, window: { in: { sec: 0 } } }, ov);
+  assert.ok(ch.includes('mix-in: 0 s → 0 s, 3.217 s into the mix'), js(ch));
+  // the plan carries it as inDelaySec on a plain blend or crossfade; the curves stay from the mix start
+  const go = (pick) => A.plan({ fromId: 'a', toId: 'b', from: song(120, 200), to: song(120, 200), durationSec: 200, pos: 20, earliest: 24.5, pick });
+  const lanes = { volume: 'overlap', eq: 'none', effect: 'none' };
+  const base = go({ preset: 'custom', bars: 8, lanes, window: { out: { sec: 150 }, in: { sec: 0 } } });
+  const p = go({ preset: 'custom', bars: 8, lanes, window: { out: { sec: 150 }, in: { sec: 0, delaySec: 3.2 } } });
+  assert.ok(['blend', 'crossfade'].includes(p.style), p.style);
+  assert.equal(p.inDelaySec, 3.2);
+  assert.equal(base.inDelaySec, undefined);
+  assert.equal(p.mixInTrackTime, base.mixInTrackTime);
+  assert.equal(js(p.curves), js(base.curves));
+  // past the mix's end: held at its length − 0.5 s, with a warning
+  const far = go({ preset: 'custom', bars: 8, lanes, window: { out: { sec: 150 }, in: { sec: 0, delaySec: 40 } } });
+  assert.equal(far.inDelaySec, Math.round((far.durationSec - 0.5) * 1e3) / 1e3);
+  assert.ok(far.warnings.some((w) => /past the mix's end/.test(w)), js(far.warnings));
+  // a loop mix never plays it
+  assert.equal(A.normalizeOverride({ v: 1, preset: 'loop', window: { in: { sec: 0, delaySec: 3 } } }).window, undefined);
+});
+
+test("B's late entry plays (mix-file.md rule 2): B silent and unstarted until the offset, the curves from the mix start", () => {
+  const xf = srcOf('src/automix/crossfade.js');
+  const helpers = between(xf, 'const inStartOf', '// The next song') + between(xf, 'function inTrackAt(', '// True once');
+  const param = (log) => ({ cancelScheduledValues() {}, setValueAtTime() {}, log });
+  // the deck path (scheduleDeckBlend); the shapes it fades: B's (ig) first, A's second
+  const run = (inDelaySec, mixInTrackTime = 0, preset = false) => {
+    const sched = [], fades = [], events = [];
+    const m = { style: 'blend', rate: 1, mixInTrackTime, mixOutTrackTime: 150, nextId: 'b', durationSec: 16, ...(inDelaySec ? { inDelaySec } : {}) };
+    const ramp = Array.from({ length: 161 }, (_, i) => i / 160);   // B's curve: up over the 16 s, 0.1 s a sample
+    const ctx = vm.createContext({
+      live: { mix: m, t0: 100, D: 16, fade: { gain: param() }, src: {}, inBase: 1, k: 1, askAt: 101 },
+      deck: null, inBus: { gain: param() }, inDeck: { gain: { gain: param() }, schedule: (c) => sched.push(...c) }, inPrep: { addon: false, end: 300 },
+      PREROLL_SEC: 0.5, glideOf: () => null, deckGlideBack: () => null, presetOn: () => preset,
+      presetGains: () => [[[0, 0, false], [8, 0.5, false], [16, 1, false]], [[0, 1, false], [16, 0, false]]],
+      playEvents: (p, ev, t0) => events.push([t0, ev]),
+      gainCurves: () => [ramp, ramp.map((v) => 1 - v)], fadeCurve: (p, c, t0, D) => fades.push([t0, D, c]), blendShape() {}, addonEvent() {}, djNote: () => '', log() {},
+    });
+    vm.runInContext(helpers + between(xf, 'function scheduleDeckBlend(', "// Automix v2's kick lock") + '\nscheduleDeckBlend({ ctx: { currentTime: 99 } });', ctx);
+    return { sched, fades, events, at: (t) => vm.runInContext(`inTrackAt(live.mix, 100, ${t})`, ctx) };
+  };
+  const now = run(0), late = run(3.2);
+  // with the mix: the deck starts at the mix start (B's 0:00 has no pre-roll), the curve as it is
+  assert.equal(now.sched[0].output, 100);
+  assert.equal(now.fades[0][2][5], 5 / 160);
+  // late, from B's 0:00: nothing is scheduled before 103.2, and then B starts at its mix-in
+  assert.equal(late.sched.length, 1);
+  assert.equal(late.sched[0].output, 103.2);
+  assert.equal(late.sched[0].input, 0);
+  // the fades still run from the mix start, over the whole mix; B's is 0 until it comes in
+  assert.deepEqual(late.fades.map(([t0, D]) => [t0, D]), [[100, 16], [100, 16]]);
+  const gIn = late.fades[0][2];
+  assert.ok(gIn.slice(0, 33).every((v) => v === 0), 'B silent to 3.2 s');
+  assert.equal(gIn[33], 33 / 160, 'then the curve, part way up');
+  assert.equal(late.fades[1][2][10], 1 - 10 / 160, "A's curve untouched");
+  // B's place: at its mix-in until it comes in, then counted from there
+  assert.equal(late.at(102), 0);
+  assert.ok(Math.abs(late.at(110) - 6.8) < 1e-9);
+  // a mix-in past 0 (30 s, B in after 4 s): the pre-roll warms the deck from 29.5 s at 103.5 s, but
+  // B's gain is 0 until 104 s, so nothing before 30 s is heard; a skip during the wait lands at 30 s
+  const mid = run(4, 30);
+  assert.equal(mid.sched[0].output, 103.5);
+  assert.equal(mid.sched[0].input, 29.5);
+  assert.ok(mid.fades[0][2].slice(0, 41).every((v) => v === 0));
+  assert.ok(mid.fades[0][2][41] > 0);
+  assert.equal(mid.at(101), 30);
+  assert.equal(mid.at(103.99), 30);
+  assert.ok(Math.abs(mid.at(110) - 36) < 1e-9);
+  // a preset's events: 0 to 4 s, then up to the curve's value 10 ms later, the rest as it was
+  const ev = run(4, 30, true).events[0][1];
+  assert.equal(JSON.stringify(ev.slice(0, 2)), JSON.stringify([[0, 0, false], [4, 0, false]]));
+  assert.ok(Math.abs(ev[2][0] - 4.01) < 1e-9 && Math.abs(ev[2][1] - 0.250625) < 1e-9, JSON.stringify(ev[2]));
+  assert.equal(JSON.stringify(ev.slice(3)), JSON.stringify([[8, 0.5, false], [16, 1, false]]));
+  // YouTube's player (beginAutomix): its gate gets the same mask, the late seconds still to come
+  const begin = between(xf, 'function beginAutomix(', 'blendShape(g, style');
+  assert.match(begin, /const late = matched \? \(m\.inDelaySec \|\| 0\) - skip : 0;/);
+  assert.match(begin, /playEvents\(inn, lateEvents\(eIn, late\)/);
+  assert.match(begin, /fadeCurve\(inn, lateShape\(cIn, D, late\)/);
+  assert.match(between(xf, 'function blendTakeOver(', 'deck?.cancel();'), /inStartOf\(m\) \+ \(t - L\.t0\) \* rate/, 'the take-over counts B from its late start');
 });
 
 test('Effects lane, mid band and noise (editor.md §12, spotify-mixes.md rules 4-6)', () => {

@@ -34,6 +34,29 @@ Test: `node --test scripts/test_automix_plan.mjs` (the "mix file" tests).
    - `window` positions may be seconds only (`{ "sec": 218.1 }`, no `bar`): a writer that doesn't
      know the reader's beat grid (another app, a converter) gives the song time, and the reader plays
      it at that song's nearest beat (editor.md §6, "Seconds only").
+   - **[all] B's late entry.** `window.in` may carry `delaySec` (0.001 to 60 s, to 1 ms): B comes in
+     that long after the mix starts, as Spotify's negative `toStartMs` does (spotify-mixes.md rule 3).
+     - Until then the incoming song is silent and not started; then it starts at `window.in`'s
+       position. The curves are unchanged, still measured from the mix's start, so B's fade-in
+       is part-way up when B starts.
+     - **[all] With a mix-in past 0:00** nothing of B before its mix-in is ever heard. B's gain is
+       0 until the delay ends, whatever the curve says there, then rises to the curve within
+       10 ms. A player or deck started early (to warm up, or to be in place on time) stays under
+       that 0. A skip or abort during the wait puts B at its mix-in, not before it. (PC audit
+       2026-11-26: a mix-in of 30 s with "B in after 4 s" played B from 26 s through the rising
+       curve on YouTube's player, and the deck's 0.5 s pre-roll from 29.5 s at about 22%.)
+     - The plan carries it as `inDelaySec` (plan.schema.json), at most the mix's length − 0.5 s
+       (a longer one is shortened, with a warning).
+     - Only a plain blend or crossfade plays it. A loop mix never does, and a hand-over, a
+       fallback, a glide or a shaped blend (drop-in, muffle, echo) starts B with the mix, with a
+       warning. The kick lock leaves such a mix alone.
+     - Absent, or on `window.out`: B starts with the mix.
+     - The editor shows it as a number field by the window's nudges ("B in after N s"; 0 clears it),
+       and the window line reads "B enters at 0:00.0, 3.2 s into the mix". Moving the mix-in keeps
+       it. `mixChanges` shows it in the mix-in row.
+     - PC: `automix.js` `plan` (`inDelaySec`); `crossfade.js` `inStartOf` (the deck and the
+       player start that long into the mix) and `lateShape` / `lateEvents` (B's gain 0 until
+       then); `automix-overview.js` `setLate`.
 
 3. **[all] Reading.** The whole file is refused, with nothing imported, when:
    - it isn't JSON, or `format` isn't `"vivi-mix"`: "not a Vivimusic mix file" (`format`

@@ -116,6 +116,7 @@
         "mixOutTrackTime": { "type": "number", "description": "Outgoing song time where the transition starts." },
         "durationSec": { "type": "number", "minimum": 0 },
         "mixInTrackTime": { "type": "number", "description": "Incoming song time it starts from." },
+        "inDelaySec": { "type": "number", "exclusiveMinimum": 0, "description": "mix-file.md rule 2 [all]: B's late entry, the override's window.in.delaySec, at most durationSec - 0.5. The incoming song stays silent and unstarted for this long after the mix starts, then starts at mixInTrackTime; curves still run from the mix start. Only on a plain blend or crossfade (no shape, glide, hand-over or fallback); absent: B starts with the mix." },
         "rate": { "type": "number", "exclusiveMinimum": 0, "description": "Incoming playback rate during the blend (with song speeds: speedOut × the outgoing BPM / the incoming BPM, A's played tempo, spotify-mixes.md rule 10; a filter mix or fade: speedIn)." },
         "outRate": { "type": "number", "exclusiveMinimum": 0, "description": "Outgoing rate after the tempo ramp (with song speeds: speedOut, no ramp)." },
         "speedOut": { "type": "number", "minimum": 0.5, "maximum": 2, "description": "spotify-mixes.md rule 10: the playing song's playlist speed, the whole time it plays; absent: 1 for both." },
