@@ -328,6 +328,26 @@ test('Editor: windowLimits are where the planner clamps the window', () => {
   assert.ok(p.mixOutTrackTime <= lim.out[1] + 1e-6 && p.mixOutTrackTime >= lim.out[0]);
 });
 
+test("Editor: a placed window runs through A's fading outro, up to its real end (ruled 2026-11-26)", () => {
+  const A = loadAutomix('auto');
+  // music ends at 183 s, the song at 200.6 s (Lush Life's shape): Spotify's mix-out at bar 88 plays as placed
+  const cur = { ...song(120, 200.6), contentEndSec: 183 }, next = song(120, 180), bar = barSec(120);
+  const m = planOf(A, cur, next);
+  const span = m.bars * bar;
+  assert.ok(Math.abs(A.windowLimits(m, cur, next, 24.5).out[1] - (200.6 - 0.3 - span)) < 1e-9);
+  const out = { bar: 88, sec: 0.4 + 88 * bar };   // 176.4 s, its 8 bars end at 192.4 s: past the music end
+  const p = planPick(A, cur, next, { preset: 'blend', bars: 8, window: { out } });
+  assert.ok(Math.abs(p.mixOutTrackTime - out.sec) < 1e-6, `${p.mixOutTrackTime}`);
+  assert.equal(p.warnings, undefined);
+  // with beat match Off too
+  const q = planPick(A, cur, next, { beatMatch: 'off', bars: 8, window: { out } });
+  assert.ok(Math.abs(q.mixOutTrackTime - out.sec) < 1e-6, `${q.mixOutTrackTime}`);
+  // past the real end it still moves back inside
+  const r = planPick(A, cur, next, { preset: 'blend', bars: 8, window: { out: { bar: 97, sec: 0.4 + 97 * bar } } });
+  assert.ok(r.mixOutTrackTime + r.durationSec <= 200.6 - 0.3 && r.mixOutTrackTime > 183 - 16);
+  assert.match(r.warnings.join(' '), /too close to the end/);
+});
+
 // ───────── group 3 (2026-11-24): versions.md "Adlib outro", "No effect three times in a row",
 // "Analysis length"; editor.md §6 shortened and retired preset
 
@@ -807,7 +827,7 @@ test('Filter aims: bad plan values (NaN clash, tempo, swap, length) still give f
 });
 
 // Mix files (spec/automix/mix-file.md): the two ready-made mixes round-trip, and the reading rules
-const MIX_FILES = ['cinderella-drowning', 'yquefue-iliketomoveit'].map((n) => readFileSync(new URL(`../spec/automix/mixes/${n}.vivimix.json`, import.meta.url), 'utf8'));
+const MIX_FILES = ['cinderella-drowning', 'yquefue-iliketomoveit'].map((n) => readFileSync(new URL(`../spec/automix/mixes/${n}.json`, import.meta.url), 'utf8'));
 const js = (v) => JSON.stringify(v);
 test('Mix files: both ready-made mixes read back whole and write out the same file (mix-file.md rules 2, 4, 8)', () => {
   const A = loadAutomix(0);

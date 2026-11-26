@@ -50,6 +50,8 @@
     #vivi-canvas-menu .head { padding: 4px 16px 8px; color: rgba(255,255,255,.6); font-size: 11.5px; }
     #vivi-canvas-menu .row { display: flex; align-items: center; gap: 10px; padding: 9px 16px; cursor: pointer; }
     #vivi-canvas-menu .row:hover { background: rgba(255,255,255,.08); }
+    #vivi-canvas-menu .row .lab { display: flex; flex-direction: column; min-width: 0; }
+    #vivi-canvas-menu .row .sub { color: rgba(255,255,255,.6); font-size: 11.5px; }
     #vivi-canvas-menu .row .val { margin-left: auto; color: rgba(255,255,255,.6); }
     #vivi-canvas-menu .sw { margin-left: auto; width: 30px; height: 16px; border-radius: 8px; background: rgba(255,255,255,.25); position: relative; }
     #vivi-canvas-menu .sw::after { content: ''; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%; background: #fff; transition: left .12s; }
@@ -137,12 +139,15 @@
     menu.innerHTML = '';
     const head = document.createElement('div');
     head.className = 'head';
-    head.textContent = 'Canvas for this song';
+    head.textContent = 'This song only';
     menu.append(head);
-    const row = (label, onClick, extra) => {
+    const row = (label, onClick, extra, sub) => {
       const el = document.createElement('div');
       el.className = 'row';
-      el.append(Object.assign(document.createElement('span'), { textContent: label }));
+      const lab = Object.assign(document.createElement('span'), { className: 'lab' });
+      lab.append(Object.assign(document.createElement('span'), { textContent: label }));
+      if (sub) lab.append(Object.assign(document.createElement('span'), { className: 'sub', textContent: sub }));
+      el.append(lab);
       if (extra) el.append(extra);
       el.addEventListener('click', onClick);
       menu.append(el);
@@ -151,10 +156,12 @@
     const sw = (on) => Object.assign(document.createElement('span'), { className: 'sw' + (on ? ' on' : '') });
     const val = (t) => Object.assign(document.createElement('span'), { className: 'val', textContent: t });
 
-    // rules 1-2: the switches; each stays after it was switched off for the song
-    if (st.rows.canvasSwitch) row('Canvas (music video)', () => change(id, { loopOff: !st.choice.loopOff }).then(() => render()), sw(!st.choice.loopOff));
-    if (st.spotifyOn || st.choice.spotifyOff) row('Spotify canvas', () => change(id, { spotifyOff: !st.choice.spotifyOff }).then(() => render()), sw(!st.choice.spotifyOff));
-    if (st.appleOn || st.choice.appleOff) row('Animated cover', () => change(id, { appleOff: !st.choice.appleOff }).then(() => render()), sw(!st.choice.appleOff));
+    // rules 1-2: the switches; each stays after it was switched off for the song. Each says it is this
+    // song's only and names the panel's switch for all songs (§15 rule 11)
+    const only = (master) => `Off hides it for this song only. ${master} in the panel is for all songs.`;
+    if (st.rows.canvasSwitch) row('Music video on this song', () => change(id, { loopOff: !st.choice.loopOff }).then(() => render()), sw(!st.choice.loopOff), only('Canvas'));
+    if (st.spotifyOn || st.choice.spotifyOff) row('Spotify canvas on this song', () => change(id, { spotifyOff: !st.choice.spotifyOff }).then(() => render()), sw(!st.choice.spotifyOff), only('Canvas'));
+    if (st.appleOn || st.choice.appleOff) row('Animated cover on this song', () => change(id, { appleOff: !st.choice.appleOff }).then(() => render()), sw(!st.choice.appleOff), only('Apple Music Animated Artwork'));
 
     // rule 3: the part playing and up to 4 others
     if (st.rows.pickPart && st.ans?.partMs != null) {
@@ -250,7 +257,7 @@
     if (!btn) {
       btn = document.createElement('div');
       btn.id = 'vivi-canvas-menu-btn';
-      btn.title = 'Canvas for this song';
+      btn.title = 'This song only';
       btn.innerHTML = ICON;
       btn.addEventListener('click', (e) => { e.stopPropagation(); if (menu) closeMenu(); else openMenu(); });
       document.body.append(btn);

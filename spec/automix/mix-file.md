@@ -12,7 +12,7 @@ Test: `node --test scripts/test_automix_plan.mjs` (the "mix file" tests).
 
 ## Rules
 
-1. **[all] The file.** One JSON object, UTF-8, named `<anything>.vivimix.json`:
+1. **[all] The file.** One JSON object, UTF-8, named `<anything>.json` (any name; the `format` field, not the name, says it is a mix file):
 
    ```json
    { "format": "vivi-mix", "version": 1, "mixes": [ … ] }
@@ -135,8 +135,8 @@ Test: `node --test scripts/test_automix_plan.mjs` (the "mix file" tests).
    override), written with `writeMixFile`: the override as saved without `engine` and `savedAt`, its
    `gridBpm` as saved, else this app's tempo for A when A is analysed, and the songs' titles and
    artists where the app knows them. The file name is
-   `<from>-<to>.vivimix.json` for one mix (the titles in lower case, letters and digits only, 24 at
-   most each), `vivimusic-mixes-<YYYY-MM-DD>.vivimix.json` for more. An export imported into any of
+   `<from>-<to>.json` for one mix (the titles in lower case, letters and digits only, 24 at
+   most each), `mixes-<YYYY-MM-DD>.json` for more. An export imported into any of
    the three apps gives the same normalized override back (the round trip).
 
 9. **[each app] Where.**

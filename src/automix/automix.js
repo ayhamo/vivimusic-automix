@@ -935,15 +935,15 @@
   }
   // The window's limits as the planner clamps them (editor.md §6), in song seconds: A's mix-out from
   // the earliest it can still start (with the tempo ramp before a blend) to where the window ends with
-  // A's music; B's mix-in from 0 to where the window ends 10 s before B's end. from: A's analysis with
+  // A's real end (length − 0.3: a placed window may run through A's fading outro, as Spotify's do); B's mix-in from 0 to where the window ends 10 s before B's end. from: A's analysis with
   // the playing length; earliest: the playhead plus the hand-over lead.
   function windowLimits(m, from, to, earliest) {
     const blend = m?.style === 'blend' && m.beatSec > 0 && m.bars > 0;
     const outSpan = blend ? m.bars * 4 * m.beatSec : m?.durationSec || 0;
     const inSpan = blend ? outSpan * (m.glide?.q ? 1 / m.glide.q : (m.rate || 1) / (m.outRate || 1)) : outSpan;
-    const dur = from?.durationSec || 0, end = from ? musicEnd(from).durationSec : 0;
+    const dur = from?.durationSec || 0;
     const lo = Math.max(0, earliest || 0) + (blend ? m.rampSongSec || 0 : 0);
-    const hi = blend ? Math.min(end, dur - 0.3) - outSpan : end - 0.3 - outSpan;
+    const hi = dur - 0.3 - outSpan;
     return { out: [lo, Math.max(lo, hi)], in: [0, Math.max(0, (to?.durationSec || 0) - 10 - inSpan)] };
   }
   // A 10 ms nudge of one side's window position (editor.md §6): { pos } or { refused: 'max' | 'lo' | 'hi' }.
@@ -987,7 +987,8 @@
     const outW = resolveWindow(ov?.window?.out, null), inW = resolveWindow(ov?.window?.in, null);
     const bars = ov?.bars || PRESET_BARS[ov?.preset] || null;
     if (!bars && !outW && !inW) return base;
-    const end = musicEnd(cur).durationSec, room = end - 0.3 - earliest;
+    // a placed mix-out may run to A's real end; a length alone stays within A's music
+    const end = outW ? cur.durationSec : musicEnd(cur).durationSec, room = end - 0.3 - earliest;
     if (room < 1) { warnings?.push('no room left in this song for the window asked for'); return base; }
     const want = bars && fromGrid ? bars * fromGrid.barSec : base.durationSec || fallbackSec;
     if (bars && fromGrid && want > room + 0.01) warnings?.push(`${bars} bars don't fit before the end: ${room.toFixed(1)} s`);
@@ -1118,9 +1119,10 @@
     if (mixOut < pos + rampSongSec) mixOut = phraseAtOrAfter(fromGrid, first);   // too late for the natural point: the next phrase
     if (mixOut < first) mixOut = downbeatAtOrAfter(fromGrid, first);
     // the editor's window (editor.md §6): A's mix-out on A's end grid, clamped to what can still play
+    // (up to A's real end, not its music end: a saved or imported window may run through the outro)
     const wOut = resolveWindow(pick?.window?.out, fromGrid);
     if (wOut && wOut.sec < first - 0.01) warnings.push(playedNote(wOut.sec));
-    else if (wOut) mixOut = clampWindow(wOut.sec, first, Math.max(first, Math.min(musicEnd(cur).durationSec, cur.durationSec - 0.3) - outSpan), 'the mix-out', warnings, fromGrid);
+    else if (wOut) mixOut = clampWindow(wOut.sec, first, Math.max(first, cur.durationSec - 0.3 - outSpan), 'the mix-out', warnings, fromGrid);
     if (wOut?.moved) warnings.push('the mix-out moved with a new beat grid');
     if (mixOut + outSpan > cur.durationSec - 0.3) {
       if (forced) { warnings.push('too close to the end for the window asked for'); return overlap(cur, next, fromGrid, pick, earliest, 'too close to the end for a blend', warnings); }

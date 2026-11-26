@@ -354,10 +354,10 @@
     const fileBtn = (text, title, fn) => { const b = el('button', 'vivi-amx-ov-chip', text); b.type = 'button'; b.title = title; b.addEventListener('click', () => { if (!b.disabled) fn(); }); fileChips.append(b); return b; };
     const fileInput = el('input');
     fileInput.type = 'file';
-    fileInput.accept = '.json,.vivimix,application/json';
+    fileInput.accept = '.json,application/json';
     fileInput.hidden = true;
     fileInput.addEventListener('change', () => { const f = fileInput.files?.[0]; fileInput.value = ''; if (f) importFile(f); });
-    const importBtn = fileBtn('Import…', 'Add the mixes of a .vivimix.json file or a Spotify mix export (spotify-mix-export)', () => fileInput.click());
+    const importBtn = fileBtn('Import…', 'Add the mixes of a mix file (.json) or a Spotify mix export (spotify-mix-export)', () => fileInput.click());
     const exportPair = fileBtn('Export this pair', "Save these two songs' edit as a mix file", () => exportMixes(true));
     const exportAll = fileBtn('Export all', 'Save every edited pair as one mix file', () => exportMixes(false));
     const playMixes = fileBtn('Play these mixes', "Queue the last imported file's songs in its order and play them", playImported);
@@ -498,7 +498,7 @@
     return A().windowLimits(s.mix, from, A().get(s.toId), s.earliest)[side];
   }
   const LIMIT_WHY = {
-    out: ['A has already played up to there', "the window has to end before A's music does"],
+    out: ['A has already played up to there', "the window has to end before A does"],
     in: ["that is B's start", "the window has to end 10 s before B's end"],
   };
   function dragMove(e) {
@@ -909,7 +909,7 @@
     if (!file.mixes.length) { fileSay('Nothing to export: no valid edit.'); return; }
     const slug = (t) => String(t || '').toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '').slice(0, 24) || 'song';
     const one = file.mixes.length === 1 ? file.mixes[0] : null;
-    const fname = (one ? `${slug(one.from.title || one.from.videoId)}-${slug(one.to.title || one.to.videoId)}` : `vivimusic-mixes-${new Date().toISOString().slice(0, 10)}`) + '.vivimix.json';
+    const fname = (one ? `${slug(one.from.title || one.from.videoId)}-${slug(one.to.title || one.to.videoId)}` : `mixes-${new Date().toISOString().slice(0, 10)}`) + '.json';
     const url = URL.createObjectURL(new Blob([JSON.stringify(file, null, 2) + '\n'], { type: 'application/json' }));
     const a = el('a');
     a.href = url;

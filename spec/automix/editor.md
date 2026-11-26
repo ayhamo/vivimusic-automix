@@ -293,27 +293,29 @@ from `bars`.
     - BitChord: its own value, stated in its port.
     editor-cases.json pins none of them: its `plans` give `earliest` as a fixture input (pos + 4.5 s),
     and they pass with a 6.5 s lead too.
-  - A's music end = `contentEndSec`, when that is more than 1 s before A's length; at most 20 s are
-    cut (`musicEnd`).
+  - A's end = A's length − 0.3, not its music end (`contentEndSec`): a placed window (dragged,
+    nudged, saved or imported) may run through A's fading outro, as Spotify's mixes do (ruled
+    2026-11-26 [all], on Lush Life → Lean On: Spotify's mix-out 176.4 s was moved to 163.4 s).
+    Only a length asked for without a window still has to fit before A's music end (`musicEnd`:
+    `contentEndSec` when that is more than 1 s before A's length, cutting at most 20 s).
   - For a blend (`style: blend`, with `bars` and `beatSec`): A's span = bars × 4 × beatSec, and B's
     span = A's span × (`rate` / `outRate`), or ÷ `glide.q` for a glide.
   - For anything else, both spans are the plan's `durationSec`.
 - **A's mix-out:**
   - from `earliest`, plus `rampSongSec` for a blend;
-  - up to min(music end, length − 0.3) − A's span for a blend, or music end − 0.3 − span otherwise
-    (never below the lower limit).
+  - up to length − 0.3 − A's span (never below the lower limit).
 - **B's mix-in:** from 0 up to B's length − 10 − B's span (never below 0).
 - **The readout's reasons:** "· held: " plus one of these:
   - "A has already played up to there" (A, low);
-  - "the window has to end before A's music does" (A, high);
+  - "the window has to end before A does" (A, high);
   - "that is B's start" (B, low);
   - "the window has to end 10 s before B's end" (B, high).
 - A snap that lands past a limit moves one step (a bar, or a beat with Shift or long-press) back
   inside.
 
 What the limits are, in words:
-- A's mix-out: no earlier than the planner's `earliest`, and late enough that the window ends before
-  A's music does (`contentEndSec`, else the duration).
+- A's mix-out: no earlier than the planner's `earliest`, and early enough that the window ends 0.3 s
+  before A's end (its length, even past where its music fades).
 - B's mix-in: 0 or later, the window ending at least 10 s before B's end.
 - A saved position past a limit moves to the nearest downbeat inside it (the clamped second itself
   when the song has no grid there), with the reason shown.
