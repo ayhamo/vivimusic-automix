@@ -295,5 +295,21 @@ const cacheWith = (maxBytes, st = fakeStorage(), c = fakeCache()) => ({ st, c, F
   check('FETCH: a download dropped mid-flight (REFRESH) is handed over but not kept', [rf.ok, got.bytes?.byteLength, (await files.stats()).files], [true, 500, 0]);
 }
 
+{
+  // (audit 2026-11-26) the file redirected to this machine or off https: refused like a bad row, nothing kept
+  const st = fakeStorage({ addonsEnabled: true, addonsList: [{ id: 'idA', base: 'https://a.example/SECRET-A', name: 'A', host: 'a.example' }] });
+  const c = fakeCache();
+  const files = FC.create({ open: () => c, storage: st, maxBytes: async () => 512e6, now: () => ++T });
+  const client = {
+    health: () => ({}),
+    find: async (song, addons) => ({ found: addons.map((a) => ({ addon: { ...a, name: a.id, host: 'a.example' }, rows: [{ id: 'r1' }] })), tried: [] }),
+    open: async (found) => ({ addon: { ...found[0].addon }, row: found[0].rows[0], stream: { url: 'https://cdn.example/f', transport: 'file', codec: 'flac' }, tried: [] }),
+  };
+  const S = A.create({ storage: st, client, files, fetch: async () => ({ url: 'http://127.0.0.1:8080/admin', ok: true, status: 200, headers: { get: () => null }, arrayBuffer: async () => bytes(100) }) });
+  const f = await S.handle({ type: 'VIVI_ADDONS_FIND', song: { title: 'Hop', artist: 'X', durationSec: 200 } });
+  await S.handle({ type: 'VIVI_ADDONS_OPEN', ticket: f.ticket });
+  const got = await S.handle({ type: 'VIVI_ADDONS_FETCH', ticket: f.ticket });
+  check('FETCH: redirected off https: refused, no bytes, nothing cached', [got.none, got.refused, got.bytes, (await files.stats()).files], ['the file was redirected: not https', true, undefined, 0]);
+}
 console.log(failed ? `\n${failed} failed` : '\nall passed');
 process.exit(failed ? 1 : 0);

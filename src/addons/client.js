@@ -40,6 +40,17 @@
   const num = (v) => { const n = typeof v === 'number' ? v : parseFloat(v); return Number.isFinite(n) ? n : null; };
   const redact = (u) => { try { const x = new URL(u); return x.host; } catch { return '(addon)'; } };
   // any URL inside a text (an error message, say) as its host: links hold tokens
+  // A place a remote addon may not send the background (§1, §4: https only, never this machine). Checked on
+  // the answer's final URL too: an extension's fetch can't read a redirect's Location (redirect: 'manual' gives
+  // an opaque answer), so a hop to such a place is refused before anything of its answer is read or used.
+  // (An addon on this machine, the tests' mock server, may use plain http on it.)
+  const isLocal = (u) => /^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(:\d+)?(\/|$)/i.test(text(u));
+  function offLimits(base, url) {
+    if (!url || !base || isLocal(base)) return null;
+    if (!/^https:/i.test(url)) return 'not https';
+    if (isLocal(url)) return 'points at this machine';
+    return null;
+  }
   const scrub = (t) => text(t).replace(/https?:\/\/[^\s'"<>)]+/gi, (u) => redact(u));
 
   class AddonError extends Error {
@@ -173,10 +184,16 @@
         const timer = setTimeout(() => ctl.abort(), TIMEOUT_MS);   // (until the body is read too)
         try {
           r = await doFetch(url, { headers: { Accept: 'application/json' }, signal: ctl.signal, credentials: 'omit', cache: 'no-store' });
+          const off = offLimits(base, r.url);
+          if (off) { try { await r.body?.cancel?.(); } catch { /* gone */ } throw new AddonError('error', `redirected: ${off}`); }
           if (r.status < 400 && r.status !== 429) {
             const b = await readCapped(r, JSON_MAX_BYTES);
             if (!b) throw new AddonError('error', 'answer too big');
             body = new TextDecoder().decode(b);
+          } else if (r.status >= 400 && r.status < 500 && r.status !== 404 && r.status !== 429) {
+            // (a refusal's detail: read while the timeout still runs, and capped)
+            const b = await readCapped(r, 16384).catch(() => null);
+            body = b ? new TextDecoder().decode(b) : '';
           }
         } catch (e) {
           if (e instanceof AddonError) throw e;
@@ -193,7 +210,7 @@
         if (r.status >= 500) throw new AddonError('down', `server error (${r.status})`, r.status);
         if (r.status >= 400) {
           let detail = '';
-          try { detail = text(JSON.parse(await r.text())?.detail).slice(0, 120); } catch { /* not JSON */ }
+          try { detail = text(JSON.parse(body || '')?.detail).slice(0, 120); } catch { /* not JSON */ }
           throw new AddonError('error', `refused (${r.status})${detail ? ': ' + detail : ''}`, r.status);
         }
         if (!body.trim()) throw new AddonError('error', 'empty answer', r.status);
@@ -310,8 +327,8 @@
     }
     // a plain-http file on this machine only from an addon that is on it too (the tests' mock server):
     // a remote addon may not point the background at localhost
-    const isLocal = (u) => /^https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?(\/|$)/i.test(u);
-    function local(base, s) { return s.url && /^http:/i.test(s.url) && !isLocal(base) ? { miss: 'not https' } : s; }
+    // (an https link to this machine too: offLimits)
+    function local(base, s) { const off = s.url && offLimits(base, s.url); return off ? { miss: off } : s; }
     function streamWait(addon, man) { return budgetOf(baseOf(addon.base), man).wait; }
     function stream(addon, row, man) {
       // (counted and asked on the addon's base: a pasted link's trailing '/' is the same addon, §4a)
@@ -344,16 +361,18 @@
     // §7: Range bytes=0-0 (4 s); the file must hold the whole song
     // (fetch itself adds Accept-Encoding: identity to a Range request)
     // a server error or timeout on the probe is read once more before the row counts as refused (a passing fault)
-    async function probe(url, row, songSec, slackSec, headers = {}) {
-      const p = await probeOnce(url, row, songSec, slackSec, headers);
-      return p.retry ? probeOnce(url, row, songSec, slackSec, headers).then((q) => (q.retry ? { ok: false, why: q.why } : q)) : p;
+    async function probe(url, row, songSec, slackSec, headers = {}, base = null) {
+      const p = await probeOnce(url, row, songSec, slackSec, headers, base);
+      return p.retry ? probeOnce(url, row, songSec, slackSec, headers, base).then((q) => (q.retry ? { ok: false, why: q.why } : q)) : p;
     }
-    async function probeOnce(url, row, songSec, slackSec, headers) {
+    async function probeOnce(url, row, songSec, slackSec, headers, base) {
       const ctl = new AbortController();
       const timer = setTimeout(() => ctl.abort(), PROBE_TIMEOUT_MS);
       try {
         const r = await doFetch(url, { headers: { ...headers, Range: 'bytes=0-0' }, signal: ctl.signal, credentials: 'omit', cache: 'no-store' });
         try { await r.body?.cancel?.(); } catch { /* already read */ }
+        const off = offLimits(base, r.url);
+        if (off) return { ok: false, why: `stream redirected: ${off}` };
         if (r.status >= 500 || r.status === 408) return { ok: false, retry: true, why: `stream answered ${r.status}` };
         if (r.status >= 400) return { ok: false, why: `stream answered ${r.status}` };
         return Pick.probeVerdict({ status: r.status, contentRange: r.headers.get('content-range'), contentLength: r.headers.get('content-length') }, row, songSec, slackSec);
@@ -417,7 +436,7 @@
           const want = accept ? accept(s) : true;
           if (want !== true) { tried.push({ addon: addon.host, row: row.id, why: want || 'not wanted' }); continue; }
           if (over()) return null;
-          const p = await probe(s.url, { ...row, tier: s.tier ?? row.tier, kbps: s.bitrate ?? row.kbps }, target.durationSec, slackSec, s.headers);
+          const p = await probe(s.url, { ...row, tier: s.tier ?? row.tier, kbps: s.bitrate ?? row.kbps }, target.durationSec, slackSec, s.headers, addon.base);
           if (!p.ok) { tried.push({ addon: addon.host, row: row.id, why: p.why }); continue; }
           note(addon.base, true, 'ok', now() - t0);
           log(`addons: ${man.name} (${addon.host}) has it: row ${row.id}, ${s.codec || '?'}${s.sampleRate ? ' ' + s.sampleRate / 1000 + ' kHz' : ''}${s.bitDepth ? '/' + s.bitDepth : ''}`);
@@ -483,10 +502,12 @@
     }
 
     const health = () => Object.fromEntries([...healthOf].map(([b, h]) => [redact(b), { ...h }]));
-    return { discover, manifest, search, stream, streamWait, probe, find, open, resolve, forget, health, paramsFor, readStream };
+    // one addon's health, by its base: two addons on one host (two TorBox tokens) each their own (§2)
+    const healthFor = (base) => { const h = healthOf.get(base) ?? healthOf.get(baseOf(base)); return h ? { ...h } : null; };
+    return { discover, manifest, search, stream, streamWait, probe, find, open, resolve, forget, health, healthFor, paramsFor, readStream };
   }
 
-  const api = { create, baseOf, sameAddon, paramsFor, readManifest, redact, AddonError, scrub };
+  const api = { create, baseOf, sameAddon, paramsFor, readManifest, redact, AddonError, scrub, offLimits };
   globalThis.__viviAddonClient = api;
   if (typeof module === 'object' && module.exports) module.exports = api;
 })();

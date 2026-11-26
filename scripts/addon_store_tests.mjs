@@ -160,6 +160,19 @@ client.manifest = async (base) => /b\.example/.test(base) ? { settings: [{ key: 
   check('gate: the tab may report an ISRC', await send({ type: 'VIVI_ADDONS_ISRC', videoId: 'v1', isrc: 'USUM71900001' }, page), { ok: true });
   check('gate: the tab may not change the list', (await send({ type: 'VIVI_ADDONS_REMOVE', id: 'x' }, page)).error, 'Only the add-on settings can do that.');
 }
+{
+  // (audit 2026-11-26) LIST asks no manifest for an addon that is off, and waits on none past 2 s
+  const asked = [];
+  const was = client.manifest;
+  client.manifest = (base) => { asked.push(new URL(base).host); return /b\.example/.test(base) ? new Promise(() => {}) : was(base); };
+  const d = storage.data.addonsList.find((a) => a.host === 'd.example');
+  await msg({ type: 'VIVI_ADDONS_TOGGLE', id: d.id, enabled: false });
+  const t0 = Date.now();
+  const L = await msg({ type: 'VIVI_ADDONS_LIST' });
+  check('LIST: no manifest for an addon that is off; a host that never answers holds it 2 s at most', [asked.includes('d.example'), asked.includes('b.example'), Date.now() - t0 < 3000, 'qualities' in L.addons.find((a) => a.host === 'b.example')], [false, true, true, false]);
+  await msg({ type: 'VIVI_ADDONS_TOGGLE', id: d.id, enabled: true });
+  client.manifest = was;
+}
 
 console.log(failed ? `${failed} failed` : 'all passed');
 process.exit(failed ? 1 : 0);

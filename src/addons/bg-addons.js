@@ -44,12 +44,14 @@
   const DEFAULTS = { addonsEnabled: false, addonsList: [], addonsTier: 'LOSSLESS', addonsSlackSec: 5, addonsCacheMB: 512 };
   const CACHE_SIZES = [0, 256, 512, 1024, 2048];   // MB
   const MAX_ADDONS = 12;
+  const LIST_MANIFEST_MS = 2000;
 
   function create({ storage, client = C.create({ log: (...a) => console.info('[vivi addons]', ...a) }), newId = () => Math.random().toString(36).slice(2, 10), fetch: doFetch = globalThis.fetch?.bind(globalThis), files = null } = {}) {
     const get = () => storage.get(DEFAULTS);
     const setList = (addonsList) => storage.set({ addonsList });
     // what leaves the background: never the base URL
-    const shown = (a, health) => ({ id: a.id, name: a.name, host: a.host, enabled: a.enabled !== false, health: healthOf(health[a.host]), quality: a.quality ?? null });
+    const shown = (a, health) => ({ id: a.id, name: a.name, host: a.host, enabled: a.enabled !== false,
+      health: healthOf(client.healthFor ? client.healthFor(a.base) : health[a.host]), quality: a.quality ?? null });
     function healthOf(h) {
       if (!h) return { state: 'unused' };
       if (h.coolUntil && h.coolUntil > Date.now()) return { state: 'resting', until: h.coolUntil, last: h.last || null };
@@ -61,8 +63,12 @@
       const s = await get();
       const health = client.health();
       const cache = files ? await files.stats().catch(() => null) : null;
-      // 8.4.2: each addon's quality options, from its manifest (cached 10 min), shown with 2 or more
-      const qualities = await Promise.all(s.addonsList.map((a) => Promise.resolve(client.manifest?.(a.base)).then(qualityOptions, () => null)));
+      // 8.4.2: each addon's quality options, from its manifest (cached 10 min), shown with 2 or more. Only for
+      // an addon that is on (addons on, and it on), and none waited on past LIST_MANIFEST_MS: a host that is
+      // down mustn't hold the popup (its options show once the manifest is in the cache)
+      const on = s.addonsEnabled === true;
+      const qualities = await Promise.all(s.addonsList.map((a) => (!on || a.enabled === false || !client.manifest ? null
+        : Promise.race([Promise.resolve(client.manifest(a.base)).then(qualityOptions, () => null), new Promise((r) => setTimeout(() => r(null), LIST_MANIFEST_MS))]))));
       return { enabled: s.addonsEnabled === true, tier: s.addonsTier, slackSec: s.addonsSlackSec, cacheMB: s.addonsCacheMB, cache,
         addons: s.addonsList.map((a, i) => ({ ...shown(a, health), ...(qualities[i] ? { qualities: qualities[i] } : {}) })) };
     }
@@ -339,6 +345,9 @@
       const timer = setTimeout(() => ctl.abort(), FILE_TIMEOUT_MS);
       try {
         const r = await doFetch(s.url, { headers: { ...(s.headers || {}) }, signal: ctl.signal, credentials: 'omit', cache: 'no-store' });
+        // (redirected off https, or to this machine: refused before its body is read, like a bad row; client.offLimits)
+        const off = C.offLimits?.(got.addon.base, r.url);
+        if (off) { try { await r.body?.cancel(); } catch { /* gone */ } return { none: `the file was redirected: ${off}`, refused: true }; }
         if (!r.ok) return { none: `the file answered ${r.status}` };
         const size = Number(r.headers.get('content-length'));
         if (size > FILE_MAX_BYTES) { try { await r.body?.cancel(); } catch { /* gone */ } return { none: `the file is too big (${Math.round(size / 1e6)} MB)` }; }
