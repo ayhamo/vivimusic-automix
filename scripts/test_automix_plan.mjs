@@ -141,15 +141,24 @@ test('Overview pick: filter mix and fade on a pair that would blend', () => {
   const A = loadAutomix('auto');
   const f = pickOf(A, song(120, 200), song(120, 200), { style: 'filter', bars: 16 });
   assert.equal(f.style, 'filter');
-  assert.equal(f.bars, 8, 'a filter mix is at most 8 bars');
+  assert.equal(f.bars, 16, 'a filter mix picked with a length plays it (no 8-bar cap, ruled 2026-11-26)');
   const x = pickOf(A, song(120, 200), song(120, 200), { style: 'crossfade', bars: null });
   assert.equal(x.style, 'crossfade');
   assert.ok(x.mixOutTrackTime + x.durationSec <= 200, 'ends with the song');
 });
 
-test('Overview pick: a picked length still fits the song (a weak grid shortens it)', () => {
+test('Overview pick: a picked length is kept on a weak grid, without beat match (ruled 2026-11-26); Auto alone still shortens', () => {
   const A = loadAutomix('auto');
-  assert.equal(pickOf(A, song(120, 200, { conf: 0.3 }), song(120, 200), { style: 'blend', bars: 16 }).bars, 4);
+  for (const conf of [0.3, 0.5]) {
+    const p = pickOf(A, song(120, 200, { conf }), song(120, 200), { style: 'blend', bars: 16 });
+    assert.equal(p.style, 'crossfade');
+    assert.ok(Math.abs(p.durationSec - 16 * barSec(120)) < 1e-6, `${p.durationSec}`);
+    assert.match(p.warnings.join(' '), /beat grid is too weak to beat-match 16 bars: plays without beat match/);
+  }
+  // a length the grid can hold still beat-matches
+  assert.equal(pickOf(A, song(120, 200, { conf: 0.5 }), song(120, 200), { style: 'blend', bars: 8 }).style, 'blend');
+  // with no length picked, Automix's own rule: shortened
+  assert.equal(planOf(loadAutomix(16), song(120, 200, { conf: 0.3 }), song(120, 200)).bars, 4);
 });
 
 test('Overview pick: a picked length beats the key-aware short blend', () => {
@@ -207,12 +216,23 @@ test('Editor: beat match Off overlaps at the length asked for, songs at their ow
   assert.equal(q.fallback, true);
 });
 
-test('Editor: Sync out of range (tempos 11% apart) plays Off and says why', () => {
+test('Editor: Sync or Glide picked beat-matches however far apart the tempos (ruled 2026-11-26)', () => {
+  for (const v of [1, 2, 3]) {
+    const A = loadAutomix('auto', { automixVersion: v });
+    for (const [a, b] of [[100, 111], [100, 125], [128, 95]]) {
+      for (const bm of ['sync', 'glide']) {
+        const p = planPick(A, song(a, 200), song(b, 200), { preset: 'smooth', beatMatch: bm, bars: 8 });
+        assert.equal(p.style, 'blend', `v${v} ${a}->${b} ${bm}: ${p.style} ${p.reason}`);
+        assert.doesNotMatch((p.warnings || []).join(' '), /without beat match/);
+        assert.ok(Number.isFinite(p.durationSec) && p.durationSec > 0 && Number.isFinite(p.rate) && p.rate > 0);
+        assert.ok(p.mixOutTrackTime + 8 * 4 * 60 / a <= 200 - 0.3 + 1e-6);
+        if (bm === 'glide') assert.ok(p.glide?.q > 0);
+      }
+    }
+  }
+  // Auto beat match keeps Automix's own tempo limits
   const A = loadAutomix('auto', { automixVersion: 3 });
-  const p = planPick(A, song(100, 200), song(111, 200), { preset: 'smooth', beatMatch: 'sync', bars: 8 });
-  assert.equal(p.style, 'crossfade');
-  assert.match(p.warnings.join(' '), /11% apart: Sync stretches at most 8%/);
-  assert.equal(p.preset, 'smooth');
+  assert.match((planPick(A, song(100, 200), song(111, 200), { preset: 'smooth', bars: 8 }).warnings || []).join(' '), /without beat match/);
 });
 
 test('Editor: Glide in range glides; Sync holds one rate', () => {
@@ -301,11 +321,29 @@ test('Editor: a style gate warns instead of refusing (sub-bass veto)', () => {
   assert.match(p.warnings.join(' '), /sub-bass 1\.00 apart/);
 });
 
-test('Editor: a length alone on a vetoed pair says why it is not used', () => {
+test('Editor: Auto + a length: Automix picks the move, and the move plays the length (ruled 2026-11-26)', () => {
   const A = loadAutomix('auto', { automixVersion: 3 });
+  const bar = barSec(120);
+  // a vetoed pair: still Automix's hand-over, now 16 bars long, ending where it would have
   const p = planPick(A, song(120, 200, { sub: 0 }), song(120, 200, { sub: 1 }), { bars: 16 });
-  assert.ok(p.handoff, 'still the hand-over: a length alone is not forced');
-  assert.match(p.warnings.join(' '), /^16 bars not used: different sub-bass/);
+  assert.ok(p.handoff, 'still the hand-over: Automix picks the move');
+  assert.ok(Math.abs(p.durationSec - 16 * bar) < 1e-6, `${p.durationSec}`);
+  assert.equal(p.warnings, undefined);
+  // tempos too far apart: Automix's own move (filter mix, echo out or hand-over) at 16 bars
+  const q = planPick(A, song(100, 200), song(125, 200), { bars: 16 });
+  assert.notEqual(q.style, 'loop');
+  assert.ok(Math.abs(q.durationSec - 16 * barSec(100)) < 1e-6, `${q.style} ${q.shape} ${q.durationSec}`);
+  // no intro to blend over: still Automix's drop-in, 16 bars long
+  const d = planPick(A, song(120, 200), song(120, 200), { bars: 16 });
+  assert.equal(d.shape, 'dropin');
+  assert.equal(d.bars, 16);
+  assert.ok(Math.abs(d.durationSec - 16 * bar) < 1e-6);
+  // plain Auto with no length stays Automix's: the short hand-over
+  const r = planPick(A, song(120, 200, { sub: 0 }), song(120, 200, { sub: 1 }), { preset: 'auto' });
+  assert.ok(r.durationSec < 4, `${r.durationSec}`);
+  // no tempo on A: the length can't be laid out, and says so
+  const n = planPick(A, { ...song(120, 200), bpm: 0, beatIntervalSec: 0 }, song(120, 200), { bars: 16 });
+  assert.match((n.warnings || []).join(' '), /16 bars not used: .*no tempo for this song/);
 });
 
 test('Editor: Loop drops beat match, and a nudge that rounds to 0 is not saved', () => {
@@ -322,7 +360,7 @@ test('Editor: windowLimits are where the planner clamps the window', () => {
   const lim = A.windowLimits(m, cur, next, 24.5);
   const span = m.bars * barSec(120);
   assert.deepEqual([...lim.out], [24.5 + (m.rampSongSec || 0), 200 - 0.3 - span]);
-  assert.deepEqual([...lim.in], [0, 180 - 10 - span]);
+  assert.deepEqual([...lim.in], [0, 180 - 0.3 - span]);
   // a saved mix-out past the end lands inside them
   const p = planPick(A, cur, next, { preset: 'blend', bars: m.bars, window: { out: { bar: 99, sec: 0.4 + 99 * barSec(120) } } });
   assert.ok(p.mixOutTrackTime <= lim.out[1] + 1e-6 && p.mixOutTrackTime >= lim.out[0]);
@@ -379,14 +417,38 @@ test('No effect three times in a row: two filter mixes heard, the third pair get
   assert.deepEqual([...A.recentMoves()], ['filter', 'filter', 'blend']);
 });
 
-test('Editor: a length over a third of either song is shortened, and says so', () => {
+test('Editor: a length picked plays as picked, over a third of either song too (ruled 2026-11-26)', () => {
   const A = loadAutomix('auto', { automixVersion: 3 });
-  const p = planPick(A, song(120, 60), song(120, 200), { preset: 'blend', bars: 16 });
-  assert.equal(p.bars, 10);
-  assert.match(p.warnings.join(' '), /shortened to 10 bars \(20\.0 s\): an overlap can't be longer than a third of either song/);
-  const q = planPick(A, song(120, 200), song(120, 40), { preset: 'blend', bars: 16 });
-  assert.match(q.warnings.join(' '), /shortened to 6 bars/);
-  assert.doesNotMatch((planPick(A, song(120, 200), song(120, 200), { preset: 'blend', bars: 16 }).warnings || []).join(' '), /shortened/);
+  const p = planPick(A, song(120, 90), song(120, 200), { preset: 'blend', bars: 16 });
+  assert.equal(p.bars, 16);
+  assert.doesNotMatch((p.warnings || []).join(' '), /shortened/);
+  const q = planPick(A, song(120, 200), song(120, 60), { preset: 'blend', bars: 16 });
+  assert.equal(q.bars, 16);
+  assert.doesNotMatch((q.warnings || []).join(' '), /shortened/);
+});
+
+test('Editor: a filter mix picked with 16 bars plays 16; Automix’s own filter mix keeps its 8-bar cap (ruled 2026-11-26)', () => {
+  const A = loadAutomix('auto', { automixVersion: 3 });
+  const p = planPick(A, song(120, 200), song(120, 200), { style: 'filter', bars: 16 });
+  assert.equal(p.style, 'filter');
+  assert.equal(p.bars, 16);
+  const q = planPick(A, song(120, 200), song(120, 200), { style: 'filter', bars: 4 });
+  assert.equal(q.bars, 4);
+});
+
+test('Editor: a placed mix-in may end 0.3 s before B does, not 10 s (ruled 2026-11-26)', () => {
+  const A = loadAutomix('auto');
+  const cur = song(120, 200), next = song(120, 180), bar = barSec(120);
+  const m = planOf(A, cur, next);
+  assert.ok(Math.abs(A.windowLimits(m, cur, next, 24.5).in[1] - (180 - 0.3 - m.bars * bar)) < 1e-9);
+  // 8 bars (16 s) in at 160.4 s end at 176.4 s: under 10 s before B's end, kept as placed
+  const p = planPick(A, cur, next, { preset: 'blend', bars: 8, window: { in: { bar: 80, sec: 0.4 + 80 * bar } } });
+  assert.ok(Math.abs(p.mixInTrackTime - (0.4 + 80 * bar)) < 1e-6, `${p.mixInTrackTime}`);
+  assert.equal(p.warnings, undefined);
+  // in at 168.4 s would end past B: moved back inside
+  const r = planPick(A, cur, next, { preset: 'blend', bars: 8, window: { in: { bar: 84, sec: 0.4 + 84 * bar } } });
+  assert.ok(r.mixInTrackTime + 16 <= 180 - 0.3 + 1e-6 && r.mixInTrackTime > 150, `${r.mixInTrackTime}`);
+  assert.match(r.warnings.join(' '), /mix-in moved/);
 });
 
 test('Editor: a retired preset plays as Automatic, and says so', () => {

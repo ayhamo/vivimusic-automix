@@ -217,11 +217,11 @@ ending at bar 4).
 | Glide | B's tempo goes from A's to its own across the window |
 | Off | both at their own tempo; a plain overlap with no snapping to beats |
 
-- **The tempo range:** Sync and Glide stretch at most 8% (the planner's `V2_MAX_STRETCH`, after
-  folding half and double time).
-- **Out of range:** the pair plays Off, and the editor says why ("tempos 11% apart: Sync stretches at
-  most 8%, so this plays without beat match"). The override keeps Sync, so a re-analysis that brings
-  the tempos into range brings Sync back.
+- **No tempo range** (ruled 2026-11-26 [all]: only Automix's own choices have rules): Sync and
+  Glide, picked, always beat-match, however far apart the tempos (after folding half and double
+  time, at most about 41%). Until then they stretched at most 8% and played Off past it. Auto keeps
+  Automix's own limits (`V2_MAX_STRETCH`, `stretchAllowed`): with beat match Auto a pair out of
+  them plays without beat match, as before.
 
 ## 5. Echo out (question 4)
 
@@ -304,27 +304,31 @@ from `bars`.
 - **A's mix-out:**
   - from `earliest`, plus `rampSongSec` for a blend;
   - up to length − 0.3 − A's span (never below the lower limit).
-- **B's mix-in:** from 0 up to B's length − 10 − B's span (never below 0).
+- **B's mix-in:** from 0 up to B's length − 0.3 − B's span (never below 0). (It was − 10 until
+  2026-11-26; ruled [all]: a placed or imported window is played as placed, only the songs' ends
+  bound it.)
 - **The readout's reasons:** "· held: " plus one of these:
   - "A has already played up to there" (A, low);
   - "the window has to end before A does" (A, high);
   - "that is B's start" (B, low);
-  - "the window has to end 10 s before B's end" (B, high).
+  - "the window has to end before B does" (B, high).
 - A snap that lands past a limit moves one step (a bar, or a beat with Shift or long-press) back
   inside.
 
 What the limits are, in words:
 - A's mix-out: no earlier than the planner's `earliest`, and early enough that the window ends 0.3 s
   before A's end (its length, even past where its music fades).
-- B's mix-in: 0 or later, the window ending at least 10 s before B's end.
+- B's mix-in: 0 or later, the window ending 0.3 s before B's end.
 - A saved position past a limit moves to the nearest downbeat inside it (the clamped second itself
   when the song has no grid there), with the reason shown.
 - A saved mix-out the playhead has already passed isn't moved to "now": the planner's own mix-out
   plays instead, with "the mix-out at X s has already played" shown.
 - A length that doesn't fit before A's end plays as long as there is room, with the reason shown.
-- **Shortened:** a length picked (a preset's or "up to N bars") longer than a third of either song
-  plays as the most whole bars that fit, at least 1, with "shortened to N bars (X s): an overlap
-  can't be longer than a third of either song". Not for Loop, whose length is its own.
+- **No cap on a length picked** (ruled 2026-11-26 [all]: only Automix's own choices have rules): a
+  length picked plays as picked, however long against either song. It was shortened to a third of
+  either song before. Only the songs' ends bound it ("doesn't fit before the end", above).
+  The same for a filter mix the user picked (`family: filter`) with a length: it plays that many
+  bars, not at most 8 (`FILTER_MAX_BARS`). Automix's own filter mixes keep the 8-bar cap.
 - **A retired preset:** a saved pick naming a preset no longer offered plays as Automatic, with
   "the preset "<id>" is no longer offered: Automatic plays". The pick stays saved; its length and
   window still apply.
@@ -338,8 +342,22 @@ What the limits are, in words:
 - The first window edit of one side (a drag or a nudge) saves the other side too, where the plan has
   it at that moment. With one side saved, the planner would still move the other (B's skip cap, the
   vocal re-route), and B's mix-in could jump bars under a 10 ms nudge of A.
-- A length the plan can't use (a hand-over for the sub-bass or key gates, a drop-in's two bars, a
-  plain fade) shows "N bars not used:" and the reason, not "fit here".
+- **A length picked is kept** (ruled 2026-11-26 [all]). With a length picked, alone ("Auto, 8 bars")
+  or with a preset, Automix still picks the move and runs its gates (key, sub-bass, tempo, the
+  fallbacks), but whichever move it picks plays at that length, with no cap:
+  - a blend: never shortened by grid confidence. On a grid too weak to beat-match that many bars
+    (where Automix's own `effectiveBlendBars` would cut it: under 0.6 past 8 bars, under 0.45 past
+    4) it keeps the length and plays without beat match, as with no grid ("the beat grid is too
+    weak to beat-match N bars: plays without beat match"). Automix's own lengths keep the cut;
+  - a filter mix (no 8-bar `FILTER_MAX_BARS`), a drop-in (not its two bars), a muffle;
+  - an echo out: its echo runs the length (`echo.beats` = bars × 4, not 8 beats);
+  - a hand-over, a beatless bridge or the plain fallback: a crossfade of that length, ending where
+    the move would have ended (not 1.5 s, the bridge's own span or the fade setting).
+  Only the songs' ends bound it. A loop mix keeps its own length. Plain Auto with no length picked
+  stays wholly Automix's choice. The one move that can't take a length: a song with no tempo at all
+  (no grid and no beat interval) has no bars to lay it out on; its fallback keeps its own length and
+  shows "N bars not used: <reason> (no tempo for this song)". (Until then a length alone could be
+  replaced by a hand-over and showed "N bars not used:" with the reason.)
 - A pick from before the editor that forced the filter mix (`family: filter`) places the filter mix
   itself: a saved window shows "the saved window isn't used". Picking a preset uses it.
 - A saved mix-in isn't moved by Automix v2's kick lock (`kickLockAllowed`): the lock shifts B by

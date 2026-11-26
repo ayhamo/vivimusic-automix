@@ -499,7 +499,7 @@
   }
   const LIMIT_WHY = {
     out: ['A has already played up to there', "the window has to end before A does"],
-    in: ["that is B's start", "the window has to end 10 s before B's end"],
+    in: ["that is B's start", "the window has to end before B does"],
   };
   function dragMove(e) {
     if (pdrag) { pointMove(e); return; }

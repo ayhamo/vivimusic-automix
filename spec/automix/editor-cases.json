@@ -2162,7 +2162,7 @@
    }
   },
   {
-   "name": "a length alone on a pair with no intro (v2): the drop-in, with why the length is not used",
+   "name": "a length alone on a pair with no intro (v2): Automix's drop-in, at the length picked (ruled 2026-11-26: a length picked is kept)",
    "engine": 3,
    "out": {
     "bpm": 120,
@@ -2181,15 +2181,13 @@
    },
    "expect": {
     "style": "blend",
-    "bars": 2,
-    "durationSec": 4,
-    "mixOutTrackTime": 192.4,
+    "bars": 16,
+    "durationSec": 32,
+    "mixOutTrackTime": 164.4,
     "mixInTrackTime": 0.4,
     "glide": false,
     "kickLock": true,
-    "warnings": [
-     "16 bars not used: no intro in the next song to blend over: a drop-in on the next song's first beat"
-    ]
+    "warnings": []
    }
   },
   {

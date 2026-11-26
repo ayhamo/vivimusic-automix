@@ -375,6 +375,14 @@
   const CURATOR_BARS = 8, CURATOR_LEAD_SEC = 31, CURATOR_MIN_SONG_SEC = 120;
   let curatorAsk = false;
   const requestedBars = (cur, next, g, entrySec, filter) => pinnedBars || (barsSetting === 'auto' ? autoBars(cur, next, g, entrySec, filter) : barsSetting);
+  // A length picked (editor.md §6 "A length picked is kept", ruled 2026-11-26 [all]): whichever move
+  // Automix picks plays at it. In seconds of A: its bars on A's end grid, else on A's own tempo; null
+  // with no length picked, or for a song with no tempo at all (then the move keeps its own length).
+  const pinnedSec = (a) => {
+    if (!pinnedBars) return null;
+    const bar = gridOf(a)?.barSec || (a?.beatIntervalSec > 0 ? a.beatIntervalSec * 4 : 0);
+    return bar > 0 ? pinnedBars * bar : null;
+  };
 
   // ───────── transition planner (BitChord engine/transition-scheduler.ts) ─────────
   const MIN_GRID_CONFIDENCE = 0.2;
@@ -476,17 +484,8 @@
       if (f.note) notes.push(f.note);
       ov = f.ov;
     }
-    // an overlap is never longer than a third of either song: a longer length picked is shortened (editor.md §6)
-    const pickedBars = ov?.preset !== 'loop' ? ov?.bars || PRESET_BARS[ov?.preset] || null : null;
-    if (pickedBars && from && to) {
-      const g = editorGrid(from, 'out'), third = Math.min(durationSec, to.durationSec > 0 ? to.durationSec : Infinity) / 3;
-      const barSec = (g?.beatSec || 0) * 4;
-      if (barSec > 0 && pickedBars * barSec > third + 1e-6) {
-        const n = Math.max(1, Math.floor(third / barSec));
-        notes.push(`shortened to ${n} bar${n === 1 ? '' : 's'} (${(n * barSec).toFixed(1)} s): an overlap can't be longer than a third of either song`);
-        ov = { ...ov, bars: n };
-      }
-    }
+    // a length picked plays as picked: no cap at a third of either song (editor.md §6, ruled
+    // 2026-11-26: only Automix's own choices have rules; the songs' ends still bound it)
     fallbackSec = fadeSec > 0 ? Math.min(FALLBACK_SEC, Math.max(1, Math.round(fadeSec))) : FALLBACK_SEC;
     pinnedBars = (ov?.preset !== 'loop' && (ov?.bars || PRESET_BARS[ov?.preset])) || null;
     const sOut = speed?.out > 0 ? speed.out : 1, sIn = speed?.in > 0 ? speed.in : 1;
@@ -503,9 +502,9 @@
         if (p.style !== 'blend') p.rate = planSpeed.in;
       }
       p.curves = blendCurves(p);
-      // a length the planner didn't use (a hand-over, a drop-in's two bars): why, not "fit here" (editor.md §6)
-      if (ov?.bars && ov.preset !== 'loop' && warnings.length === notes.length && (p.handoff || p.bridge || p.fallback || (p.shape === 'dropin' && p.bars !== ov.bars))) {
-        warnings.push(`${ov.bars} bars not used: ${p.reason || 'a plain fade here'}`);
+      // a length picked is kept whatever the move (editor.md §6); only a song with no tempo can't take it
+      if (ov?.bars && ov.preset !== 'loop' && warnings.length === notes.length && pinnedSec(from) == null && (p.handoff || p.bridge || p.fallback)) {
+        warnings.push(`${ov.bars} bars not used: ${p.reason || 'a plain fade here'} (no tempo for this song)`);
       }
       if (ov && ov.preset !== 'loop') {
         if (warnings.length) p.warnings = warnings;
@@ -935,7 +934,7 @@
   }
   // The window's limits as the planner clamps them (editor.md §6), in song seconds: A's mix-out from
   // the earliest it can still start (with the tempo ramp before a blend) to where the window ends with
-  // A's real end (length − 0.3: a placed window may run through A's fading outro, as Spotify's do); B's mix-in from 0 to where the window ends 10 s before B's end. from: A's analysis with
+  // A's real end (length − 0.3: a placed window may run through A's fading outro, as Spotify's do); B's mix-in from 0 to where the window ends 0.3 s before B's end. from: A's analysis with
   // the playing length; earliest: the playhead plus the hand-over lead.
   function windowLimits(m, from, to, earliest) {
     const blend = m?.style === 'blend' && m.beatSec > 0 && m.bars > 0;
@@ -944,7 +943,7 @@
     const dur = from?.durationSec || 0;
     const lo = Math.max(0, earliest || 0) + (blend ? m.rampSongSec || 0 : 0);
     const hi = dur - 0.3 - outSpan;
-    return { out: [lo, Math.max(lo, hi)], in: [0, Math.max(0, (to?.durationSec || 0) - 10 - inSpan)] };
+    return { out: [lo, Math.max(lo, hi)], in: [0, Math.max(0, (to?.durationSec || 0) - 0.3 - inSpan)] };
   }
   // A 10 ms nudge of one side's window position (editor.md §6): { pos } or { refused: 'max' | 'lo' | 'hi' }.
   // A nudge stops at ±2 s of nudges and at the window's limits ([lo, hi] from windowLimits), as a drag
@@ -996,7 +995,7 @@
     let mixOut = hi;
     if (outW && outW.sec < earliest - 0.01) warnings?.push(playedNote(outW.sec));
     else if (outW) mixOut = clampWindow(outW.sec, earliest, hi, 'the mix-out', warnings, fromGrid);
-    const mixIn = inW ? clampWindow(inW.sec, 0, Math.max(0, next.durationSec - 10 - D), 'the mix-in', warnings, gridOf(next)) : base.mixInTrackTime;
+    const mixIn = inW ? clampWindow(inW.sec, 0, Math.max(0, next.durationSec - 0.3 - D), 'the mix-in', warnings, gridOf(next)) : base.mixInTrackTime;
     return { ...base, fallback: false, mixOutTrackTime: mixOut, durationSec: D, mixInTrackTime: mixIn, trim: loudnessTrim(cur, mixOut, D, next, mixIn, D) };
   }
   function clampWindow(t, lo, hi, what, warnings, grid) {
@@ -1033,14 +1032,9 @@
     }
     // the tempos as they play: each BPM x its song's speed (spotify-mixes.md rule 10)
     const playedRatio = (g1, g2) => foldRate((g1.bpm * (planSpeed?.out || 1)) / (g2.bpm * (planSpeed?.in || 1)));
-    if (bm === 'sync' || bm === 'glide') {
-      const st = stretchOf(playedRatio(fromGrid, toGrid));
-      if (st > V2_MAX_STRETCH) {
-        const why = `tempos ${Math.round(st * 100)}% apart: ${bm === 'sync' ? 'Sync' : 'Glide'} stretches at most ${Math.round(V2_MAX_STRETCH * 100)}%, so this plays without beat match`;
-        warnings.push(why);
-        return overlap(cur, next, fromGrid, pick, earliest, why, warnings);
-      }
-    }
+    // Sync or Glide picked: always beat-matched, however far apart the tempos (editor.md §4, ruled
+    // 2026-11-26: only Automix's own choices have rules); Auto's tempo limits below pass it by
+    const asked = bm === 'sync' || bm === 'glide';
     if (pick?.family === 'filter') {
       if (pick.window?.out || pick.window?.in) warnings.push("a Filter mix places itself: the saved window isn't used (pick a preset to use it)");
       return filterMix(cur, next, fromGrid, toGrid && next.gridConfidence >= MIN_GRID_CONFIDENCE ? toGrid : null, requestedBars(cur, next, fromGrid, toGrid?.downbeatSec ?? 0, true), pos, earliest, 'picked in the overview');
@@ -1051,7 +1045,7 @@
     const ratio = playedRatio(fromGrid, toGrid);
     // v2: never more than V2_MAX_STRETCH of speed-up (Orchard: 6% fine, 11.8% forced),
     // and never two 808 styles at once; either way it can't beatmatch, so it does nothing
-    if (v3 && stretchOf(ratio) > V2_MAX_STRETCH) {
+    if (v3 && !asked && stretchOf(ratio) > V2_MAX_STRETCH) {
       const why = `tempos ${Math.round(stretchOf(ratio) * 100)}% apart (v2 stretches at most ${Math.round(V2_MAX_STRETCH * 100)}%)`;
       if (!forced && !pick?.bars) return unmatchedMix(cur, next, fromGrid, toGrid, pos, earliest, why);
       warnings.push(`${why}: plays without beat match`);
@@ -1067,7 +1061,7 @@
       if (!forced) return handoff(cur, next, earliest, `the keys clash (${cur.keyName} → ${next.keyName}, ${harmonic.score})`);
       warnings.push(`the keys clash (${cur.keyName} → ${next.keyName})`);
     }
-    if (!stretchAllowed(ratio)) {
+    if (!asked && !stretchAllowed(ratio)) {
       const why = `tempos ${Math.round(Math.abs(ratio - 1) * 100)}% apart`;
       if (!forced) return filterMix(cur, next, fromGrid, toGrid, requestedBars(cur, next, fromGrid, toGrid.downbeatSec, true), pos, earliest, why);
       warnings.push(`${why}: too far to stretch, plays without beat match`);
@@ -1097,7 +1091,14 @@
       && !keyClash && (harmonic?.confidence ?? 0) >= TRUSTED_KEY && musicEnd(cur).durationSec >= CURATOR_MIN_SONG_SEC;
     const usual = () => { curatorAsk = false; return planFor({ fromId, toId, from, to, durationSec, pos, earliest, pick, warnings }); };
     const bars = curator ? CURATOR_BARS : keyClash && !pinnedBars ? keyClashBars(fromGrid) : requestedBars(cur, next, fromGrid, toGrid.downbeatSec, false);
-    const effBars = effectiveBlendBars(bars, cur.gridConfidence, next.gridConfidence);
+    // a length picked on a grid too weak to beat-match that many bars (effectiveBlendBars would cut it):
+    // the length kept, played without beat match, as for no grid (editor.md §6, ruled 2026-11-26)
+    if (pinnedBars && effectiveBlendBars(bars, cur.gridConfidence, next.gridConfidence) < bars) {
+      const why = `the beat grid is too weak to beat-match ${bars} bars`;
+      warnings.push(`${why}: plays without beat match`);
+      return overlap(cur, next, fromGrid, pick, earliest, why, warnings);
+    }
+    const effBars = pinnedBars ? bars : effectiveBlendBars(bars, cur.gridConfidence, next.gridConfidence);
     const outSpan = effBars * fromGrid.barSec;        // the playing song's seconds the blend covers
     const glide = glideQ ? glideSteps(glideQ, effBars * 4, fromGrid.beatSec) : null;
     const dur = glide ? glide.total : outSpan / outRate;   // output seconds
@@ -1142,7 +1143,7 @@
     let dj = null;
     const wIn = resolveWindow(pick?.window?.in, toGrid);
     if (wIn) {
-      mixIn = clampWindow(wIn.sec, 0, Math.max(0, next.durationSec - 10 - outSpan * inPerOut), 'the mix-in', warnings, toGrid);
+      mixIn = clampWindow(wIn.sec, 0, Math.max(0, next.durationSec - 0.3 - outSpan * inPerOut), 'the mix-in', warnings, toGrid);
       if (wIn.moved) warnings.push('the mix-in moved with a new beat grid');
     }
     if (curator) {
@@ -1177,8 +1178,9 @@
       const sung = { out: lyricSpans(cur), in: lyricSpans(next) };
       // drop-in: the next song on its first downbeat at full level, two bars over the
       // playing song's exit, which may not cut a line (exit at most 12 s of music earlier)
-      const dSpan = DROP_IN_BARS * fromGrid.barSec;
-      const dGlide = glideQ ? glideSteps(glideQ, DROP_IN_BARS * 4, fromGrid.beatSec) : null;
+      const dBars = pinnedBars || DROP_IN_BARS;   // a length picked: the drop-in's overlap is it
+      const dSpan = dBars * fromGrid.barSec;
+      const dGlide = glideQ ? glideSteps(glideQ, dBars * 4, fromGrid.beatSec) : null;
       const lo = Math.max(first, pos + rampSongSec);
       const natural = naturalMixOut(fromGrid, musicEnd(cur), dSpan);
       for (let k = 0; avoid !== 'dropin' && k * fromGrid.barSec <= MAX_DISCARD_SEC; k++) {
@@ -1193,12 +1195,12 @@
           style: 'blend', shape: 'dropin', fallback: false,
           reason: `${why}: a drop-in on the next song's first beat${k ? ` (exit ${k} bar${k === 1 ? '' : 's'} earlier, off a sung line)` : ''}`,
           v2, clash: both ?? 0, rerouted: null, vocalsBy: dj?.by ?? null, keyClash,
-          subBassContrast: contrast, swapAt: null, swapMoved: null, glide: dGlide ? { q: glideQ, beats: DROP_IN_BARS * 4, beatOutSec: fromGrid.beatSec } : null,
+          subBassContrast: contrast, swapAt: null, swapMoved: null, glide: dGlide ? { q: glideQ, beats: dBars * 4, beatOutSec: fromGrid.beatSec } : null,
           harmonic, trim: dropInTrim(loudnessTrim(cur, o, dSpan, next, toGrid.downbeatSec, dSpan * inPerOut)),
           mixOutTrackTime: o, durationSec: dDur, mixInTrackTime: toGrid.downbeatSec, rate: dGlide ? dGlide.inRate[0] : rate,
           outRate, rampBeats, rampSongSec, beatSec: fromGrid.beatSec,
-          bars: DROP_IN_BARS, swapDb: SHORT_BLEND_KILL_DB,
-          barSec: dGlide ? dDur / DROP_IN_BARS : fromGrid.barSec / outRate, bpm: dGlide ? fromGrid.bpm * Math.sqrt(glideQ) : fromGrid.bpm * outRate, outBpm: fromGrid.bpm, inBpm: toGrid.bpm,
+          bars: dBars, swapDb: SHORT_BLEND_KILL_DB,
+          barSec: dGlide ? dDur / dBars : fromGrid.barSec / outRate, bpm: dGlide ? fromGrid.bpm * Math.sqrt(glideQ) : fromGrid.bpm * outRate, outBpm: fromGrid.bpm, inBpm: toGrid.bpm,
         };
       }
       // muffle (Orchard muffle.js): the playing song keeps its level while a low-pass
@@ -1238,8 +1240,10 @@
 
   // The phone's DJ_FILTER: incoming on its own downbeat at its own tempo,
   // low-passed; outgoing drains through a rising high-pass; bass swaps in one bar.
-  function filterMix(cur, next, fromGrid, toGrid, requested, pos, earliest, reason, anchorLo = null) {
-    let bars = Math.min(requested, FILTER_MAX_BARS);
+  // picked: a length the user picked for a filter mix they picked, played as picked (no FILTER_MAX_BARS:
+  // editor.md §6, ruled 2026-11-26, only Automix's own filter mixes keep the cap; the song's end still bounds it)
+  function filterMix(cur, next, fromGrid, toGrid, requested, pos, earliest, reason, anchorLo = null, picked = !!pinnedBars) {
+    let bars = picked ? requested : Math.min(requested, FILTER_MAX_BARS);
     let dur = bars * fromGrid.barSec;
     const v2 = adv();
     let mixOut = naturalMixOut(fromGrid, v2 ? musicEnd(cur) : cur, dur);
@@ -1831,7 +1835,8 @@
   // The repeated beat may not be sung; at most 12 s of music earlier than the anchor.
   const ECHO_BEATS = 8, ECHO_FEEDBACK = 0.53, ECHO_CUT_SEC = 0.01, ECHO_FIRST_BEAT_MAX_SEC = 10;
   function echoOut(cur, next, g, toGrid, lo, reason) {
-    const beat = g.beatSec, D = ECHO_BEATS * beat, sung = lyricSpans(cur);
+    const beats = pinnedBars ? pinnedBars * 4 : ECHO_BEATS;   // a length picked: the echo runs it
+    const beat = g.beatSec, D = beats * beat, sung = lyricSpans(cur);
     const end = Math.min(musicEnd(cur).durationSec, cur.durationSec - 0.3);
     const a = anchoredMixOut(cur, g, beat, lo);
     const bar = (t) => g.downbeatSec + Math.floor((t - g.downbeatSec + 1e-6) / g.barSec) * g.barSec;
@@ -1848,11 +1853,11 @@
         reason: `${reason}${k ? ` (${Math.abs(k)} bar${Math.abs(k) === 1 ? '' : 's'} ${k > 0 ? 'earlier' : 'later'}, off a sung beat)` : ''}`,
         v2: true, clash: 0, rerouted: null, vocalsBy: null, keyClash: null,
         ...(a ? { anchor: { kind: a.kind, sec: a.sec, score: a.score } } : {}),
-        echo: { beats: ECHO_BEATS, delaySec: beat, feedback: ECHO_FEEDBACK, cutSec: ECHO_CUT_SEC },
+        echo: { beats, delaySec: beat, feedback: ECHO_FEEDBACK, cutSec: ECHO_CUT_SEC },
         glide: null, subBassContrast: null, swapAt: null, swapMoved: null, harmonic: null, trim: null,
         mixOutTrackTime: c, durationSec: D, mixInTrackTime: mixIn, rate: 1,
         outRate: 1, rampBeats: 0, rampSongSec: 0, beatSec: beat,
-        bars: ECHO_BEATS / 4, swapDb: 0, barSec: g.barSec, bpm: g.bpm, outBpm: g.bpm, inBpm: toGrid?.bpm ?? null,
+        bars: beats / 4, swapDb: 0, barSec: g.barSec, bpm: g.bpm, outBpm: g.bpm, inBpm: toGrid?.bpm ?? null,
       };
     }
     return null;
@@ -1893,16 +1898,19 @@
   }
   function handoff(cur, next, earliest, reason) {
     // first rung: the two songs' beatless edges, at any tempo
+    // a length picked: the bridge or hand-over runs it, ending where it would have ended
+    const len = pinnedSec(cur);
     const b = beatlessBridge(cur, next);
     if (!b.none && b.mixOut >= earliest) {
+      const bEnd = b.mixOut + b.dur, bOut = len ? Math.max(earliest, bEnd - len) : b.mixOut, bDur = bEnd - bOut;
       return {
-        style: 'crossfade', fallback: false, bridge: true, reason: `${reason}: a beatless bridge (${b.dur.toFixed(1)} s, no beat on either side)`,
-        mixOutTrackTime: b.mixOut, durationSec: b.dur, mixInTrackTime: b.mixIn, rate: 1,
-        bars: 0, swapDb: 0, barSec: 0, bpm: null, inBpm: null, trim: loudnessTrim(cur, b.mixOut, b.dur, next, b.mixIn, b.dur),
+        style: 'crossfade', fallback: false, bridge: true, reason: `${reason}: a beatless bridge (${bDur.toFixed(1)} s, no beat on either side)`,
+        mixOutTrackTime: bOut, durationSec: bDur, mixInTrackTime: b.mixIn, rate: 1,
+        bars: 0, swapDb: 0, barSec: 0, bpm: null, inBpm: null, trim: loudnessTrim(cur, bOut, bDur, next, b.mixIn, bDur),
       };
     }
     const end = Math.min(musicEnd(cur).durationSec, cur.durationSec - 0.3);
-    const mixOut = Math.max(earliest, end - V2_SWITCH_SEC);
+    const mixOut = Math.max(earliest, end - (len ?? V2_SWITCH_SEC));
     return {
       style: 'crossfade', fallback: false, handoff: true, reason: `${reason}, so a straight hand-over (no beatless bridge: ${b.none || 'past the playhead'})`,
       mixOutTrackTime: mixOut, durationSec: Math.max(0, end - mixOut), mixInTrackTime: 0, rate: 1,
@@ -1990,9 +1998,10 @@
   }
 
   function fallback(cur, next, earliest, reason) {
-    const target = cur.durationSec - 0.3 - fallbackSec;
+    const len = pinnedSec(cur) ?? fallbackSec;   // a length picked: the crossfade runs it
+    const target = cur.durationSec - 0.3 - len;
     const mixOut = Math.max(earliest, target);
-    const dur = Math.max(0, Math.min(fallbackSec, cur.durationSec - 0.3 - mixOut));
+    const dur = Math.max(0, Math.min(len, cur.durationSec - 0.3 - mixOut));
     return {
       style: 'crossfade', fallback: true, reason,
       mixOutTrackTime: mixOut, durationSec: dur, mixInTrackTime: next.introEndSec ?? 0, rate: 1,
