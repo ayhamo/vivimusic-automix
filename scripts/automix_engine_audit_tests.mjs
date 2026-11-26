@@ -72,3 +72,39 @@ test("BitChord loop flags: a soft stop's late stop never lands on the loop decks
   assert.deepEqual(run({ mix: { style: 'blend' } }), [0, 1], 'a blend does not use them');
   assert.deepEqual(run({ mix: { style: 'loop' } }), [], 'a new loop mix keeps them');
 });
+
+test("BitChord 1b #4: a playlist speed's rate, once off the player, never takes the user's own speed back to x1", () => {
+  // the speed block of the tick, with the player, the song's want and the rate last set
+  const body = between(xf, 'const want = window.__viviAutomix', 'const eligible');
+  const tickOnce = (ctx) => vm.runInContext('{' + body + '}', ctx);
+  const ctx = vm.createContext({ live: null, gliding: false, st: { id: 'a' }, speedSet: 0, log() {},
+    off1: (s) => Math.abs(s - 1) >= 1e-4, window: { __viviAutomix: { isEnabled: () => true } } });
+  ctx.v = { playbackRate: 1 };
+  ctx.speedOf = () => 1.08;
+  tickOnce(ctx);
+  assert.equal(ctx.v.playbackRate, 1.08, 'the song plays at its playlist speed');
+  // the next song has none: back to x1
+  ctx.speedOf = () => 1;
+  tickOnce(ctx);
+  assert.equal(ctx.v.playbackRate, 1);
+  // a song at x1.08, the user then sets x1.25, then x1.08 on a song with no playlist speed: theirs stays
+  ctx.speedOf = () => 1.08; tickOnce(ctx);
+  ctx.v.playbackRate = 1.25; ctx.speedOf = () => 1; tickOnce(ctx);
+  assert.equal(ctx.v.playbackRate, 1.25);
+  ctx.v.playbackRate = 1.08; tickOnce(ctx);
+  assert.equal(ctx.v.playbackRate, 1.08, "the user's x1.08 is not the rate this code set");
+  // and a song with a playlist speed doesn't take it over either
+  ctx.speedOf = () => 0.97; tickOnce(ctx);
+  assert.equal(ctx.v.playbackRate, 1.08);
+});
+
+const ov = readFileSync(new URL('../src/automix-overview.js', import.meta.url), 'utf8');
+test('BitChord 3a #8, #10: Reset to Auto drops a Draw waiting on a loop mix; an emptied "B in after" saves nothing', () => {
+  assert.match(between(ov, "reset.addEventListener('click'", '\n'), /pendingDraw = null/);
+  const change = between(ov, "lateIn.addEventListener('change'", '\n');
+  const asked = [];
+  for (const value of ['', '  ', '2.5', '0']) {
+    vm.runInContext(change.replace("lateIn.addEventListener('change', ", '(').replace(/\);\s*$/, ')()'), vm.createContext({ lateIn: { value }, setLate: (x) => asked.push(x), Number }));
+  }
+  assert.deepEqual(asked.map((x) => (Number.isNaN(x) ? 'NaN' : x)), ['NaN', 'NaN', 2.5, 0]);
+});

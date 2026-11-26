@@ -319,7 +319,8 @@
     const lateIn = el('input');
     lateIn.type = 'number'; lateIn.min = '0'; lateIn.max = '60'; lateIn.step = '0.1'; lateIn.value = '0';
     lateIn.title = 'B comes in this long after the mix starts, silent until then (a late entry, as in a Spotify mix); 0: with the mix';
-    lateIn.addEventListener('change', () => setLate(Number(lateIn.value)));
+    // (an emptied or unreadable field is no number: nothing saved, the saved one shows again; Number('') was 0 and cleared it)
+    lateIn.addEventListener('change', () => setLate(lateIn.value.trim() === '' ? NaN : Number(lateIn.value)));
     const late = el('label', 'vivi-amx-ov-repeat');
     late.append(document.createTextNode('B in after'), lateIn, document.createTextNode('s'));
     nudges.append(late);
@@ -332,7 +333,7 @@
     lock.addEventListener('click', () => { if (!lock.disabled) pick({ lock: lock.getAttribute('aria-pressed') !== 'true' }); });
     const reset = el('button', 'vivi-amx-ov-btn', 'Reset to Auto');
     reset.type = 'button';
-    reset.addEventListener('click', () => { const s = xf()?.overview?.(); if (s?.pairKey && !reset.disabled) { xf().setPairPick(s.pairKey, null); refused = null; sig = ''; } });
+    reset.addEventListener('click', () => { const s = xf()?.overview?.(); if (s?.pairKey && !reset.disabled) { xf().setPairPick(s.pairKey, null); refused = null; pendingDraw = null; sig = ''; } });   // (a Draw waiting on a loop mix goes with the edit)
     const preview = el('button', 'vivi-amx-ov-btn', '▶ Preview');
     preview.type = 'button';
     preview.addEventListener('click', () => { const s = xf()?.overview?.(); if (s?.editable) xf().seekTo(s.previewAt); });

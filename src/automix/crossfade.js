@@ -3130,6 +3130,9 @@
     // speed the user set (only from x1 or from one this code set)
     const want = window.__viviAutomix?.isEnabled() ? speedOf(st.id) : 1;
     if (!live && !gliding) {
+      // (a rate the player no longer has isn't ours any more: the user's own speed, even one equal to
+      // it later, is left alone; it held 1.08 after a song at x1.08, and a speed of 1.08 set later went to 1)
+      if (speedSet && v.playbackRate !== speedSet) speedSet = 0;
       if (off1(want) && Math.abs(v.playbackRate - want) > 1e-6 && (v.playbackRate === 1 || v.playbackRate === speedSet)) {
         v.playbackRate = want; speedSet = want;
         log(`automix: ${st.id} plays at its playlist speed x${want}`);
