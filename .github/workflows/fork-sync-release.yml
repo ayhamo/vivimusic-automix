@@ -83,9 +83,11 @@ jobs:
     if: needs.check.outputs.build == 'true'
     runs-on: ubuntu-24.04
     steps:
+      # no token left in .git/config: nothing here pushes, and the npx packages below must not find it
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - uses: actions/setup-python@v6
         with:
@@ -143,7 +145,7 @@ jobs:
           set -euo pipefail
           # with an update_url the add-on updates from our own releases: lint it as self-hosted
           self=""; if [ -n "${UPDATE_URL}" ]; then self="--self-hosted"; fi
-          npx --yes addons-linter "out/vivimusic-automix-${VERSION}-firefox.zip" $self --output json > lint.json || true
+          npx --yes addons-linter@10.15.0 "out/vivimusic-automix-${VERSION}-firefox.zip" $self --output json > lint.json || true
           jq '.summary' lint.json
           jq -r '.errors[] | "ERROR \(.code): \(.message) \(.file // "")"' lint.json
           test "$(jq '.summary.errors' lint.json)" = "0"
@@ -167,8 +169,9 @@ jobs:
           fi
           mkdir -p signsrc signed
           unzip -q "out/vivimusic-automix-${VERSION}-firefox.zip" -d signsrc
-          npx --yes web-ext@10.8.0 sign --source-dir signsrc --artifacts-dir signed --channel unlisted \
-            --api-key "$AMO_JWT_ISSUER" --api-secret "$AMO_JWT_SECRET" --approval-timeout 1800000
+          # the key reaches web-ext through its own env variables, never on its command line (seen by every process)
+          WEB_EXT_API_KEY="$AMO_JWT_ISSUER" WEB_EXT_API_SECRET="$AMO_JWT_SECRET" \
+            npx --yes web-ext@10.8.0 sign --source-dir signsrc --artifacts-dir signed --channel unlisted --approval-timeout 1800000
           xpi=$(ls signed/*.xpi | head -1)
           mv "$xpi" "out/vivimusic-automix-${VERSION}-firefox.xpi"
           echo "signed=true" >> "$GITHUB_OUTPUT"

@@ -101,6 +101,8 @@ for (const f of readdirSync(PAIRS).filter((x) => x.endsWith('.json')).sort()) {
   if (want === text) console.log('ok  ', f, '| Classic', got.v2.plays, '| v2', got.v3.plays);
   else { failed++; console.log('DIFF', f, want === null ? '(no golden file: run with --update)' : '| Classic plays ' + got.v2.plays + ', v2 plays ' + got.v3.plays); }
 }
+// no pair read (a moved or empty folder) is not a pass
+if (!readdirSync(PAIRS).some((x) => x.endsWith('.json'))) { failed++; console.log('DIFF no pair in spec/automix/pairs'); }
 // Hard rules (PLAN.md): Vaina Loca → SI NO ES CONTIGO keeps Web's loop under
 // Automix v2; Stereo Love → Midnight Sun (11% apart) is never a loop.
 const MUST = { '1-': 'loop', '2-': '!loop' };

@@ -60,5 +60,8 @@ for (const c of cases.upgradeWanted) check('upgrade: ' + c.name, P.upgradeWanted
 for (const [u, want] of cases.baseOf) check(`baseOf "${u}"`, C.baseOf(u), want);
 for (const [a, b, want] of cases.sameAddon) check(`sameAddon ${a} ~ ${b}`, C.sameAddon(a, b), want);
 
+// a group the cases add that this file doesn't read fails, not passes unchecked
+const READ = ['_about', 'rowsToOpen', 'tierOf', 'kbps', 'probeVerdict', 'paramsFor', 'readStream', 'baseOf', 'sameAddon', 'loudnessGain', 'windowLevel', 'qualityRank', 'floorVerdict', 'upgradeWanted'];
+for (const g of Object.keys(cases).filter((k) => !READ.includes(k))) check(`the cases' group ${g} is read here`, false, true);
 console.log(failed ? `${failed} of ${n} failed` : `all ${n} passed`);
 process.exit(failed ? 1 : 0);

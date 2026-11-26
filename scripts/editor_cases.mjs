@@ -75,6 +75,8 @@ for (const c of draws) {
   if (!ok) failed++;
   console.log(`${ok ? 'ok  ' : 'DIFF'} draw ${c.name}${ok ? '' : ': got ' + JSON.stringify(got)}`);
 }
+// a group the cases add that this file doesn't read fails, not passes unchecked
+for (const g of Object.keys(spec).filter((k) => !['notes', 'curves', 'windows', 'plans', 'draw'].includes(k))) { failed++; console.log(`DIFF ${g}: a group of the cases this file doesn't read`); }
 const n = spec.curves.length + spec.windows.length + spec.plans.length + draws.length;
 if (update) { writeFileSync(FILE, JSON.stringify(spec, null, 1) + '\n'); console.log('wrote', n, 'cases'); }
 else console.log(failed ? `${failed} case(s) differ` : `all ${n} editor cases pass`);

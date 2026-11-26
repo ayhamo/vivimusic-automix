@@ -17,8 +17,8 @@ is kept in upstream-amo/manifest-last-synced.json; when the new AMO manifest
 differs from it, the difference is printed so it can be applied by hand, then
 recorded with --accept-manifest.
 
-Exit code 2 means something needs a human (conflict markers or new manifest
-changes); the CI workflow fails on it.
+Exit code 2 means something needs a human (conflict markers, new manifest
+changes, or an AMO entry pointing outside the repo); the CI workflow fails on it.
 
 Usage (from the repo root, with the upstream remote fetched):
     git fetch upstream --tags
@@ -91,7 +91,7 @@ def main():
         open(os.path.join(AMO_DIR, f'vivimusicweb-{ver}.xpi'), 'wb').write(raw)
         print(f'saved upstream-amo/vivimusicweb-{ver}.xpi')
     xpi = zipfile.ZipFile(io.BytesIO(raw))
-    conflicts, changed, added = [], [], []
+    conflicts, changed, added, outside = [], [], [], []
     with tempfile.TemporaryDirectory(prefix='vivi-sync-') as tmp:
         for name in sorted(xpi.namelist()):
             if name.endswith(('/', '.orig')) or name.startswith('META-INF/') or name in SKIP:
@@ -99,6 +99,7 @@ def main():
             local = os.path.normpath(os.path.join(ROOT, name))
             if os.path.isabs(name) or not local.startswith(os.path.join(ROOT, '')):   # a zip entry may not point out of the repo
                 print(f'  skipped, path outside the repo: {name}')
+                outside.append(name)   # never written, and the run needs a human: such a build is not normal
                 continue
             theirs = xpi.read(name)
             base_r = git('show', f'{tag}:{name}', check=False)
@@ -146,6 +147,8 @@ def main():
     print(f'merged cleanly, {mode}: {changed or "none"}')
     print(f'merged WITH CONFLICTS, {mode} (fix the <<<<<<< markers): {conflicts or "none"}')
     print(f'new AMO-only files, {mode}: {added or "none"}')
+    if outside:
+        print(f'AMO entries pointing outside the repo, skipped (look at the AMO build): {outside}')
     print()
     if diff:
         print('manifest.json: new upstream Firefox manifest changes, apply by hand, then rerun with --accept-manifest:')
@@ -153,7 +156,7 @@ def main():
             print('  ' + line)
     else:
         print('manifest.json: nothing new from upstream')
-    return 2 if (conflicts or diff) else 0
+    return 2 if (conflicts or diff or outside) else 0
 
 
 if __name__ == '__main__':

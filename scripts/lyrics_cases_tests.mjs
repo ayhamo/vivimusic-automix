@@ -128,5 +128,7 @@ for (const c of cases.activeLines) check('activeLines (PC)', c.name, PC.activeLi
   check('defaults (PC)', 'lyrics.js wait default on, 2 s', [/let priorityWaitEnabled = true;/.test(src('src/lyrics.js')), /PRIORITY_WAIT_MS\s*=\s*2000;/.test(src('src/lyrics.js'))], [true, true]);
 }
 console.log('skip  the PC: no pure currentLine function (the PC lights lines by activeLines, §2.4 is the strip\'s)');
+// a group the cases add that this file doesn't read fails, not passes unchecked
+for (const g of Object.keys(cases).filter((k) => !['notes', 'currentLine', 'offset', 'sides', 'gaps', 'activeLines', 'parse', 'lrcOffset'].includes(k))) { failed++; console.log(`DIFF  ${g}: a group of the cases this file doesn't read`); }
 console.log(`\nlyrics cases: ${ok} ok, ${failed} DIFF`);
 process.exit(failed ? 1 : 0);

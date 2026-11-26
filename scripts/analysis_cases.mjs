@@ -99,7 +99,7 @@ async function synthetic() {
         const pairs = sungFrames(r).filter(([t]) => !edge(t)).map(([t, s]) => [s, voice.some(([x, y]) => t >= x && t < y)]);
         const v = iou(pairs);
         verdict('vocals', v >= RULE.vocalIoU, `sung regions overlap ${f2(v)} (IoU, needs ${f2(RULE.vocalIoU)}; ${pairs.filter((p) => p[0]).length} of ${pairs.length} frames sung)`);
-      }
+      } else verdict(what, false, 'a check this file does not know (a typo passed silently)');
     }
     if (bad) failed++;
     console.log(`${bad ? 'DIFF' : known ? 'ok* ' : 'ok  '} ${c.name}`);

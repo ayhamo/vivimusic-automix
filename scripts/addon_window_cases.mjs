@@ -1,15 +1,16 @@
 // The window check on real songs (spec/addons/window-cases.json, offset-map.md "Window check"):
 // each measured window again, on the local copies in .cache/addons (git-ignored; how to rebuild them
 // is in the cases' notes). A song without both copies is skipped. Exit 1 on a verdict or offset
-// that differs from the measured one.
+// that differs from the measured one, 2 when no song had its copies (nothing checked).
 //
 //   node scripts/addon_window_cases.mjs [--cache DIR]
 import { readFileSync, existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
 
 const F = createRequire(import.meta.url)('../src/addons/offset-fit.js');
 const args = process.argv.slice(2);
-const CACHE = args.includes('--cache') ? args[args.indexOf('--cache') + 1] : new URL('../.cache/addons/', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1');
+const CACHE = args.includes('--cache') ? args[args.indexOf('--cache') + 1] ?? (console.error('--cache needs a folder'), process.exit(2)) : fileURLToPath(new URL('../.cache/addons', import.meta.url));   // (not .pathname: it keeps %20 for the space in the repo's path)
 const cases = JSON.parse(readFileSync(new URL('../spec/addons/window-cases.json', import.meta.url), 'utf8'));
 const read = (f) => { const b = readFileSync(f); return new Float32Array(b.buffer, b.byteOffset, b.length / 4); };
 const R = F.FIT_RATE, WIN = 12;
@@ -28,4 +29,6 @@ for (const s of cases.songs) {
   }
 }
 console.log(`\nwindow cases: ${ok} ok, ${diff} DIFF, ${skipped} skipped (of ${cases.windowCount})`);
-process.exit(diff ? 1 : 0);
+// no song had both copies: nothing was checked, which is not a pass (exit 2)
+if (!ok && !diff) console.log(`no window checked: no local copies in ${CACHE}`);
+process.exit(diff ? 1 : ok ? 0 : 2);
