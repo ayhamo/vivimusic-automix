@@ -43,11 +43,15 @@ const viviSpotifyCanvas = (() => {
     return String(bin % 1e6).padStart(6, '0');
   }
 
+  // { ok, status, json }: the JSON read while the time limit still runs (rule 7: a stalled body times out too);
+  // a refusal's body isn't read
   async function get(url, init = {}) {
     const ctl = new AbortController();
     const t = setTimeout(() => ctl.abort(), TIMEOUT_MS);
     try {
-      return await fetch(url, { cache: 'no-store', credentials: 'omit', redirect: 'error', ...init, signal: ctl.signal });
+      const r = await fetch(url, { cache: 'no-store', credentials: 'omit', redirect: 'error', ...init, signal: ctl.signal });
+      if (!r.ok) { try { await r.body?.cancel(); } catch { /* gone */ } return { ok: false, status: r.status, json: null }; }
+      return { ok: true, status: r.status, json: await readJson(r) };
     } finally { clearTimeout(t); }
   }
 
@@ -83,7 +87,7 @@ const viviSpotifyCanvas = (() => {
         if (ver) r = await ask(await makeTotp(dict[String(ver)], Math.floor(Date.now() / 1000)), ver);
       }
       if (!r.ok) throw new Error(`/api/token: HTTP ${r.status}`);
-      const t = await readJson(r);
+      const t = r.json;
       if (!t.accessToken) throw new Error('/api/token: no access token');
       accessToken = t.accessToken;
       accessExpires = t.accessTokenExpirationTimestampMs || Date.now() + 30 * 60e3;
@@ -97,7 +101,7 @@ const viviSpotifyCanvas = (() => {
           device_brand: 'unknown', device_model: 'unknown', os: 'windows', os_version: 'unknown', device_id: deviceId, device_type: 'computer' } } }),
       });
       if (!r.ok) throw new Error(`clienttoken: HTTP ${r.status}`);
-      const token = (await readJson(r))?.granted_token?.token;
+      const token = r.json?.granted_token?.token;
       if (!token) throw new Error('clienttoken: no token');
       clientToken = token;
     }
@@ -120,7 +124,7 @@ const viviSpotifyCanvas = (() => {
       });
       if (r.status === 401 && attempt === 0) { accessToken = clientToken = null; continue; }
       if (r.status >= 400) throw new Error(`${operationName}: HTTP ${r.status}`);
-      const data = await readJson(r);
+      const data = r.json;
       if (Array.isArray(data.errors) ? data.errors.length : data.errors) throw new Error(`${operationName}: GraphQL errors`);
       return data;
     }

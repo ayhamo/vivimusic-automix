@@ -23,17 +23,42 @@
     window.postMessage({ ch: CHANNEL, dir: 'in', reqId, ...msg }, window.location.origin);
   });
 
+  // an answer's bytes, at most `max` (more: cancelled, null)
+  const FETCH_MAX = 8e6;
+  async function readCapped(r, max) {
+    if (Number(r.headers?.get?.('content-length')) > max) { try { await r.body?.cancel(); } catch { /* gone */ } return null; }
+    if (!r.body?.getReader) { const b = await r.arrayBuffer(); return b.byteLength > max ? null : b; }
+    const rd = r.body.getReader(), parts = [];
+    let n = 0;
+    for (;;) {
+      const { done, value } = await rd.read();
+      if (done) break;
+      n += value.byteLength;
+      if (n > max) { try { await rd.cancel(); } catch { /* gone */ } return null; }
+      parts.push(value);
+    }
+    const all = new Uint8Array(n);
+    let o = 0;
+    for (const p of parts) { all.set(p, o); o += p.byteLength; }
+    return all.buffer;
+  }
+
   window.addEventListener('message', (e) => {
     const d = e.data;
     if (e.source !== window || !d || d.ch !== CHANNEL || d.dir !== 'out') return;
     if (d.type === 'fetch') {
       // bytes the page may not fetch itself (CORS): only YouTube's image and media hosts
-      let host = '';
-      try { host = new URL(d.url).hostname; } catch { /* bad URL */ }
+      // (https only, no redirect off them, 15 s for the whole answer and at most FETCH_MAX bytes)
+      let u = null;
+      try { u = new URL(d.url); } catch { /* bad URL */ }
       const reply = (m, transfer) => window.postMessage({ ch: CHANNEL, dir: 'in', op: 'fetch', rid: d.rid, ...m }, window.location.origin, transfer);
-      if (!/(^|\.)(ytimg\.com|googlevideo\.com)$/.test(host)) { reply({ ok: false, why: 'host not allowed' }); return; }
-      fetch(d.url, { credentials: 'omit' })
-        .then(async (r) => { const bytes = await r.arrayBuffer(); reply({ ok: r.ok, status: r.status, bytes }, [bytes]); })
+      if (u?.protocol !== 'https:' || !/(^|\.)(ytimg\.com|googlevideo\.com)$/.test(u.hostname)) { reply({ ok: false, why: 'host not allowed' }); return; }
+      fetch(u.href, { credentials: 'omit', redirect: 'error', signal: AbortSignal.timeout(15000) })
+        .then(async (r) => {
+          const bytes = await readCapped(r, FETCH_MAX);
+          if (!bytes) { reply({ ok: false, why: 'answer too big' }); return; }
+          reply({ ok: r.ok, status: r.status, bytes }, [bytes]);
+        })
         .catch((err) => reply({ ok: false, why: String(err?.message || err) }));
       return;
     }

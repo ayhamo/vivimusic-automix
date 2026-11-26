@@ -1701,8 +1701,8 @@
       try {
         // as given (www.youtube.com answers this origin; music.youtube.com's /api/timedtext is the app's page)
         const q = new URL(t.baseUrl, 'https://www.youtube.com'); q.searchParams.set('fmt', 'json3');
-        const res = await fetch(q.href, { credentials: 'include' });
-        const text = res.ok ? await res.text() : '';
+        // (6 s for each track, body and all: one that stalls passes to the next)
+        const text = await timed(q.href, { credentials: 'include' }, 6000, (r) => (r.ok ? r.text() : ''));
         if (!text) continue;
         const lines = [];
         for (const ev of JSON.parse(text).events || []) {

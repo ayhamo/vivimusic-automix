@@ -74,7 +74,8 @@
     ask({ op: 'bestpart', id }).then((r) => {
       if (cur?.id !== id || !r?.ok) return;
       cur.auto = r.startMs ?? null; cur.from = r.from || '';
-      cur.knownAtMs = posMs();
+      // (known only with a part: one that comes later, the chorus from the lyrics, starts the window then, §14 rule 3)
+      if (cur.auto != null) cur.knownAtMs = posMs();
       console.info('[ViVi best part]', id, cur.auto == null ? `none (${cur.from})` : `${fmt(cur.auto)} (${cur.from})`);
     });
   }

@@ -61,17 +61,25 @@
     const want = core(title);
     if (!want || !names.length) return null;
     const visitor = cfg('VISITOR_DATA') || '';
-    const res = await fetch('/youtubei/v1/search?prettyPrint=false', {
-      method: 'POST',
-      credentials: 'omit',
-      headers: { 'Content-Type': 'application/json', ...(visitor ? { 'X-Goog-Visitor-Id': visitor } : {}) },
-      body: JSON.stringify({
-        query: title.replace(/\(.*?\)|\[.*?]/g, ' ').trim() + ' ' + String(artist).split(/\s*(?:,|&)\s*/)[0],
-        params: SONGS,
-        context: { client: { clientName: 'WEB_REMIX', clientVersion: cfg('INNERTUBE_CLIENT_VERSION') || '1.20251101.01.00', hl: 'en', gl: 'US', ...(visitor ? { visitorData: visitor } : {}) } },
-      }),
-    });
-    if (!res.ok) throw new Error('search HTTP ' + res.status);
+    // (15 s for the search and its answer: a stalled one must not hold `busy` for the tab's life)
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), 15000);
+    let res, json;
+    try {
+      res = await fetch('/youtubei/v1/search?prettyPrint=false', {
+        method: 'POST',
+        signal: ac.signal,
+        credentials: 'omit',
+        headers: { 'Content-Type': 'application/json', ...(visitor ? { 'X-Goog-Visitor-Id': visitor } : {}) },
+        body: JSON.stringify({
+          query: title.replace(/\(.*?\)|\[.*?]/g, ' ').trim() + ' ' + String(artist).split(/\s*(?:,|&)\s*/)[0],
+          params: SONGS,
+          context: { client: { clientName: 'WEB_REMIX', clientVersion: cfg('INNERTUBE_CLIENT_VERSION') || '1.20251101.01.00', hl: 'en', gl: 'US', ...(visitor ? { visitorData: visitor } : {}) } },
+        }),
+      });
+      if (!res.ok) throw new Error('search HTTP ' + res.status);
+      json = await res.json();
+    } finally { clearTimeout(timer); }
     const rows = [];
     (function walk(n) {
       if (Array.isArray(n)) { n.forEach(walk); return; }
@@ -89,7 +97,7 @@
         return;
       }
       Object.values(n).forEach(walk);
-    })(await res.json());
+    })(json);
     const vt = String(title).toLowerCase();
     for (const r of rows.slice(0, 8)) {
       if (!r.id || r.type !== 'MUSIC_VIDEO_TYPE_ATV') continue;

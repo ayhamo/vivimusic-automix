@@ -3136,7 +3136,7 @@
     // same song shows Apple Music's artwork instantly (cached URL + the
     // browser's own HTTP cache for the actual bytes).
     if (VP.lyricsCanvas?.(track, key, spotifyCanvasEnabled && !imageOnlyMode)) { // vivi+ hook: Spotify Canvas behind the lyrics, the cover gets Apple only
-      const apple = appleCanvasEnabled && VP.sourceOn?.('apple') !== false; // vivi+ hook: Apple's own source switch (§13)
+      const apple = appleCanvasEnabled && VP.sourceOn?.('apple', track.videoId || '') !== false; // vivi+ hook: Apple's own source switch (§13), and the song's (§15)
       if (apple && await attemptApple() === 'stop') return;
       setBackgroundVar(null);
       if (apple) scheduleRetry(track, key, 0);
@@ -3162,7 +3162,7 @@
       return;
     }
 
-    const order = VP.canvasOrder?.({ video: () => attemptSpotify('video'), spotify: () => attemptSpotify('spotify'), apple: attemptApple }, spotifyCanvasEnabled, appleCanvasEnabled) || (canvasPriority === 'apple'
+    const order = VP.canvasOrder?.({ video: () => attemptSpotify('video'), spotify: () => attemptSpotify('spotify'), apple: attemptApple }, spotifyCanvasEnabled, appleCanvasEnabled, track.videoId || '') || (canvasPriority === 'apple'
       ? [['apple', appleCanvasEnabled, attemptApple], ['spotify', spotifyCanvasEnabled, attemptSpotify]]
       : [['spotify', spotifyCanvasEnabled, attemptSpotify], ['apple', appleCanvasEnabled, attemptApple]]); // vivi+ hook
 

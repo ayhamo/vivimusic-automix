@@ -98,7 +98,9 @@
     const hasLoop = !!ans?.ok;
     const use = choice.use || null;
     // the loop shows when the music video comes first among the sources on (or is the song's Use)
-    const firstOn = (use ? [use, ...set.order.filter((n) => n !== use)] : set.order).find((n) => set.on.includes(n) && !choice[{ video: 'loopOff', spotify: 'spotifyOff', apple: 'appleOff' }[n]]);
+    // (each behind its master switch too, as content-plus.js plays them: Canvas for the video and Spotify, Animated covers for Apple)
+    const masterOn = { video: set.canvasOn && videoOn, spotify: set.canvasOn, apple: set.appleOn };
+    const firstOn = (use ? [use, ...set.order.filter((n) => n !== use)] : set.order).find((n) => masterOn[n] && set.on.includes(n) && !choice[{ video: 'loopOff', spotify: 'spotifyOff', apple: 'appleOff' }[n]]);
     const loopShows = hasLoop && !choice.loopOff && firstOn === 'video';
     const rows = CS.songMenu({ canvasOn: set.canvasOn, useVideos: videoOn, isSong: true, hasLoop, loopOff: !!choice.loopOff, loopShows });
     const spotifyOn = set.canvasOn && set.on.includes('spotify'), appleOn = set.appleOn && set.on.includes('apple');

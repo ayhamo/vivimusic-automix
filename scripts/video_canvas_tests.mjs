@@ -173,5 +173,36 @@ const flat = (v) => new Array(W * H).fill(v);
     JSON.stringify({ hasEdts, mvDur, fromSec: out.fromSec, lenSec: out.lenSec }));
 }
 
+// ── (audit 2026-11-26) the song's canvas choices, the relays and the time limits ──
+{
+  const { readFileSync } = await import('node:fs');
+  const vm = await import('node:vm');
+  const src = (f) => readFileSync(new URL('../' + f, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+  const cp = src('src/plus/content-plus.js'), menu = src('src/plus/canvas-menu.js'), content = src('src/content.js');
+  // the song's choices by the track's id, else ?v=, else the player's song (§15 rules 1, 2, 7)
+  check('canvasOrder and sourceOn take the song; no ?v= falls back to the player\'s song', /const songChoice = \(id\) => window\.__viviCanvasSongs\?\.choice\(id \|\| new URLSearchParams\(location\.search\)\.get\('v'\) \|\| C\.getCurrentTrack\(\)\?\.videoId \|\| ''\)/.test(cp)
+    && /P\.canvasOrder = CS && \(\(attempts, canvasOn, appleOn, id\) =>/.test(cp) && /spotifyCanvasEnabled, appleCanvasEnabled, track\.videoId \|\| ''\)/.test(content) && /VP\.sourceOn\?\.\('apple', track\.videoId \|\| ''\)/.test(content));
+  {
+    // run the order with a song whose Use is Apple and whose Spotify is off
+    const choices = { s1: { use: 'apple', spotifyOff: true } };
+    const ctx = vm.createContext({ window: { __viviCanvasSongs: { choice: (id) => choices[id] } }, location: { search: '' }, URLSearchParams, C: { getCurrentTrack: () => ({ videoId: 's1' }) },
+      CS: true, canvasSet: { order: ['video', 'spotify', 'apple'], on: ['video', 'spotify', 'apple'] }, P: {} });
+    const block = cp.slice(cp.indexOf('  const songChoice ='), cp.indexOf('  // Settings message'));
+    vm.runInContext(block, ctx);
+    const o = vm.runInContext("JSON.stringify(P.canvasOrder({ video: 1, spotify: 2, apple: 3 }, true, true, ''))", ctx);
+    check('the song\'s Use first and its Spotify off, found by the player\'s song (no ?v=)', o === JSON.stringify([['apple', true, 3], ['video', true, 1], ['spotify', false, 2]]), o);
+    check('sourceOn with the song: its own switch', vm.runInContext("[P.sourceOn('spotify'), P.sourceOn('spotify', 's1'), P.sourceOn('apple', 's1')].join()", ctx) === 'true,false,true');
+  }
+  check('the lyrics/side canvas takes the song\'s Use and switches', /const want = songOrder\(track\?\.videoId\)\.filter\(\(n\) => n !== 'apple' && canvasSet\.on\.includes\(n\) && !songOff\(track\?\.videoId\)\[n\]\);/.test(cp));
+  check('the Canvas menu: each source behind its master switch', /const masterOn = \{ video: set\.canvasOn && videoOn, spotify: set\.canvasOn, apple: set\.appleOn \};\n\s+const firstOn = [^\n]*\.find\(\(n\) => masterOn\[n\] && /.test(menu));
+  // the page's fetch relay: https only, no redirect, 15 s, 8 MB
+  const relay = src('src/plus/video-canvas.js');
+  check('video-canvas relay: https, no redirect, a time limit and a cap', /u\?\.protocol !== 'https:'/.test(relay) && /redirect: 'error', signal: AbortSignal\.timeout\(15000\)/.test(relay) && /readCapped\(r, FETCH_MAX\)/.test(relay) && /const FETCH_MAX = 8e6;/.test(relay));
+  check('music-only search: 15 s, cleared after the answer is read', /const timer = setTimeout\(\(\) => ac\.abort\(\), 15000\);[\s\S]*signal: ac\.signal,[\s\S]*json = await res\.json\(\);\n\s+\} finally \{ clearTimeout\(timer\); \}/.test(src('src/plus/music-only-page.js')));
+  check('best part: known only with a part', /if \(cur\.auto != null\) cur\.knownAtMs = posMs\(\);/.test(src('src/plus/best-part.js')));
+  check('Apple artist art: a stale answer is dropped, a failed one forgotten', /if \(!res\?\.ok && appleArtistArtCache\.get\(cleanArtist\) === asked\) appleArtistArtCache\.delete\(cleanArtist\);\n[^\n]*\n\s+if \(C\.trackKey\(\) !== key\) return;/.test(cp));
+  check('bg-canvas: the JSON read inside the time limit', /json: await readJson\(r\) \};\n\s+\} finally \{ clearTimeout\(t\); \}/.test(src('src/plus/bg-canvas.js')));
+  check('captions: 6 s each, body and all', /await timed\(q\.href, \{ credentials: 'include' \}, 6000,/.test(src('src/plus/video-canvas-page.js')));
+}
 console.log(`\n${n - failed}/${n} passed`);
 process.exit(failed ? 1 : 0);

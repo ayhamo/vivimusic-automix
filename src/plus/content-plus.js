@@ -143,8 +143,9 @@
 
   async function fetchLyricsCanvas(track, key) {
     try {
-      // the Canvas sources (music video, Spotify) in the listener's order, the ones on only (§13)
-      const want = canvasSet.order.filter((n) => n !== 'apple' && canvasSet.on.includes(n));
+      // the Canvas sources (music video, Spotify) in the listener's order, the ones on only (§13), with
+      // the song's own choices (§15 rules 2 and 7): its Use first, its switched-off sources left out
+      const want = songOrder(track?.videoId).filter((n) => n !== 'apple' && canvasSet.on.includes(n) && !songOff(track?.videoId)[n]);
       if (!want.includes('spotify')) {
         const mv = want.includes('video') ? await window.__viviVideoCanvas?.(track, 'video') : null;
         if (mv && key === C.trackKey() && canvasPlacement !== 'cover') setLyricsCanvas(mv);
@@ -244,13 +245,17 @@
   // strictly in turn (§1 rule 2: a source still loading holds the ones after it).
   const CS = globalThis.__viviCanvasSettings;
   let canvasSet = CS ? CS.read({}) : { order: ['video', 'spotify', 'apple'], on: ['video', 'spotify', 'apple'] };
-  P.sourceOn = (n) => canvasSet.on.includes(n);
-  P.canvasOrder = CS && ((attempts, canvasOn, appleOn) => {
+  // one song's canvas choices (canvas.md §15), by its id: the track's, else ?v=, else the player's own song
+  // (a song started from Home, a playlist or Search has no ?v=; canvas-menu.js saves under the player's id)
+  const songChoice = (id) => window.__viviCanvasSongs?.choice(id || new URLSearchParams(location.search).get('v') || C.getCurrentTrack()?.videoId || '') || {};
+  const songOff = (id) => { const s = songChoice(id); return { video: !!s.loopOff, spotify: !!s.spotifyOff, apple: !!s.appleOff }; };
+  const songOrder = (id) => { const u = songChoice(id).use; return u && canvasSet.order.includes(u) ? [u, ...canvasSet.order.filter((n) => n !== u)] : canvasSet.order; };
+  // (with a song: its own switch too, §15 rule 2)
+  P.sourceOn = (n, id) => canvasSet.on.includes(n) && !(id !== undefined && songOff(id)[n]);
+  P.canvasOrder = CS && ((attempts, canvasOn, appleOn, id) => {
     // one song's canvas (canvas.md §15): its Spotify / Animated cover switches and its Use come first
-    const song = window.__viviCanvasSongs?.choice(new URLSearchParams(location.search).get('v') || '') || {};
-    const off = { video: song.loopOff, spotify: song.spotifyOff, apple: song.appleOff };
-    const order = song.use && canvasSet.order.includes(song.use) ? [song.use, ...canvasSet.order.filter((n) => n !== song.use)] : canvasSet.order;
-    return order.map((n) => [n, (n === 'apple' ? appleOn : canvasOn) && canvasSet.on.includes(n) && !off[n], attempts[n]]);
+    const off = songOff(id);
+    return songOrder(id).map((n) => [n, (n === 'apple' ? appleOn : canvasOn) && canvasSet.on.includes(n) && !off[n], attempts[n]]);
   });
 
   // Settings message: returns true when the Canvas must be re-checked.
@@ -417,7 +422,12 @@
         appleArtistArtCache.set(cleanArtist, chrome.runtime.sendMessage({ type: 'VIVI_APPLE_ARTIST_ART', artist: cleanArtist }).catch(() => null));
         if (appleArtistArtCache.size > 200) appleArtistArtCache.delete(appleArtistArtCache.keys().next().value);
       }
-      const res = await appleArtistArtCache.get(cleanArtist);
+      const key = C.trackKey(), asked = appleArtistArtCache.get(cleanArtist);
+      const res = await asked;
+      // (a failed lookup isn't kept: the artist is asked again on a later play)
+      if (!res?.ok && appleArtistArtCache.get(cleanArtist) === asked) appleArtistArtCache.delete(cleanArtist);
+      // (the song moved on while it was asked: a slower answer must not paint over the next artist's)
+      if (C.trackKey() !== key) return;
       if (!res?.ok || !res.art || !appleArtistArtEnabled) return;
       currentAppleArtistArt = res.art;
 
