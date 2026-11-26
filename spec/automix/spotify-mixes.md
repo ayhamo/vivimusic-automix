@@ -159,10 +159,17 @@ Test: `node --test scripts/test_automix_plan.mjs` (the "Spotify mix exports" tes
         (`outRate`) and B at A's played tempo (`rate`, above), with no ramp, glide or loop mix; a
         filter mix or fade plays B at `speedIn`.
       - B stays at `speedIn` through the mix and after it (a glide back ends at `speedIn`, not x1).
+      - **No echo out** at a song speed: when `speedOut` or `speedIn` is set, a pair too far apart in
+        tempo (versions.md "Tempo too far apart") skips the echo out's rung, and the ladder goes on
+        from the filter mix to the hand-over; the reason ends "(no echo out at a playlist speed)".
+        The echo out is planned as a blend with `rate` 1, so B would start at x1 and glide to its
+        speed after the hand-over. Every app plans it this way (decided 2026-11-26: the PC ec24b8c and
+        the phone b6e643a; BitChord to follow).
       - Each app plays A at its speed into and through the mix in its own way. On the PC: the
         hand-over finds the playing spot in A's copy with a 0.1 s stretch of what is heard (score
         0.8, the copy's position moving at A's speed); the copy plays 0.6 s at x1, then the stretch
-        deck plays A at its speed to its end; no echo out on such a hand-over; a song at a speed
+        deck plays A at its speed to its end (the planner's echo out never comes here: the rule
+        above); a song at a speed
         other than 1 stays on YouTube's player (no smooth hand-over or addon deck).
 
 ## Notes
