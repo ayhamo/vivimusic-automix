@@ -10,6 +10,7 @@ step() { echo; echo "== $*"; }
 
 step "Automix planner against the golden plans";  node scripts/automix_fixtures.mjs
 step "Automix planner unit tests";                node --test scripts/test_automix_plan.mjs
+step "Automix engine (the cross-check of 2026-11-26)"; node --test scripts/automix_engine_audit_tests.mjs
 step "Transition editor (presets, lanes, window positions)"; node scripts/editor_cases.mjs
 step "Addon matcher (BitChord's cases)";          node scripts/addon_matcher_fixtures.mjs --matcher src/addons/track-matcher.js
 step "Addon pick rules and client readings";      node scripts/addon_pick_tests.mjs

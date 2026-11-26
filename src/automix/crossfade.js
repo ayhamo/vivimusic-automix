@@ -1105,7 +1105,8 @@
     deckOut.gain.cancelScheduledValues(now);
     deckOut.gain.setValueAtTime(deckOut.gain.value, now);
     deckOut.gain.linearRampToValueAtTime(0, now + 0.12);
-    setTimeout(() => loopDecks.forEach((d) => d.stop()), 150);
+    // (unless a new loop mix has these decks by then: the late stop would silence it)
+    setTimeout(() => { if (live?.mix?.style !== 'loop') loopDecks.forEach((d) => d.stop()); }, 150);
   }
 
   function finishLive() {
@@ -1164,7 +1165,7 @@
   }
   const BY_LISTENER = new Set(['previous pressed', 'skipped by you', 'paused by you', 'song changed', 'skipped again', 'seeked', 'went back to the song',
     'skipped before the mix', 'seeked before the mix', 'repeat one turned on', 'the queue changed before the mix',
-    'the audio clock stopped']);   // (not the listener's either, but not the song's fault: it isn't marked)
+    'the audio clock stopped', 'automix switched off']);   // (not the listener's either, but not the song's fault: it isn't marked)
 
   // ───────── automix: the incoming song on YouTube's player (BitChord engine/deck.ts) ─────────
   // BitChord plays the incoming song on an <audio> element held to a
@@ -2784,6 +2785,8 @@
           return;
         }
         if (v.paused && now > live.T + 0.5) { abortLive('paused'); return; }
+        // Automix switched off while its mix is armed and not yet heard: the mix goes, the song plays on
+        if (live.mix && !(now >= live.t0) && window.__viviAutomix?.isEnabled?.() === false) { abortLive('automix switched off'); return; }
         // the user's changes meanwhile (the player shows the old song until the mix's midpoint)
         if (st.rep) { abortLive('repeat one turned on'); return; }
         if (live.mix && st.next && st.next !== live.mix.nextId) { abortLive('the queue changed before the mix'); return; }
@@ -3356,7 +3359,12 @@
       const g = graph();
       if (!live || !g) return null;
       const now = g.ctx.currentTime;
-      if (live.phase === 'mixing' && now >= (live.handoffAt ?? (live.mixStart + live.mixEnd) / 2)) return null;
+      let until = live.handoffAt ?? (live.mixStart + live.mixEnd) / 2;
+      // a late entry (mix-file.md rule 2): the next song is silent and not started until then, its lyrics too
+      // (the player already plays its pre-roll, before the mix-in)
+      const m = live.mix;
+      if (m && m.style !== 'loop' && m.inDelaySec > 0 && live.t0 != null) until = Math.max(until, live.t0 + m.inDelaySec);
+      if (live.phase === 'mixing' && now >= until) return null;
       const t = live.aPos + (now - live.T);
       // a loop mix: the old song repeats its loop, so its lyrics wait at the loop start
       return { id: live.oldId, timeSec: live.mix?.style === 'loop' ? Math.min(t, live.mix.loop.out.loop[0]) : t };
