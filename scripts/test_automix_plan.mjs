@@ -429,6 +429,23 @@ test('Sung spans: the vocal mask cuts a gap of a beat or more out of a lyric spa
   assert.deepEqual(JSON.parse(JSON.stringify(A.carveSung([[8, 16]], song(120, 60)))), [[8, 16]], 'no mask: as the lyrics say');
 });
 
+test('Sung spans: the carve runs once per song and beat, not once per copy of its analysis', () => {
+  // The planner spreads the analysis every tick (withBarPhase, asOutgoing, musicEnd); keyed by
+  // the object, the carve re-ran on every plan and held a whole core (Firefox profile, 2026-11-26).
+  const A = loadAutomix('auto', { automixVersion: 3 });
+  let reads = 0;
+  const curve = new Proxy(Array.from({ length: 60 * 50 }, () => 0.9), { get: (t, k) => (/^\d+$/.test(k) && reads++, t[k]) });
+  const a = { ...song(120, 60), vocals: [{ startSec: 0, fps: 50, curve }] };
+  const sp = [[8, 16], [20, 40]];
+  const first = A.carveSung(sp, a);
+  const once = reads;
+  assert.ok(once > 0, 'the first call reads the mask');
+  assert.equal(A.carveSung(sp, { ...a }), first, 'a copy of the analysis: the cached answer');
+  assert.equal(A.carveSung(sp, { ...a, durationSec: 50 }), first, 'a copy with its end cut: the same');
+  assert.equal(reads, once, 'no mask read for a copy');
+  assert.notEqual(A.carveSung(sp, { ...a, beatIntervalSec: 0.4 }), first, 'another beat (the tail grid): carved anew');
+});
+
 test('Sung spans: word times run back to back over a silent beat; only the mask carve frees it', () => {
   // Enhanced LRC times word starts only: each word ends where the next starts, the last at the
   // next line's start (lyrics.js repairTimings), so the words cover a breath. Poker Face's case, 2026-11-24.

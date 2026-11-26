@@ -2631,13 +2631,19 @@
   // run of a beat or more with the mask under 0.3 isn't sung (so lyrics never mark
   // sung what the mask hears as instrumental for 2 s or more either).
   const MASK_GAP = 0.3;
-  const carved = new WeakMap();   // spans array -> Map(analysis -> carved spans)
+  // Cached by the spans, the mask (a.vocals) and the beat, not by the analysis object: the
+  // planner hands this a fresh copy of the song every tick (withBarPhase, asOutgoing,
+  // musicEnd spread it), so a cache by the analysis missed every time and the carve
+  // (50 steps a second of song) re-ran on every plan, a whole core in Firefox (2026-11-26).
+  const carved = new WeakMap();   // spans array -> WeakMap(vocals array -> Map(beat -> carved spans))
   function carveSung(spans, a) {
     if (!Array.isArray(spans) || !a?.vocals?.length) return spans;
-    let byA = carved.get(spans);
-    if (!byA) { byA = new WeakMap(); carved.set(spans, byA); }
-    if (byA.has(a)) return byA.get(a);
     const beat = a.beatIntervalSec > 0 ? a.beatIntervalSec : 0.5, out = [];
+    let byV = carved.get(spans);
+    if (!byV) { byV = new WeakMap(); carved.set(spans, byV); }
+    let byBeat = byV.get(a.vocals);
+    if (!byBeat) { byBeat = new Map(); byV.set(a.vocals, byBeat); }
+    if (byBeat.has(beat)) return byBeat.get(beat);
     // lines that touch or overlap are one run first: a breath across a line change is one gap
     const runs = [];
     for (const [x, y] of [...spans].sort((p, q) => p[0] - q[0])) {
@@ -2656,7 +2662,7 @@
       if (gapAt != null && y - gapAt >= beat) { if (gapAt > from) out.push([from, gapAt]); }
       else if (y > from) out.push([from, y]);
     }
-    byA.set(a, out);
+    byBeat.set(beat, out);
     return out;
   }
 
