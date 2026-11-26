@@ -962,7 +962,7 @@
     const { presetRow, custom, laneSel, matchRow, barsRow, nudgeBtns, winReset, lateIn, preview, lock, reset, badge, note } = ui;
     const ov = A()?.migratePick?.(s?.pick) || {};
     const has = !!s?.pick;
-    const preset = ov.preset || 'auto', bm = ov.beatMatch || 'auto';
+    const preset = ov.preset || 'auto', bm = A()?.beatMatchOf?.(ov) || ov.beatMatch || 'auto';   // (an imported mix: Sync)
     const loopNone = s?.loop?.state === 'none';
     const mark = (b, on) => { b.classList.toggle('vivi-on', on); b.setAttribute('aria-checked', String(on)); };
     for (const b of presetRow.chips) {

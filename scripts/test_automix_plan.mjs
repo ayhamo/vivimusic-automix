@@ -436,6 +436,28 @@ test('Editor: a filter mix picked with 16 bars plays 16; Automix’s own filter 
   assert.equal(q.bars, 4);
 });
 
+test('Mix files: an imported mix beat-matches as Sync, past 8% too, unless it says Off or the listener picks Auto (ruled 2026-11-26)', () => {
+  const A = loadAutomix('auto', { automixVersion: 3 });
+  const cur = song(100, 200), next = song(109, 200);   // 9% apart
+  const imp = { preset: 'smooth', bars: 8, gridBpm: 100 };
+  assert.equal(A.beatMatchOf(imp), 'sync');
+  const p = planPick(A, cur, next, imp);
+  assert.equal(p.style, 'blend', `${p.style} ${p.reason}`);
+  assert.doesNotMatch((p.warnings || []).join(' '), /without beat match/);
+  // the file says Off: Off
+  assert.equal(planPick(A, cur, next, { ...imp, beatMatch: 'off' }).style, 'crossfade');
+  // the listener set it back to Auto: kept through normalizeOverride, Automix's 8% limit again
+  const auto = A.normalizeOverride({ ...imp, beatMatch: 'auto' });
+  assert.equal(auto.beatMatch, 'auto');
+  assert.match((planPick(A, cur, next, auto).warnings || []).join(' '), /without beat match/);
+  // a pick made in the editor (no gridBpm): Auto as before, and 'auto' isn't stored
+  assert.equal(A.beatMatchOf({ preset: 'smooth', bars: 8 }), 'auto');
+  assert.equal(A.normalizeOverride({ preset: 'smooth', bars: 8, beatMatch: 'auto' }).beatMatch, undefined);
+  assert.match((planPick(A, cur, next, { preset: 'smooth', bars: 8 }).warnings || []).join(' '), /without beat match/);
+  // a loop mix has no beat match
+  assert.equal(A.beatMatchOf({ preset: 'loop', gridBpm: 100 }), 'auto');
+});
+
 test('Editor: a placed mix-in may end 0.3 s before B does, not 10 s (ruled 2026-11-26)', () => {
   const A = loadAutomix('auto');
   const cur = song(120, 200), next = song(120, 180), bar = barSec(120);

@@ -116,6 +116,16 @@ Test: `node --test scripts/test_automix_plan.mjs` (the "mix file" tests).
    locked cap is refused for that pair with the editor's message. The pair plays the import the next
    time it is planned, also when it is the pair on screen.
 
+   **An imported mix beat-matches as Sync** (ruled 2026-11-26 [all]). A saved mix that carries
+   `gridBpm` came from a file (the editor never sets one); with no `beatMatch` it plays as Sync:
+   no 8% tempo gate, folded up to about 41%, as a Sync picked in the editor (editor.md §4). Its
+   file's `beatMatch` (Off, Glide, Sync) is kept as it is. It is done when the mix plays
+   (`beatMatchOf`), not stored at import, so mixes imported before need no re-import. The editor
+   shows such a mix's beat match as Sync. Auto picked there is saved as `beatMatch: "auto"` (kept
+   only on a mix with `gridBpm`), and that mix then has Automix's limits again. A loop mix has no
+   beat match. (Until then an imported mix's Auto kept Automix's 8% limit: on the phone an imported
+   Spotify mix 9% apart played without beat match.)
+
 7. **[all] Afterwards** the app says what happened in one line: "Imported N mixes", then any of
    "N already saved as they are", "N kept as saved" (declined replacements), each refused lock and
    each skipped mix with its reason (`mix 3 skipped: …`), and each imported mix whose beats are taken

@@ -478,6 +478,12 @@
       notes.push(`the preset "${ov.preset}" is no longer offered: Automatic plays`);
       ov = { ...ov, preset: 'auto' };
     }
+    // an imported mix beat-matches as Sync unless its file or the listener said otherwise (beatMatchOf)
+    if (ov && ov.preset !== 'loop') {
+      const bm = beatMatchOf(ov);
+      if (bm === 'auto') { if (ov.beatMatch) { ov = { ...ov }; delete ov.beatMatch; } }
+      else if (ov.beatMatch !== bm) ov = { ...ov, beatMatch: bm };
+    }
     // beats counted on another app's grid at half or double time: on this one's (mix-file.md rule 4)
     if (ov?.gridBpm) {
       const f = foldOverride(ov, editorGrid(from, 'out')?.bpm);
@@ -559,6 +565,14 @@
     const out = nextId ? overrideOf(`${id}>${nextId}`)?.speed?.out : null;
     return Number.isFinite(out) ? out : 1;
   }
+  // The beat match a saved mix plays with (editor.md §4, mix-file.md rule 4, ruled 2026-11-26 [all]): its own,
+  // else Sync for a mix that came from a file (it carries gridBpm; the editor never sets one), else Auto.
+  // An imported mix the listener set back to Auto keeps 'auto' (normalizeOverride keeps it there).
+  function beatMatchOf(ov) {
+    if (!ov || ov.preset === 'loop') return 'auto';
+    if (['sync', 'glide', 'off', 'auto'].includes(ov.beatMatch)) return ov.beatMatch;
+    return ov.gridBpm > 0 ? 'sync' : 'auto';
+  }
   function normalizeOverride(o) {
     o = migratePick(o);
     if (!o) return null;
@@ -587,6 +601,8 @@
       if (w.out || w.in) n.window = Object.fromEntries(Object.entries(w).filter(([, v]) => v));
       // (Loop: the loop decks do their own tempo ramp, editor.md §2)
       if (['sync', 'glide', 'off'].includes(o.beatMatch)) n.beatMatch = o.beatMatch;
+      // (Auto chosen on an imported mix, which plays as Sync without it: beatMatchOf)
+      else if (o.beatMatch === 'auto' && Number.isFinite(o.gridBpm) && o.gridBpm >= 20 && o.gridBpm <= 400) n.beatMatch = 'auto';
     }
     // each song's speed in the playlist it came from (editor.md §1, spotify-mixes.md rule 10)
     const sp = normalizeSpeed(o.speed);
@@ -2923,7 +2939,7 @@
     kickLock,
     kickSource,
     loopOrBlend,
-    presetCurves, migratePick, normalizeOverride, readMixFile, writeMixFile, mixChanges, importPlan, mixQueue, foldOverride, foldNote, MIX_FORMAT, MIX_VERSION, SPOTIFY_FORMAT, SPOTIFY_VERSION, editorGrid, windowLimits, nudgeWindow,
+    presetCurves, migratePick, normalizeOverride, readMixFile, writeMixFile, mixChanges, importPlan, mixQueue, foldOverride, foldNote, MIX_FORMAT, MIX_VERSION, SPOTIFY_FORMAT, SPOTIFY_VERSION, editorGrid, windowLimits, nudgeWindow, beatMatchOf,
     pointCurves, drawSec, drawX, shapeDrawing, normalizeDrawing, DRAW_MAX_POINTS, songSpeed, normalizeSpeed,
     resolveWindow,
     PRESET_LANES,

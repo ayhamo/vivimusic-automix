@@ -221,7 +221,9 @@ ending at bar 4).
   Glide, picked, always beat-match, however far apart the tempos (after folding half and double
   time, at most about 41%). Until then they stretched at most 8% and played Off past it. Auto keeps
   Automix's own limits (`V2_MAX_STRETCH`, `stretchAllowed`): with beat match Auto a pair out of
-  them plays without beat match, as before.
+  them plays without beat match, as before. An imported mix (one with `gridBpm`) with no beat
+  match plays as Sync (mix-file.md rule 6, `beatMatchOf`), and the editor shows it as Sync;
+  `beatMatch: "auto"` picked on it is kept and gives Automix's limits back.
 
 ## 5. Echo out (question 4)
 
