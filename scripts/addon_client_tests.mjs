@@ -411,6 +411,10 @@ check('bitchordAuth: needs official BitChord, said once', await fresh().discover
   // or by a redirect (checked on the answer's final URL: an extension's fetch can't read a redirect's Location)
   check('offLimits: http, this machine over https too, and a local addon\'s own http', [C.offLimits('https://a.example/t', 'http://a.example/f'), C.offLimits('https://a.example/t', 'https://127.0.0.1/f'), C.offLimits('https://a.example/t', 'https://[::1]:8080/f'),
     C.offLimits('https://a.example/t', 'https://cdn.example/f'), C.offLimits('http://127.0.0.1:9/m/t', 'http://127.0.0.1:9/m/t/file/1')], ['not https', 'points at this machine', 'points at this machine', null, null]);
+  // (audit 2026-11-26 step 2, the phone's F5-2 untrusted hosts) every other spelling of this machine too
+  const spellings = ['https://127.0.0.2/f', 'https://127.1/f', 'https://2130706433/f', 'https://0x7f.1/f', 'https://0.0.0.0/f', 'https://LOCALHOST./f', 'https://a.localhost/f', 'https://[::]/f', 'https://[::ffff:127.0.0.1]/f', 'https://[0:0:0:0:0:0:0:1]/f'];
+  check('offLimits: every spelling of this machine; a host that only starts like one is not', [...spellings.map((u) => C.offLimits('https://a.example/t', u)), C.offLimits('https://a.example/t', 'https://127.0.0.1.cdn.example/f'), C.offLimits('https://a.example/t', 'https://localhost.example/f')],
+    [...spellings.map(() => 'points at this machine'), null, null]);
   const answer = (url, status = 200, body = '{"id":"m","name":"M","version":"1","resources":["search","stream"]}') => ({ url, status, headers: { get: () => null }, body: null, text: async () => body, arrayBuffer: async () => new TextEncoder().encode(body).buffer });
   const to = (final) => C.create({ fetch: async () => answer(final) });
   check('a manifest redirected to this machine or off https: refused, nothing of it read', [await to('http://127.0.0.1:8080/admin').discover('https://a.example/tok').then(() => 'found', (e) => e.message),

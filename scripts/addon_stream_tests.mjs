@@ -35,8 +35,16 @@ function server(routes) {
       let body = typeof r.body === 'string' ? new TextEncoder().encode(r.body) : new Uint8Array(r.body);
       let status = r.status ?? 200;
       const m = opt.headers?.Range?.match(/^bytes=(\d+)-(\d+)$/);
-      if (m && !r.ignoreRange) { body = body.slice(Number(m[1]), Number(m[2]) + 1); status = 206; }
-      return { ok: status < 400, status, url: r.redirect ?? url, headers: { get: (h) => (h.toLowerCase() === 'content-type' ? r.type ?? null : null) }, arrayBuffer: async () => body.slice().buffer };
+      let range = null;
+      if (m && !r.ignoreRange) {
+        // wrongStart: the part from another place than asked (its Content-Range says so); short: a byte less, no Content-Range
+        const from = r.wrongStart ? 0 : Number(m[1]), to = Number(m[2]) - (r.wrongStart ? Number(m[1]) : 0) - (r.short ? 1 : 0);
+        const total = body.length;
+        body = body.slice(from, to + 1); status = 206;
+        if (!r.short) range = `bytes ${from}-${to}/${total}`;
+      }
+      const hdr = { 'content-type': r.type ?? null, 'content-range': range };
+      return { ok: status < 400, status, url: r.redirect ?? url, headers: { get: (h) => hdr[h.toLowerCase()] ?? null }, arrayBuffer: async () => body.slice().buffer };
     } finally { open--; }
   };
   return { fetch, log, max: () => maxOpen };
@@ -141,6 +149,13 @@ function tsFile(frames, { streamType = 0x0f, pid = 0x101 } = {}) {
     const { a, s } = await run({ 'https://cdn.example/r.m3u8': { body: media }, 'https://cdn.example/all.mp4': { body: file, ignoreRange } }, { transport: 'hls', url: 'https://cdn.example/r.m3u8' });
     check(`HLS byte ranges${ignoreRange ? ' (Range ignored by the server)' : ''}: the ranges asked, the file rebuilt`, [s.log.slice(1).map((l) => l.range), JSON.stringify(bytesOf(a.bytes)) === JSON.stringify(bytesOf(file.buffer))], [['bytes=0-15', 'bytes=16-27', 'bytes=28-39'], true]);
   }
+  // (audit 2026-11-26, the phone's B4-01) a part that isn't the range asked is not joined: another start (its
+  // Content-Range), a byte short (no Content-Range shown), or a whole file too short to hold the range
+  const wrong = await run({ 'https://cdn.example/r.m3u8': { body: media }, 'https://cdn.example/all.mp4': { body: file, wrongStart: true } }, { transport: 'hls', url: 'https://cdn.example/r.m3u8' });
+  const short = await run({ 'https://cdn.example/r.m3u8': { body: media }, 'https://cdn.example/all.mp4': { body: file, short: true } }, { transport: 'hls', url: 'https://cdn.example/r.m3u8' });
+  const cut = await run({ 'https://cdn.example/r.m3u8': { body: media }, 'https://cdn.example/all.mp4': { body: file.slice(0, 30), ignoreRange: true } }, { transport: 'hls', url: 'https://cdn.example/r.m3u8' });
+  check('HLS byte ranges: another range than asked, or a file too short for it, is not joined', [wrong.a.none, wrong.a.bytes, short.a.none, cut.a.none],
+    ['a segment answered another range than the one asked', undefined, 'a segment answered another range than the one asked', 'a segment is shorter than its range']);
 }
 {
   const seg = { 'https://cdn.example/s0.ts': { body: tsFile([adtsFrame(1)]) } };

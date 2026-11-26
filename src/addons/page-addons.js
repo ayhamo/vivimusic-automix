@@ -152,7 +152,7 @@
     if (!r?.addon) { if (r?.none && r.none !== 'no pass needed') log(`${s.meta?.artist} - ${s.meta?.song}: no better copy (${r.none})`, r.tried?.length ? r.tried : ''); return false; }
     // (the playing copy is kept aside: a better one that is then refused gives it back, keepCopy)
     s.prev = { addon: s.addon, row: s.row, stream: s.stream, tried: s.tried, cached: s.cached, play: s.play };
-    Object.assign(s, { addon: r.addon, row: r.row, stream: r.stream, tried: r.tried, cached: false, play: null });
+    Object.assign(s, { addon: r.addon, row: r.row, stream: r.stream, tried: r.tried, cached: !!r.cached, play: null });
     show();
     log(`${s.meta?.artist} - ${s.meta?.song}: a better copy: ${r.addon.name} (${r.addon.host}) row ${r.row.id}, ${r.stream.codec || '?'}${r.stream.sampleRate ? ' ' + r.stream.sampleRate / 1000 + ' kHz' : ''}${r.stream.bitDepth ? '/' + r.stream.bitDepth : ''}`);
     return true;

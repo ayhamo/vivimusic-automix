@@ -65,10 +65,19 @@
         try { bytes = await readCapped(r, cap ?? budget); }
         catch (e) { throw new Failure(ctl.signal.aborted ? `${what} took too long` : `${what} failed: ${e?.message || e}`); }
         if (!bytes) throw new Failure(cap != null ? `${what} is too big` : `the file is too big (over ${Math.round(maxBytes / 1e6)} MB)`);
-        // a server that ignored the Range sent the whole file: the range is cut from it
-        if (range && r.status === 200 && bytes.byteLength > range[1] - range[0] + 1) {
-          if (cap == null) budget.left += bytes.byteLength - (range[1] - range[0] + 1);
-          bytes = bytes.slice(range[0], range[1] + 1);
+        if (range) {
+          const want = range[1] - range[0] + 1;
+          if (r.status === 206) {
+            // the range asked and nothing else (the phone's B4-01): a part that starts or ends elsewhere (its
+            // Content-Range, when the answer shows it) or holds another length would join the wrong bytes
+            const cr = String(r.headers?.get?.('content-range') || '').match(/^\s*bytes\s+(\d+)-(\d+)\//i);
+            if ((cr && (Number(cr[1]) !== range[0] || Number(cr[2]) !== range[1])) || bytes.byteLength !== want) throw new Failure(`${what} answered another range than the one asked`);
+          } else {
+            // a server that ignored the Range sent the whole file: the range is cut from it (a file too short to hold it: no)
+            if (bytes.byteLength < range[1] + 1) throw new Failure(`${what} is shorter than its range`);
+            if (cap == null) budget.left += bytes.byteLength - want;
+            bytes = bytes.slice(range[0], range[1] + 1);
+          }
         }
         return { bytes, url: r.url || url, type: (r.headers?.get?.('content-type') || '').split(';')[0].trim().toLowerCase() };
       } finally { clearTimeout(timer); signal?.removeEventListener?.('abort', stop); }

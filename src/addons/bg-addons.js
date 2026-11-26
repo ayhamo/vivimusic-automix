@@ -256,6 +256,11 @@
       if (!cur) return { none: t ? 'not opened' : 'ticket expired' };
       const want = Pick.upgradeWanted(cur.stream, t.opt?.tier, !!cur.cacheKey);
       if (!want) return { none: 'no pass needed' };
+      // a better copy already kept (an earlier pass found it, and a lower one wins OPEN by rank, 8.1.6): it is
+      // ready at once and needs no /stream call; without this it was never played again, as the pass after
+      // a cached copy asks only the addons ranked above it (any rank here, the playing copy left out)
+      const better = await cached(t, (st) => Pick.qualityRank(st) >= want.minRank || 'not better', cur.cacheKey || cacheKey(cur.addon, cur.row, t.opt));
+      if (better) { t.prev = cur; t.got = better; t.opened = Promise.resolve(better); return { ...outward(better), cached: true }; }
       // (the rows refused for the song stay passed over, 8.1.4)
       const all = passOver(t);
       const at = all.findIndex((f) => f.addon.base === cur.addon.base);
@@ -296,12 +301,12 @@
       return { ok: true, cleared, files: dropped };
     }
     const cacheKey = (addon, row, opt) => files && addon?.id && row?.id ? files.keyOf(addon.id, row.id, addon.quality ?? opt?.tier) : null;
-    async function cached(t, floor = () => true) {
+    async function cached(t, floor = () => true, skip = null) {
       if (!files) return null;
       for (const { addon, rows } of passOver(t)) {
         for (const row of rows) {
           const key = cacheKey(addon, row, t.opt);
-          const meta = key && await files.has(key).catch(() => null);
+          const meta = key && key !== skip && await files.has(key).catch(() => null);
           if (meta && floor(meta.stream || {}) === true) return { addon: { base: addon.base, name: addon.name, host: addon.host, id: addon.id, quality: addon.quality ?? null }, row, stream: meta.stream || {}, tried: [...t.tried], cacheKey: key };
         }
       }

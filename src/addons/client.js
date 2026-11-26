@@ -44,7 +44,14 @@
   // the answer's final URL too: an extension's fetch can't read a redirect's Location (redirect: 'manual' gives
   // an opaque answer), so a hop to such a place is refused before anything of its answer is read or used.
   // (An addon on this machine, the tests' mock server, may use plain http on it.)
-  const isLocal = (u) => /^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(:\d+)?(\/|$)/i.test(text(u));
+  // (by the parsed host, every spelling of this machine: all of 127/8 (2130706433 and 0x7f.1 parse to it),
+  // 0.0.0.0, localhost and its subdomains, a trailing dot, [::1], [::] and IPv4-mapped loopback)
+  const isLocal = (u) => {
+    let h;
+    try { const x = new URL(text(u)); if (!/^https?:$/.test(x.protocol)) return false; h = x.hostname.toLowerCase().replace(/\.$/, ''); } catch { return false; }
+    return h === 'localhost' || h.endsWith('.localhost') || /^127\.\d+\.\d+\.\d+$/.test(h) || h === '0.0.0.0'
+      || h === '[::1]' || h === '[::]' || /^\[::ffff:(127\.|0\.0\.0\.0|7f[0-9a-f]{2}:|0:0\])/.test(h);
+  };
   function offLimits(base, url) {
     if (!url || !base || isLocal(base)) return null;
     if (!/^https:/i.test(url)) return 'not https';

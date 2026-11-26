@@ -158,6 +158,30 @@ const cacheWith = (maxBytes, st = fakeStorage(), c = fakeCache()) => ({ st, c, F
   const rf = await S.handle({ type: 'VIVI_ADDONS_REFRESH', ticket: f.ticket });
   check("REFRESH: answers forgotten, the song's cached files dropped, the ticket gone", [rf, forgot, before - (await files.stats()).files, S.ticketOf(f.ticket), await S.handle({ type: 'VIVI_ADDONS_REFRESH', ticket: f.ticket })], [{ ok: true, cleared: 3, files: 2 }, [['Weak', ['idA', 'idB']]], 2, undefined, { none: 'ticket expired' }]);
 }
+{
+  // (audit 2026-11-26, the phone's "upgrade pass after a lower cached copy") a lossy copy of A (ranked first) and the
+  // lossless copy an earlier pass found at B, both kept: OPEN takes A's by rank, and the pass then finds B's in the
+  // cache (no /stream call). Before, the pass asked only the addons above A, so B's kept copy never played again
+  const st = fakeStorage({ addonsEnabled: true, addonsTier: 'LOSSLESS', addonsList: [{ id: 'idA', base: 'https://a.example/SECRET-A', name: 'A', host: 'a.example' }, { id: 'idB', base: 'https://b.example/SECRET-B', name: 'B', host: 'b.example' }] });
+  const c = fakeCache();
+  const files = FC.create({ open: () => c, storage: st, maxBytes: async () => 512e6, now: () => ++T });
+  let opens = 0;
+  const client = {
+    health: () => ({}),
+    find: async (song, addons) => ({ found: addons.map((a) => ({ addon: { ...a, name: a.id, host: a.id + '.example' }, rows: [{ id: a.id + '-1' }] })), tried: [] }),
+    open: async () => { opens++; return { none: 'no addon has it', tried: [] }; },
+  };
+  const S = A.create({ storage: st, client, fetch: async () => { throw new Error('no download expected'); }, files });
+  await files.put(files.keyOf('idA', 'idA-1', 'LOSSLESS'), bytes(100, 1), { mime: 'audio/mpeg', stream: { codec: 'mp3', bitrate: 320, transport: 'file' } });
+  await files.put(files.keyOf('idB', 'idB-1', 'LOSSLESS'), bytes(100, 2), { mime: 'audio/flac', stream: { codec: 'flac', bitDepth: 16, sampleRate: 44100, transport: 'file' } });
+  const f = await S.handle({ type: 'VIVI_ADDONS_FIND', song: { title: 'Both', artist: 'X', durationSec: 200 } });
+  const o = await S.handle({ type: 'VIVI_ADDONS_OPEN', ticket: f.ticket, ytKbps: 160 });
+  const up = await S.handle({ type: 'VIVI_ADDONS_UPGRADE', ticket: f.ticket });
+  const file = await S.handle({ type: 'VIVI_ADDONS_FETCH', ticket: f.ticket });
+  check('UPGRADE after a lower cached copy: a better kept copy of a lower-ranked addon plays, no /stream call', [o.row.id, o.cached, up.row?.id, up.stream?.codec, up.cached, opens, new Uint8Array(file.bytes)[0], file.cached], ['idA-1', true, 'idB-1', 'flac', true, 0, 2, true]);
+  const kept = await S.handle({ type: 'VIVI_ADDONS_KEEP', ticket: f.ticket, why: 'no match' });
+  check('KEEP after it: the lossy copy is the ticket\'s again', [kept, S.ticketOf(f.ticket).got.row.id], [{ ok: true }, 'idA-1']);
+}
 
 // ---- 8.1.4: a copy refused by a later check (the page's fit) passes to the next ready row or lane ----
 {
