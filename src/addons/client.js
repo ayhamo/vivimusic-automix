@@ -431,12 +431,14 @@
           if (over()) return null;
           const s = await stream(addon, row, man).catch((e) => (e.kind === 'miss' ? { miss: e.message } : Promise.reject(e)));
           if (s.miss) { tried.push({ addon: addon.host, row: row.id, why: s.miss }); continue; }
-          if (s.transport !== 'file') { tried.push({ addon: addon.host, row: row.id, why: s.transport + ' (not played yet)' }); continue; }
+          if (!['file', 'hls', 'dash'].includes(s.transport)) { tried.push({ addon: addon.host, row: row.id, why: `${s.transport} (not played here)` }); continue; }
           // the caller's own bar (the lossy floor, the upgrade pass: protocol.md 8.2.1): true, or why not
           const want = accept ? accept(s) : true;
           if (want !== true) { tried.push({ addon: addon.host, row: row.id, why: want || 'not wanted' }); continue; }
           if (over()) return null;
-          const p = await probe(s.url, { ...row, tier: s.tier ?? row.tier, kbps: s.bitrate ?? row.kbps }, target.durationSec, slackSec, s.headers, addon.base);
+          // (an HLS or DASH row: no probe; a playlist's size says nothing of the song's length, and its
+          // segments are read when the background puts them together into one file, §8.1.5)
+          const p = s.transport !== 'file' ? { ok: true } : await probe(s.url, { ...row, tier: s.tier ?? row.tier, kbps: s.bitrate ?? row.kbps }, target.durationSec, slackSec, s.headers, addon.base);
           if (!p.ok) { tried.push({ addon: addon.host, row: row.id, why: p.why }); continue; }
           note(addon.base, true, 'ok', now() - t0);
           log(`addons: ${man.name} (${addon.host}) has it: row ${row.id}, ${s.codec || '?'}${s.sampleRate ? ' ' + s.sampleRate / 1000 + ' kHz' : ''}${s.bitDepth ? '/' + s.bitDepth : ''}`);

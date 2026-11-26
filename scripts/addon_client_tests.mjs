@@ -153,7 +153,15 @@ behaviour.good = {
   const c = fresh();
   const got = await c.resolve(song, [{ base: base('down') }, { base: base('good') }]);
   check('resolve: a down addon is passed over', got.tried[0].why, 'server error (500)');
-  check('resolve: rows opened in order, at most 3 (atmos row skipped); the cut file refused by the probe, then HLS skipped', got.tried.slice(1).map((t) => [t.row, t.why]), [['cut', 'file holds at most 28 s'], ['hls', 'hls (not played yet)'], ['atmosstream', 'atmos']]);
+  check('resolve: rows opened in order (atmos row skipped); the cut file refused by the probe, then the HLS row opens', [got.tried.slice(1).map((t) => [t.row, t.why]), got.row?.id, got.stream?.transport], [[['cut', 'file holds at most 28 s']], 'hls', 'hls']);
+  check('resolve: an HLS row gets no range probe (a playlist\'s size says nothing of the song\'s length, §8.1.5)', hitsOf('good', 'file').map((h) => h.id), ['cut']);
+}
+behaviour.good3 = { ...behaviour.good, search: (u, send) => send(200, { tracks: [row('atmos', { isAtmosOnly: true }), row('cut'), row('atmosstream'), row('cut2'), row('fine')] }) };
+behaviour.good.fileBytes.cut2 = 700_000;   // (good3's streams point at good's files)
+{
+  const c = fresh();
+  const got = await c.resolve(song, [{ base: base('good3') }]);
+  check('resolve: rows opened in order, at most 3: the cut files refused by the probe, the Atmos answer refused', got.tried.map((t) => [t.row, t.why]), [['cut', 'file holds at most 28 s'], ['atmosstream', 'atmos'], ['cut2', 'file holds at most 28 s']]);
   check('resolve: nothing playable in its 3 rows: none', got.none, 'no addon has it');
 }
 behaviour.good2 = { ...behaviour.good, search: (u, send) => send(200, { tracks: [row('atmos', { isAtmos: true }), row('fine')] }) };
@@ -418,6 +426,12 @@ check('bitchordAuth: needs official BitChord, said once', await fresh().discover
   behaviour.hA = { search: (u, send) => send(500, {}) };
   await hc.find(song, [{ base: base('hA'), id: 'x' }, { base: base('hB'), id: 'y' }]).catch(() => null);
   check('healthFor: by the addon\'s base, two on one host apart', [hc.healthFor(base('hA'))?.fails > 0, hc.healthFor(base('hB'))?.fails], [true, 0]);
+}
+
+{
+  // a transport other than a file, HLS or DASH is passed over before any probe or fetch (§8.1.5)
+  const src = (await import('node:fs')).readFileSync(new URL('../src/addons/client.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+  check('an unknown transport: passed over, named', /if \(!\['file', 'hls', 'dash'\]\.includes\(s\.transport\)\) \{ tried\.push\([^\n]*not played here[^\n]*continue; \}/.test(src), true);
 }
 
 server.close();

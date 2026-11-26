@@ -4,7 +4,7 @@
 
 'use strict';
 
-if (typeof importScripts === 'function') importScripts('fx-headers.js', 'md5.js', 'lastfm.js', 'listenbrainz.js', 'spotify.js', 'apple-canvas.js', 'lrcred.js', 'discord-rpc.js', 'plus/canvas-settings.js', 'plus/bg-plus.js', 'plus/bg-canvas.js', 'addons/track-matcher.js', 'addons/pick.js', 'addons/client.js', 'addons/file-cache.js', 'addons/bg-addons.js'); // vivi+ hook: Chrome's list; Firefox's event page has no importScripts and loads them via background.scripts
+if (typeof importScripts === 'function') importScripts('fx-headers.js', 'md5.js', 'lastfm.js', 'listenbrainz.js', 'spotify.js', 'apple-canvas.js', 'lrcred.js', 'discord-rpc.js', 'plus/canvas-settings.js', 'plus/bg-plus.js', 'plus/bg-canvas.js', 'addons/track-matcher.js', 'addons/pick.js', 'addons/client.js', 'addons/file-cache.js', 'addons/stream-assemble.js', 'addons/bg-addons.js'); // vivi+ hook: Chrome's list; Firefox's event page has no importScripts and loads them via background.scripts
 
 /* -------------------------------------------------------------------------
  * Apple Music Canvas — header spoofing

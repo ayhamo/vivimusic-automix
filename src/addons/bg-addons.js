@@ -39,6 +39,7 @@
   const C = globalThis.__viviAddonClient || (typeof require === 'function' ? require('./client.js') : null);
   const Pick = globalThis.__viviAddonPick || (typeof require === 'function' ? require('./pick.js') : null);
   const FileCache = globalThis.__viviAddonFileCache || (typeof require === 'function' ? require('./file-cache.js') : null);
+  const Assemble = globalThis.__viviStreamAssemble || (typeof require === 'function' ? require('./stream-assemble.js') : null);
 
   const TIERS = ['LOSSLESS', 'HIRES', 'CD', 'HIGH', 'LOW'];   // (LOSSLESS: the addon's best)
   const DEFAULTS = { addonsEnabled: false, addonsList: [], addonsTier: 'LOSSLESS', addonsSlackSec: 5, addonsCacheMB: 512 };
@@ -344,6 +345,14 @@
       const ctl = new AbortController();
       const timer = setTimeout(() => ctl.abort(), FILE_TIMEOUT_MS);
       try {
+        // §8.1.5: an HLS or DASH row, its segments put together into one file the page decodes like a
+        // progressive one (stream-assemble.js). Never through the cache (§8.1.6.1): opened from its own URL each time.
+        if (s.transport === 'hls' || s.transport === 'dash') {
+          if (!Assemble) return { none: `${s.transport} is not supported here`, refused: true };
+          const a = await Assemble.assemble(s, { base: got.addon.base, fetch: doFetch, signal: ctl.signal, maxBytes: FILE_MAX_BYTES });
+          if (!a.bytes) return { none: ctl.signal.aborted ? 'the file took too long' : a.none, ...(a.refused ? { refused: true } : {}) };
+          return { bytes: a.bytes, mime: a.mime };
+        }
         const r = await doFetch(s.url, { headers: { ...(s.headers || {}) }, signal: ctl.signal, credentials: 'omit', cache: 'no-store' });
         // (redirected off https, or to this machine: refused before its body is read, like a bad row; client.offLimits)
         const off = C.offLimits?.(got.addon.base, r.url);

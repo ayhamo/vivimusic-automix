@@ -18,6 +18,7 @@ step "Addon client, store and page"
 node scripts/addon_client_tests.mjs
 node scripts/addon_store_tests.mjs
 node scripts/addon_file_cache_tests.mjs
+node scripts/addon_stream_tests.mjs
 node scripts/addon_page_tests.mjs
 step "Canvas"
 node scripts/video_canvas_tests.mjs

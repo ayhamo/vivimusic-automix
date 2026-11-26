@@ -91,6 +91,7 @@
       "src/addons/pick.js",
       "src/addons/client.js",
       "src/addons/file-cache.js",
+      "src/addons/stream-assemble.js",
       "src/addons/bg-addons.js"
     ],
     "service_worker": "src/background.js"
