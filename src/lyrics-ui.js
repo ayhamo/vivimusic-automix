@@ -171,8 +171,14 @@
     return null;
   }
 
+  // vivi+: the lyrics tick asks this every frame (60-144 a second); the whole tab strip's search
+  // (querySelectorAll + every tab's label) was 12% of the tab's main thread, so the tab found is
+  // kept for half a second while it stays in the page (its selected state is still read every frame)
+  let lyricsTabKept = null, lyricsTabAt = 0;
   function isLyricsTabActive() {
-    const tab = findTabByLabel('lyrics');
+    const now = performance.now();
+    if (!lyricsTabKept?.isConnected || now - lyricsTabAt > 500) { lyricsTabKept = findTabByLabel('lyrics'); lyricsTabAt = now; }
+    const tab = lyricsTabKept;
     return !!tab && (tab.getAttribute('aria-selected') === 'true' || tab.hasAttribute('selected'));
   }
 

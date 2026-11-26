@@ -90,7 +90,10 @@
     const p = pending.get(d.fileKey);
     if (!p) return;
     pending.delete(d.fileKey);
-    if (d.type === 'result') p.resolve(d.result);
+    // (copied once into this script's own world: in Firefox a message's data stays the page's, read
+    // through a wrapper that costs microseconds a property, and the planner reads the curves every
+    // tick; one carve of the vocal mask took 240 ms of the main thread at a song's start, a crackle)
+    if (d.type === 'result') { let r = d.result; try { r = structuredClone(r); } catch { /* as it came */ } p.resolve(r); }
     else p.reject(new Error(d.message || 'analysis failed'));
   });
 
