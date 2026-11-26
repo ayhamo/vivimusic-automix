@@ -60,7 +60,6 @@
     "https://*.googleusercontent.com/*",
     "https://lyrics.paxsenix.org/*",
     "https://api-lyrics.simpmusic.org/*",
-    "https://api.paxsenix.org/*",
     "https://genius.com/*",
     "https://*.genius.com/*",
     "https://*.spotify.com/*",
@@ -126,7 +125,6 @@
         "https://music.youtube.com/*"
       ],
       "js": [
-        "src/fx-storage.js",
         "src/net.js",
         "src/fx-compat.js",
         "src/layout-compat.js",

@@ -6,6 +6,13 @@
 
 'use strict';
 
+// every request here has a time limit (15 s unless said), the body's read included: a host that stalls
+// must not hold a message's answer (or the background) forever
+function plusFetch(url, init = {}, ms = 15000) {
+  const t = AbortSignal.timeout(ms);
+  return fetch(url, { ...init, signal: init.signal && AbortSignal.any ? AbortSignal.any([init.signal, t]) : t });
+}
+
 // ── Chrome/Edge: Spotify web-player Origin/Referer (and SimpMusic's User-Agent) for this extension's own requests ──
 // Firefox does this in fx-headers.js (blocking webRequest) and has no DNR here.
 const SPOTIFY_HEADER_RULE_ID = 9002;
@@ -187,7 +194,7 @@ async function getAppleArtistArt(artistName) {
 
   try {
     const searchUrl = `https://itunes.apple.com/search?term=${encodeURIComponent(cleanArtist)}&entity=musicArtist&limit=5`;
-    const searchRes = await fetch(searchUrl);
+    const searchRes = await plusFetch(searchUrl);
     if (!searchRes.ok) return null;
     const searchData = await searchRes.json();
     const results = searchData?.results || [];
@@ -200,7 +207,7 @@ async function getAppleArtistArt(artistName) {
     const pageUrl = hit.artistLinkUrl.split('?')[0];
     // the link comes from iTunes' answer: only Apple Music's own https pages are opened
     if (!/^https:\/\/music\.apple\.com\//.test(pageUrl)) return null;
-    const pageRes = await fetch(pageUrl, {
+    const pageRes = await plusFetch(pageUrl, {
       credentials: 'omit',
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
@@ -323,7 +330,7 @@ async function getPaxsenixLyrics(track) {
     const songId = matchedSong?.id;
     if (!songId) return null;
 
-    const paxRes = await fetch(`https://lyrics.paxsenix.org/apple-music/lyrics?id=${encodeURIComponent(songId)}&ttml=true`, {
+    const paxRes = await plusFetch(`https://lyrics.paxsenix.org/apple-music/lyrics?id=${encodeURIComponent(songId)}&ttml=true`, {
       headers: { 'Accept': 'application/json, text/xml, */*' },
     });
     if (!paxRes.ok) return null;
@@ -344,7 +351,7 @@ async function getGeniusLyrics(track) {
 
   try {
     const searchUrl = `https://genius.com/api/search/multi?q=${encodeURIComponent(query)}`;
-    const searchRes = await fetch(searchUrl, {
+    const searchRes = await plusFetch(searchUrl, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
       }
@@ -377,7 +384,7 @@ async function getGeniusLyrics(track) {
     if (!bestHit?.url) return null;
     // the link comes from Genius' answer: only genius.com's own https pages are opened
     if (!/^https:\/\/genius\.com\//.test(String(bestHit.url))) return null;
-    const pageRes = await fetch(bestHit.url, {
+    const pageRes = await plusFetch(bestHit.url, {
       credentials: 'omit',
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
@@ -407,7 +414,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg?.type === 'VIVI_TRANSLATE') {
     // lyrics.md §10: Google's keyless endpoint (it answers any origin)
     if (typeof msg.body !== 'string' || msg.body.length > 20000) { sendResponse({ ok: false }); return undefined; }
-    fetch('https://translate.googleapis.com/translate_a/single', { method: 'POST', body: new URLSearchParams(msg.body), credentials: 'omit' })
+    plusFetch('https://translate.googleapis.com/translate_a/single', { method: 'POST', body: new URLSearchParams(msg.body), credentials: 'omit' })
       .then((r) => (r.ok ? r.text() : null))
       .then((body) => sendResponse({ ok: !!body, body: body || null }))
       .catch((e) => sendResponse({ ok: false, error: String(e?.message || e) }));
@@ -417,7 +424,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     // lyrics.md §11.1: SimpMusic answers its own clients only (by the User-Agent) and sends no CORS header
     const id = String(msg.videoId || '');
     if (!/^[\w-]{11}$/.test(id)) { sendResponse({ ok: false }); return undefined; }
-    fetch('https://api-lyrics.simpmusic.org/v1/' + id, { headers: { 'User-Agent': 'SimpMusicLyrics/1.0', Accept: 'application/json' }, credentials: 'omit' })
+    plusFetch('https://api-lyrics.simpmusic.org/v1/' + id, { headers: { 'User-Agent': 'SimpMusicLyrics/1.0', Accept: 'application/json' }, credentials: 'omit' })
       .then((r) => (r.ok ? r.text() : null))
       .then((body) => sendResponse({ ok: !!body, body: body || null }))
       .catch((e) => sendResponse({ ok: false, error: String(e?.message || e) }));
@@ -450,7 +457,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     const currentVersion = chrome.runtime.getManifest().version;
     let result;
     try {
-      const res = await fetch(RELEASES_API, {
+      const res = await plusFetch(RELEASES_API, {
         headers: { Accept: 'application/vnd.github+json' },
       });
       if (res.status === 404) throw new Error('the fork repo is private, open its releases page while signed in to GitHub');
@@ -513,11 +520,11 @@ getSpDc = async function getSpDc() {
 
   // The same default store, asked the ways Firefox's dFPI / first-party isolation need
   // (no storeId: the background's own store, never a container's or a private window's).
+  // (Spotify's domain only: an sp_dc of another site the extension may read is never sent to Spotify, §4 rule 0)
   const queries = [
-    { name: 'sp_dc', partitionKey: {}, firstPartyDomain: null },
-    { name: 'sp_dc', firstPartyDomain: null },
-    { name: 'sp_dc', partitionKey: {} },
-    { name: 'sp_dc' },
+    { domain: 'spotify.com', name: 'sp_dc', partitionKey: {}, firstPartyDomain: null },
+    { domain: 'spotify.com', name: 'sp_dc', firstPartyDomain: null },
+    { domain: 'spotify.com', name: 'sp_dc', partitionKey: {} },
     { domain: 'spotify.com', name: 'sp_dc' },
     { url: 'https://spotify.com/', name: 'sp_dc' },
     { url: 'https://accounts.spotify.com/', name: 'sp_dc' },
@@ -528,6 +535,8 @@ getSpDc = async function getSpDc() {
         ? [await chrome.cookies.get(q).catch(() => null)]
         : await chrome.cookies.getAll(q).catch(() => []);
       for (const c of results) {
+        const dom = String(c?.domain || '').toLowerCase().replace(/^\./, '');
+        if (dom !== 'spotify.com' && !dom.endsWith('.spotify.com')) continue;
         const val = c && c.name === 'sp_dc' ? String(c.value || '').trim() : '';
         if (val && (!c.storeId || c.storeId === 'firefox-default' || c.storeId === '0')) return val;
       }
@@ -562,7 +571,7 @@ setSpDc = async function setSpDc(value) {
 getSecretDict = async function getSecretDict() {
   if (spotifySecretCache) return spotifySecretCache;
   try {
-    const r = await fetch(SPOTIFY_SECRET_URL, { cache: 'no-store' });
+    const r = await plusFetch(SPOTIFY_SECRET_URL, { cache: 'no-store' }, 8000);   // (soon back to the bundled secret)
     if (r.ok) {
       spotifySecretCache = await r.json();
       return spotifySecretCache;
@@ -700,7 +709,7 @@ getSecretDict = async function getSecretDict() {
   }
 
   async function scrapeAmpToken(now) {
-    const htmlRes = await fetch('https://music.apple.com/us/browse');
+    const htmlRes = await plusFetch('https://music.apple.com/us/browse');
     const html = await htmlRes.text();
     const scripts = [...new Set(html.match(/\/assets\/index(?:-legacy)?[~-][a-zA-Z0-9_-]+\.js/g) || [])];
     // Every bundle is read before picking: the web player's own token may sit in
@@ -709,7 +718,7 @@ getSecretDict = async function getSecretDict() {
     for (const scriptPath of scripts) {
       let scriptText;
       try {
-        scriptText = await (await fetch(`https://music.apple.com${scriptPath}`)).text();
+        scriptText = await (await plusFetch(`https://music.apple.com${scriptPath}`)).text();
       } catch { continue; }
       for (const t of scriptText.match(/ey[a-zA-Z0-9_-]+\.ey[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+/g) || []) {
         if (!rejectedAmpTokens.has(t) && !candidates.some((c) => c.t === t)) candidates.push({ t, exp: jwtExpiryMs(t) });
@@ -761,7 +770,7 @@ getSecretDict = async function getSecretDict() {
       if (v !== undefined && v !== null && v !== '') url.searchParams.set(k, String(v));
     }
     // Origin/Referer are rewritten to music.apple.com's by fx-headers.js.
-    const res = await fetch(url.toString(), { headers: { Authorization: `Bearer ${token}` } });
+    const res = await plusFetch(url.toString(), { headers: { Authorization: `Bearer ${token}` } });
     if (res.status === 401) {
       console.warn('[Vivi Apple] token rejected by the catalog API; re-scraping');
       await rejectAmpToken(token);
@@ -929,7 +938,7 @@ getSecretDict = async function getSecretDict() {
 
   async function appleArtistId(name, country) {
     const url = `https://itunes.apple.com/search?term=${encodeURIComponent(name)}&entity=musicArtist&attribute=artistTerm&limit=200&country=${country}`;
-    const r = await fetch(url);
+    const r = await plusFetch(url);
     if (!r.ok) throw new Error('artist id lookup HTTP ' + r.status);
     const target = profileName(name);
     const ids = [...new Set(((await r.json())?.results || [])
@@ -940,7 +949,7 @@ getSecretDict = async function getSecretDict() {
   // the HLS variant for the quality (canvas-settings.js pickVariant over RESOLUTION and BANDWIDTH)
   async function appleVariant(master, quality) {
     const CS = globalThis.__viviCanvasSettings;
-    const r = await fetch(master);
+    const r = await plusFetch(master);
     if (!r.ok) return null;
     const lines = (await r.text()).split(/\r?\n/);
     const vs = [];

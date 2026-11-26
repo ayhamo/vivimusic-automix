@@ -52,6 +52,26 @@ async function viviSpDcForCookie() {
   } catch { return null; }
 }
 
+// Requests of ours redirected from another host (a relay's allowed host answering 302): an extension's fetch
+// can't stop at a redirect to read where it goes, so the hop is made; such a request never gets the
+// listener's sp_dc when it lands on Spotify (canvas.md §4 rule 0). The relays then refuse its answer.
+const viviRedirectedIn = new Set();
+try {
+  chrome.webRequest.onBeforeRedirect.addListener((details) => {
+    if (!viviIsFromExtension(details)) return;
+    let from = '';
+    try { from = new URL(details.url).hostname; } catch { /* bad URL */ }
+    if (from === 'spotify.com' || from.endsWith('.spotify.com')) return;
+    viviRedirectedIn.add(details.requestId);
+    if (viviRedirectedIn.size > 500) viviRedirectedIn.delete(viviRedirectedIn.values().next().value);
+  }, { urls: ['<all_urls>'] });
+  const forget = (details) => { viviRedirectedIn.delete(details.requestId); };
+  chrome.webRequest.onCompleted.addListener(forget, { urls: ['<all_urls>'] });
+  chrome.webRequest.onErrorOccurred.addListener(forget, { urls: ['<all_urls>'] });
+} catch (e) {
+  console.debug('[Vivi] webRequest redirect watch unavailable:', e?.message);
+}
+
 try {
   chrome.webRequest.onBeforeSendHeaders.addListener(
     (details) => {
@@ -78,7 +98,7 @@ try {
           }
           // (not on the no-login canvas lookup's token request, src/plus/bg-canvas.js: reason=init,
           // sent without cookies on purpose; upstream's signed-in request says reason=transport)
-          const anonymous = /\/api\/token\?(.*&)?reason=init(&|$)/.test(details.url);
+          const anonymous = /\/api\/token\?(.*&)?reason=init(&|$)/.test(details.url) || viviRedirectedIn.has(details.requestId);
           if (host === 'open.spotify.com' && !anonymous) {
             const spDc = await viviSpDcForCookie();
             if (spDc) {
@@ -195,6 +215,25 @@ function viviB64(buf) {
   for (let i = 0; i < bytes.length; i += c) s += String.fromCharCode.apply(null, bytes.subarray(i, i + c));
   return btoa(s);
 }
+// a response's bytes, at most `max` (more: cancelled, null); the relays answer base64 in one string
+const VIVI_FETCH_MAX = 10e6;
+async function viviReadCapped(r, max) {
+  if (Number(r.headers?.get?.('content-length')) > max) { try { await r.body?.cancel(); } catch { /* gone */ } return null; }
+  if (!r.body?.getReader) { const b = await r.arrayBuffer(); return b.byteLength > max ? null : b; }
+  const rd = r.body.getReader(), parts = [];
+  let n = 0;
+  for (;;) {
+    const { done, value } = await rd.read();
+    if (done) break;
+    n += value.byteLength;
+    if (n > max) { try { await rd.cancel(); } catch { /* gone */ } return null; }
+    parts.push(value);
+  }
+  const all = new Uint8Array(n);
+  let o = 0;
+  for (const p of parts) { all.set(p, o); o += p.byteLength; }
+  return all.buffer;
+}
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg?.type !== 'VIVI_FETCH') return undefined;
   (async () => {
@@ -206,7 +245,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       const res = await fetch(msg.url, { ...opts, signal: ctrl.signal });
       // a redirect is followed by the browser: its target must be allowed too, or nothing is returned
       if (res.url && !viviProxyHostOk(res.url)) return { ok: false, error: 'redirect not allowed' };
-      const buf = await res.arrayBuffer();
+      const buf = await viviReadCapped(res, VIVI_FETCH_MAX);
+      if (!buf) return { ok: false, error: 'answer too big' };
       const headers = {}; res.headers.forEach((v, k) => { headers[k] = v; });
       return { ok: true, status: res.status, statusText: res.statusText, headers, body: viviB64(buf) };
     } catch (e) { return { ok: false, error: String(e?.message || e) }; }
@@ -222,6 +262,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
  * redirect's target is checked the same way before anything is returned.
  */
 const VIVI_NET_TIMEOUT_MS = 120000;   // whole song files from googlevideo come through here
+const VIVI_NET_FETCH_MAX = 64e6;       // (a song file is a few MB; more is refused, background.js)
 function viviNetHostRefused(hostname) {
   const h = String(hostname || '').toLowerCase();
   return h === 'spotify.com' || h.endsWith('.spotify.com');

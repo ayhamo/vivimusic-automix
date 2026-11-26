@@ -34,6 +34,8 @@ const apCtx = {
   console: { log() {}, info() {}, warn() {}, error() {} }, setTimeout: () => 0, clearTimeout() {},
   fetch: async () => { throw new Error('no network in tests'); },
 };
+// (bg-plus.js's time-limited fetch, defined above the Apple block: the context's fetch as the cases set it)
+apCtx.plusFetch = (u, i) => apCtx.fetch(u, i);
 vm.createContext(apCtx);
 vm.runInContext(readFileSync(new URL('src/apple-canvas.js', root), 'utf8'), apCtx, { filename: 'src/apple-canvas.js' });
 {
@@ -141,6 +143,7 @@ function appleTokenCtx(nowMs, bundles, rejectedJwts = []) {
       return { status: bad ? 401 : 200, ok: !bad, json: async () => ({}) };
     },
   };
+  ctx.plusFetch = (u, i) => ctx.fetch(u, i);   // (bg-plus.js's time-limited fetch)
   vm.createContext(ctx);
   vm.runInContext(readFileSync(new URL('src/apple-canvas.js', root), 'utf8'), ctx);
   const lines = readFileSync(new URL('src/plus/bg-plus.js', root), 'utf8').split(/\r?\n/);

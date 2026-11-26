@@ -1337,12 +1337,14 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           signal: AbortSignal.timeout(VIVI_NET_TIMEOUT_MS), // vivi+ (audit 2026-11-24)
         });
         if (res.url && !viviNetUrlOk(res.url, hostAllowed)) throw new Error('redirect not allowed'); // vivi+ (audit 2026-11-24)
+        const buf = await viviReadCapped(res, VIVI_NET_FETCH_MAX); // vivi+ (audit 2026-11-26): capped (fx-headers.js)
+        if (!buf) throw new Error('answer too big'); // vivi+ (audit 2026-11-26)
         sendResponse({
           ok: true,
           status: res.status,
           statusText: res.statusText,
           headers: [...res.headers.entries()],
-          body: toB64(await res.arrayBuffer()),
+          body: toB64(buf), // vivi+ (audit 2026-11-26)
         });
       } catch (e) {
         sendResponse({ ok: false, error: String((e && e.message) || e) });

@@ -91,5 +91,31 @@ ok(await c.readJson(streamed(new Uint8Array(300 * 1024).fill(32))).then(() => fa
   ok((await after).token === 'fake-access', 'a request begun after Sign out is kept');
 }
 
+// (audit 2026-11-26) only Spotify's sp_dc is read (§4 rule 0); every bg-plus.js request has a time limit;
+// the relays cap their answers, and a request redirected onto Spotify never gets the cookie
+{
+  const src = (f) => readFileSync(new URL('../' + f, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+  const plus = src('src/plus/bg-plus.js');
+  const fn = plus.slice(plus.indexOf('getSpDc = async function getSpDc()'), plus.indexOf('\n};\n', plus.indexOf('getSpDc = async function getSpDc()')) + 3);
+  const asked = [];
+  const ctx4 = { SPOTIFY_HOME: 'https://open.spotify.com/', getSpDc: null, chrome: {
+    storage: { local: { get: async () => ({}) } },
+    cookies: { get: async () => null, getAll: async (q) => { asked.push(q); return [{ name: 'sp_dc', value: 'other-site', domain: 'evil.example' }, { name: 'sp_dc', value: 'spotify', domain: '.spotify.com' }]; } } } };
+  vm.createContext(ctx4);
+  vm.runInContext(fn, ctx4);
+  ok(await ctx4.getSpDc() === 'spotify', "getSpDc: another site's sp_dc is passed over");
+  ok(asked.length > 0 && asked.every((q) => q.domain === 'spotify.com'), 'getSpDc: every cookie query names Spotify\'s domain');
+  ok(!/(?<![\w.])fetch\(/.test(plus.replace(/^\s*\/\/.*$/gm, '').replace('return fetch(url, { ...init, signal:', '')), 'bg-plus.js: every request through plusFetch');
+  ok(/plusFetch\(SPOTIFY_SECRET_URL, \{ cache: 'no-store' \}, 8000\)/.test(plus), 'getSecretDict: 8 s');
+  const fx = src('src/fx-headers.js'), bg = src('src/background.js');
+  const ctx5 = { Uint8Array, Number };
+  vm.createContext(ctx5);
+  vm.runInContext(fx.slice(fx.indexOf('async function viviReadCapped('), fx.indexOf('\nchrome.runtime.onMessage.addListener((msg, _sender')), ctx5);
+  const body = (n) => ({ headers: { get: () => null }, body: { getReader: () => { let left = 3; return { read: async () => (left-- > 0 ? { done: false, value: new Uint8Array(n) } : { done: true }), cancel: async () => {} }; } } });
+  ok((await ctx5.viviReadCapped(body(4), 12)).byteLength === 12 && await ctx5.viviReadCapped(body(5), 12) === null, 'relays: an answer past the cap is refused');
+  ok(/const buf = await viviReadCapped\(res, VIVI_FETCH_MAX\);/.test(fx) && /const buf = await viviReadCapped\(res, VIVI_NET_FETCH_MAX\);/.test(bg) && /const VIVI_FETCH_MAX = 10e6;/.test(fx) && /const VIVI_NET_FETCH_MAX = 64e6;/.test(fx), 'relays: 10 MB and 64 MB');
+  ok(/chrome\.webRequest\.onBeforeRedirect\.addListener/.test(fx) && /\|\| viviRedirectedIn\.has\(details\.requestId\);\n\s+if \(host === 'open\.spotify\.com' && !anonymous\)/.test(fx), 'no sp_dc on a request redirected onto Spotify');
+}
+
 console.log(`canvas spotify: ${pass}/${pass + fail}`);
 process.exit(fail ? 1 : 0);

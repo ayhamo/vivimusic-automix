@@ -35,7 +35,6 @@
       "https://*.googleusercontent.com/*",
       "https://lyrics.paxsenix.org/*",
       "https://api-lyrics.simpmusic.org/*",
-      "https://api.paxsenix.org/*",
       "https://genius.com/*",
       "https://*.genius.com/*",
       "https://*.spotify.com/*",
@@ -80,7 +79,6 @@
       "js": {
         "replace": { "src/crossfade.js": "src/automix/crossfade.js" },
         "insert": [
-          { "item": "src/fx-storage.js", "first": true },
           { "item": "src/fx-compat.js", "after": "src/net.js" },
           { "item": "src/plus/fx-plus.js", "after": "src/kawarp.js" },
           { "item": "src/plus/lyrics-plus.js", "before": "src/lyrics.js" },
