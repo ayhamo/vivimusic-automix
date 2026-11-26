@@ -730,13 +730,14 @@
       const from = song(m?.from), to = song(m?.to);
       if (!from || !to) return { n, why: `no YouTube id for ${(!from ? m?.from?.title : m?.to?.title) || 'a song'}` };
       // (a mix of a millisecond with no start: Spotify's straight cut, its No transition: rule 3)
-      if (!(m.durationMs >= 100) && !Number.isFinite(m.fromStartMs)) return { n, from, to, override: { v: 1, preset: 'none' } };
+      // (no durationMs at all is no straight cut: its timing is not valid, rule 7)
+      if (Number.isFinite(m.durationMs) && m.durationMs >= 0 && m.durationMs < 100 && !Number.isFinite(m.fromStartMs)) return { n, from, to, override: { v: 1, preset: 'none' } };
       const override = spotifyOverride(m, lost);
       return override ? { n, from, to, override } : { n, why: 'its timing is not valid' };
     });
     const r = collectMixes(items);
     const queue = [];
-    for (const t of j.playlist?.tracks || []) { const id = song(t)?.videoId; if (id && queue[queue.length - 1] !== id) queue.push(id); }
+    for (const t of Array.isArray(j.playlist?.tracks) ? j.playlist.tracks : []) { const id = song(t)?.videoId; if (id && queue[queue.length - 1] !== id) queue.push(id); }
     const notes = [];
     if (lost.unnamed) notes.push(`${lost.unnamed} lane${lost.unnamed === 1 ? '' : 's'} in a Spotify style with no match here play the default shape`);
     if (lost.notCarried.size) notes.push(`not carried: ${[...lost.notCarried].join(', ')}`);
@@ -775,7 +776,8 @@
       const pts = [];
       for (const s of Array.isArray(segs) ? segs : []) {
         const P = Array.isArray(s?.points) ? s.points : [];
-        if (P.length < 2) continue;
+        // (a malformed segment or point, as an untrusted file may hold, is passed over: it threw here)
+        if (P.length < 2 || !Number.isFinite(s.start) || !Number.isFinite(s.end) || !P.every((q) => Array.isArray(q) && Number.isFinite(q[0]) && Number.isFinite(q[1]))) continue;
         const at = (px) => (s.start + px * (s.end - s.start)) * N;
         if (P.length === 4) {
           for (let k = 0; k <= 8; k++) {
@@ -1384,9 +1386,20 @@
     const rel = lufs(mean(loud)) - 10;
     return lufs(mean(loud.filter((x) => lufs(x) > rel)));
   }
+  // a whole song's loudness, kept by its curve and length: the planner asks for it every tick on a
+  // fresh copy of the song (as anchoredMixOut's candidates)
+  const songLoudness = new WeakMap();   // loudnessCurve -> Map(durationSec -> LUFS)
+  function wholeLoudness(a) {
+    const c = a?.loudnessCurve;
+    if (!c || typeof c !== 'object') return regionLoudness(a, 0, a?.durationSec);
+    let byDur = songLoudness.get(c);
+    if (!byDur) { byDur = new Map(); songLoudness.set(c, byDur); }
+    if (!byDur.has(a.durationSec)) { if (byDur.size >= 4) byDur.clear(); byDur.set(a.durationSec, regionLoudness(a, 0, a.durationSec)); }
+    return byDur.get(a.durationSec);
+  }
   function loudnessTrim(cur, outFrom, outDur, next, inFrom, inDur) {
     const o = regionLoudness(cur, outFrom, outDur), i = regionLoudness(next, inFrom, inDur);
-    const ow = regionLoudness(cur, 0, cur.durationSec), iw = regionLoudness(next, 0, next.durationSec);
+    const ow = wholeLoudness(cur), iw = wholeLoudness(next);
     if (o == null || i == null || ow == null || iw == null) return null;
     const diff = (o - ow) - (i - iw), r = (v) => Math.round(v * 10) / 10;
     if (Math.abs(diff) <= TRIM_TOLERANCE_DB) return { diffDb: r(diff), outDb: 0, inDb: 0 };
@@ -1568,11 +1581,38 @@
     return v;
   }
   const meanOf = (xs) => xs.reduce((s, v) => s + v, 0) / xs.length;
+  // Only `lo` moves with the playhead, and the planner asks every tick (the blend, the filter mix and
+  // the echo out each) on a fresh copy of the song (asOutgoing, musicEnd spread it): the candidates and
+  // their scores are kept by the loudness curve and what else they read, as carveSung's are. Worked
+  // out each tick, they were 85% of a plan, 10-20 ms every 150 ms on the real pairs (2026-11-26).
+  const anchorMemo = new WeakMap();   // loudnessCurve -> { bass, vocals, sung, byKey: Map(key -> scored candidates) }
   function anchoredMixOut(cur, g, span, lo) {
     if (!cur.loudnessCurve?.values?.length || !cur.bassCurve?.values?.length) return null;
+    const sung = lyricSpans(cur);
+    let memo = anchorMemo.get(cur.loudnessCurve);
+    if (!memo || memo.bass !== cur.bassCurve || memo.vocals !== cur.vocals || memo.sung !== sung) {
+      memo = { bass: cur.bassCurve, vocals: cur.vocals, sung, byKey: new Map() };
+      anchorMemo.set(cur.loudnessCurve, memo);
+    }
+    const key = [cur.durationSec, cur.contentEndSec, cur.gridConfidence, g.downbeatSec, g.barSec, g.beatSec, g.phraseSec, span].join('|');
+    let scored = memo.byKey.get(key);
+    if (!scored) {
+      scored = anchorCandidates(cur, g, span, sung);
+      if (memo.byKey.size >= 16) memo.byKey.clear();
+      memo.byKey.set(key, scored);
+    }
+    let best = null;
+    for (const c of scored) {
+      if (c.start < lo - 1e-6) continue;
+      if (!best || c.raw > best.score + 1e-9) best = c;
+    }
+    return best && { kind: best.kind, sec: best.sec, mixOut: best.start, score: best.score };
+  }
+  // anchoredMixOut's candidates that fit wherever the playhead is, each with its score
+  function anchorCandidates(cur, g, span, sung) {
     const level = usualLevel(cur);
-    if (!(level > 0)) return null;
-    const dur = cur.durationSec, sung = lyricSpans(cur);
+    if (!(level > 0)) return [];
+    const dur = cur.durationSec;
     // the audible end: the last half second at a tenth of the usual level, within the music
     let audible = Math.min(musicEnd(cur).durationSec, dur - 0.3);
     while (audible > dur / 2 && (ampMean(cur, audible - ANCHOR_STEP_SEC, audible) ?? 0) < AUDIBLE_SHARE * level) audible -= ANCHOR_STEP_SEC;
@@ -1631,17 +1671,17 @@
     }
     // Orchard's score; the blend must fit before the audible end, cut at most 12 s of the music before
     // the outro (all of it without one), start past half the song
-    let best = null;
+    const scored = [];
     for (const c of cands) {
       const start = c.end - span;
       const cut = Math.max(0, keepUntil - c.end);
-      if (start < lo - 1e-6 || start < dur / 2 || c.end > audible + 1e-6 || c.end > dur - 0.3 || cut > MAX_DISCARD_SEC) continue;
+      if (start < dur / 2 || c.end > audible + 1e-6 || c.end > dur - 0.3 || cut > MAX_DISCARD_SEC) continue;
       const risk = voiceRisk(cur, c.end - 1.5, c.end, sung);
       const clean = risk == null ? 0.35 : 1 - risk;
       const score = ANCHOR_SOURCE[c.kind] / 4 * 0.2 + c.conf * 0.55 + c.stab * 0.15 + clean * 0.1 - cut / MAX_DISCARD_SEC * 0.15;
-      if (!best || score > best.score + 1e-9) best = { kind: c.kind, sec: Math.round(c.sec * 1000) / 1000, mixOut: start, score: Math.round(score * 1000) / 1000 };
+      scored.push({ kind: c.kind, sec: Math.round(c.sec * 1000) / 1000, start, raw: score, score: Math.round(score * 1000) / 1000 });
     }
-    return best;
+    return scored;
   }
 
   // TP capIncomingSkip: the cue pulled back by whole bars to within a quarter of the song.
@@ -1775,8 +1815,9 @@
     const f = filterMix(cur, next, fromGrid, toGrid, requestedBars(cur, next, fromGrid, toGrid.downbeatSec, true), pos, earliest, `${why}: a filter mix (no beat match)`, lo);
     if (f.style === 'filter' && f.clash <= V2_CLASH_MAX && avoid !== 'filter') return f;
     const sang = f.style !== 'filter' ? '' : avoid === 'filter' ? ', a filter mix the last two times' : f.clash > V2_CLASH_MAX ? `, both would sing ${Math.round(f.clash * 100)}% of a filter mix` : '';
-    const e = avoid === 'echo' ? null : echoOut(cur, next, fromGrid, toGrid, lo, `${why}${sang}: an echo out (no beat match)`);
-    return e ?? handoff(cur, next, earliest, `${why}${sang}, and no ${avoid === 'echo' ? 'third echo out in a row or ' : ''}filter mix or echo out fits`);
+    // (no echo out at a playlist speed, spotify-mixes.md rule 10: it plays B at x1, a 'blend' that plan()'s speeds pass over)
+    const e = avoid === 'echo' || planSpeed ? null : echoOut(cur, next, fromGrid, toGrid, lo, `${why}${sang}: an echo out (no beat match)`);
+    return e ?? handoff(cur, next, earliest, `${why}${sang}, and no ${avoid === 'echo' ? 'third echo out in a row or ' : ''}filter mix${planSpeed ? ' (no echo out at a playlist speed)' : ' or echo out'} fits`);
   }
   // Echo out (Prism MixMoves ECHO_OUT; editor.md §5): the beat before the catch (a bar line,
   // at an anchor) is fed to a 1-beat delay with feedback 0.53; the playing song's dry sound is

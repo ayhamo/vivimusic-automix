@@ -175,10 +175,12 @@
       };
     }
     const outRate = m.outRate || 1, rate = m.rate || 1;
+    // (each song's playlist speed, spotify-mixes.md rule 10: A at its own before the mix, B at its own after it)
+    const sOut = m.speedOut > 0 ? m.speedOut : 1, sIn = m.speedIn > 0 ? m.speedIn : 1;
     return {
-      out: (t) => (t < 0 ? m.mixOutTrackTime + t : t <= D ? m.mixOutTrackTime + t * outRate : null),
+      out: (t) => (t < 0 ? m.mixOutTrackTime + t * sOut : t <= D ? m.mixOutTrackTime + t * outRate : null),
       // (a late entry: B is silent, and not drawn, until inDelaySec into the mix)
-      in: (t) => (t < (m.inDelaySec || 0) ? null : t <= D ? m.mixInTrackTime + (t - (m.inDelaySec || 0)) * rate : m.mixInTrackTime + (D - (m.inDelaySec || 0)) * rate + (t - D)),
+      in: (t) => (t < (m.inDelaySec || 0) ? null : t <= D ? m.mixInTrackTime + (t - (m.inDelaySec || 0)) * rate : m.mixInTrackTime + (D - (m.inDelaySec || 0)) * rate + (t - D) * sIn),
       gOut: (t) => (t < 0 ? 1 : t > D ? 0 : sample(s.gOut, t / D)),
       gIn: (t) => (t < 0 ? 0 : t > D ? 1 : sample(s.gIn, t / D)),
     };

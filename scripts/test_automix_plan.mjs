@@ -1591,3 +1591,77 @@ test("The overview ends above YouTube's player bar and scrolls; the stats name t
   assert.equal(vm.runInContext("f({ preset: 'auto', style: 'blend', bars: 16, mixSec: 8, startAt: 100 })", ctx), ' · blend 16 bars / 8.0 s from 100');
   assert.equal(vm.runInContext("f({ preset: 'none', style: 'crossfade', mixSec: 0.5, startAt: 1 })", ctx), ' · No transition: crossfade / 0.5 s from 1');
 });
+
+test("Where the blend sits: the anchor's candidates are worked out once per song, not on every tick's copy of the analysis", () => {
+  // anchoredMixOut ran its whole-song walks (novelty frames, the outro's seconds, voice risk) on every
+  // plan, 85% of a tick and 10-20 ms every 150 ms on the real pairs; only `lo` moves with the playhead.
+  const pair = JSON.parse(readFileSync(new URL('../spec/automix/pairs/3-unethical__escapism-sped-up.json', import.meta.url), 'utf8'));
+  const A = loadAutomix('auto', { automixVersion: 3 });
+  let reads = 0;
+  const [a0, b] = pair.songs.map((s) => A.withBarPhase(s.analysis));
+  const lc = a0.loudnessCurve;
+  const a = { ...a0, loudnessCurve: { ...lc, values: new Proxy(lc.values, { get: (t, k) => (/^\d+$/.test(k) && reads++, t[k]) }) } };
+  const at = (A2, from, pos) => A2.plan({ fromId: 'a', toId: 'b', from, to: b, durationSec: a0.durationSec, pos, earliest: pos + 4.5 });
+  const first = at(A, a, 100);
+  const once = reads;
+  assert.ok(once > 1000, 'the first plan reads the whole curve');
+  reads = 0;
+  const again = at(A, { ...a }, 100.15);
+  assert.ok(reads < once / 5, `a copy of the analysis a tick later: the kept candidates (${reads} reads, first ${once})`);
+  assert.equal(JSON.stringify(again.anchor), JSON.stringify(first.anchor));
+  // the playhead still filters them: later on, the same answer as a planner that never saw the song
+  for (const pos of [120, 140, 160]) {
+    assert.equal(JSON.stringify(at(A, { ...a }, pos)), JSON.stringify(at(loadAutomix('auto', { automixVersion: 3 }), a0, pos)), `at ${pos} s`);
+  }
+});
+
+test('Tempo too far apart at a playlist speed (spotify-mixes.md rule 10): no echo out, which would play B at x1', () => {
+  const pair = JSON.parse(readFileSync(new URL('../spec/automix/pairs/3-unethical__escapism-sped-up.json', import.meta.url), 'utf8'));
+  const A = loadAutomix('auto', { automixVersion: 3 });
+  const [a, b] = pair.songs.map((s) => A.withBarPhase(s.analysis));
+  const pos = Math.max(30, a.durationSec - 95);
+  const args = { fromId: 'a', toId: 'b', from: a, to: b, durationSec: a.durationSec, pos, earliest: pos + 4.5 };
+  assert.equal(A.plan(args).shape, 'echo', 'at x1: the echo out (golden 3)');
+  const p = A.plan({ ...args, speed: { out: 1.02, in: 1.03 } });
+  assert.notEqual(p.shape, 'echo');
+  assert.ok(p.style !== 'blend' || p.rate === 1.03 * 1, 'B plays at its speed');
+  if (p.handoff) assert.match(p.reason, /no echo out at a playlist speed/);
+  assert.equal(p.rate, 1.03);
+});
+
+test('Spotify import: a malformed curve point is passed over, not thrown; no durationMs is no straight cut (spotify-mixes.md rules 3, 7)', () => {
+  const A = loadAutomix(0);
+  const t = (id, yt) => ({ uri: 'spotify:track:' + id, youtubeVideoId: yt, title: id, artists: ['X'], durationMs: 300000 });
+  const mix = (curve) => ({ index: 1, from: t('a', 'rCwSRV7P6hY'), to: t('b', '0X3Y2m9wj5c'), fromStartMs: 100000, durationMs: 16000, bars: 8, fromBpm: 120,
+    style: { volume: 7, eq: 4, filter: 0 }, curves: { volume: { from: { curve } } } });
+  const read = (mixes, tracks = []) => A.readMixFile(JSON.stringify({ format: 'spotify-mix-export', version: 3, playlist: { name: 'T', tracks }, mixes }));
+  for (const bad of [[null, [1, 0]], [[0.5], [1, 0]], [[0, 1], [1, 'x']], [[0, 1], [1, 0], null, [1, 0]]]) {
+    const r = read([mix([{ start: 0, end: 0.5, points: [[0, 1], [1, 1]] }, { start: 0.5, end: 1, points: bad }])]);
+    assert.equal(r.mixes.length, 1, JSON.stringify(bad));
+    assert.equal(JSON.stringify(r.mixes[0].override.lanes.volume.out), JSON.stringify([[0, 1], [16, 1]]), 'the good segment stays');
+  }
+  assert.equal(read([mix([{ start: null, end: 1, points: [[0, 1], [1, 0]] }])]).mixes.length, 1);
+  assert.equal(read([mix([])], 5).refused, undefined, 'tracks that are not a list: no queue');
+  // a mix with no timing at all: skipped, not imported as No transition
+  const m = mix([]);
+  delete m.durationMs; delete m.fromStartMs;
+  const r = read([m]);
+  assert.equal(r.mixes.length, 0);
+  assert.equal(r.skipped[0].why, 'its timing is not valid');
+});
+
+test("Overview: B's late entry and each song's playlist speed on the overview's clock", () => {
+  const ov = srcOf('src/automix-overview.js').replace(/\r\n/g, '\n');
+  const ctx = vm.createContext({});
+  vm.runInContext(between(ov, '  function lanes(s) {', '  // the beats to draw'), ctx);
+  const m = { mixOutTrackTime: 100, mixInTrackTime: 10, rate: 1.03, outRate: 1.02, speedOut: 1.02, speedIn: 1.03, inDelaySec: 2 };
+  vm.runInContext('L = (m) => lanes({ mix: m, x: null, D: 8 })', ctx);
+  const l = vm.runInContext('L', ctx)(m);
+  assert.equal(l.in(1), null, 'silent before its late entry');
+  assert.ok(Math.abs(l.in(2) - 10) < 1e-9, 'B starts at its mix-in once in');
+  assert.ok(Math.abs(l.in(10) - (10 + 6 * 1.03 + 2 * 1.03)) < 1e-9, 'B at its own speed after the mix');
+  assert.ok(Math.abs(l.out(-2) - (100 - 2 * 1.02)) < 1e-9, 'A at its own speed before it');
+  const plain = vm.runInContext('L', ctx)({ mixOutTrackTime: 100, mixInTrackTime: 10 });
+  assert.equal(plain.in(10), 10 + 8 + 2);
+  assert.equal(plain.out(-2), 98);
+});
