@@ -1522,3 +1522,30 @@ test('Stream deck and range relay: the container by its bytes; only https google
   assert.match(xf, /try \{ src\.stop\(\); \} catch \{ \/\* not started \*\/ \}\n\s+dropCopy\(vol, sends\);/);
   assert.doesNotMatch(xf, /L\.vol\.disconnect\(\)/);
 });
+
+test('Progress row: the addon copy is fetched, lined up, then taken over; hidden in a live mix (editor.md §11 rule 6)', () => {
+  const ov = srcOf('src/automix-overview.js').replace(/\r\n/g, '\n');
+  const fn = between(ov, '  function addonStage(', '  function progressRow(');
+  const run = (status, takeover, on = true) => {
+    const ctx = vm.createContext({
+      window: { __viviAddonsPage: { isOn: () => on, statusOf: () => status } },
+      xf: () => ({ addonTakeover: () => takeover }),
+    });
+    vm.runInContext(fn, ctx);
+    return vm.runInContext("addonStage('a')", ctx);
+  };
+  const flac = { codec: 'flac', bitDepth: 24 };
+  assert.equal(run({ state: 'opening' }), 'Asking your addons…');
+  assert.equal(run({ state: 'ready', stream: flac, play: { state: 'starting' } }), 'Getting the lossless copy…');
+  assert.equal(run({ state: 'ready', stream: { codec: 'opus' }, play: { state: 'fetching' } }), "Getting the addon's copy…");
+  assert.equal(run({ state: 'ready', stream: flac, play: { state: 'fitting' } }), "Lining up the lossless copy with YouTube's…");
+  assert.equal(run({ state: 'ready', stream: flac, play: { state: 'playing' } }, 'switching'), 'Switching to the lossless copy…');
+  assert.equal(run({ state: 'ready', stream: flac, play: { state: 'playing' } }, 'done'), '');
+  assert.equal(run({ state: 'ready', stream: flac, play: { state: 'refused' } }), '');
+  assert.equal(run({ state: 'opening' }, null, false), '');
+  // after the analysis, and only outside a live mix
+  const row = between(ov, '  function progressRow(', '\n  }\n');
+  assert.match(row, /if \(P && s && !live\) \{[\s\S]*if \(!text\) \{ const a = addonStage\(cur\);/);
+  const xfs = srcOf('src/automix/crossfade.js');
+  assert.match(xfs, /addonTakeover: \(id\) => \(sdeck\?\.addon && sdeck\.addonId === id \? \(sdeck\.audible \? 'done' : 'switching'\) : null\)/);
+});

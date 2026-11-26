@@ -137,3 +137,8 @@ a copy of its tail. After Next the PC waits up to 1.5 s for that copy, else it i
 (the button and Shift+N) only, and not within the song's last crossfade length + 2 s; Next or Prev
 during a planned mix is handled by the mix (`skipDuringMix`). The PC keeps these; a platform building it new
 takes Prism's targets.
+
+**[phone]** Counted as built (the user, 2026-11-26): the phone uses Morphe's own Crossfade with its
+"Crossfade on skip" (Morphe 2.4.0 `CrossfadePatch`/Settings): on by default once Morphe's Crossfade
+is on, lasting Morphe's crossfade length (3 s by default). Next during a planned mix is handled by
+the mix itself. No phone code of ours.

@@ -791,6 +791,18 @@
 
   // editor.md §11: one row, this song's analysis before the next one's; "Looking for a loop mix…" while the
   // loop search runs; a failure's reason in its place; hidden during a live mix. Shown once, it keeps its room.
+  // rule 6: this song's addon copy, after its analysis: fetched, lined up with YouTube's, then the take-over
+  function addonStage(id) {
+    const AP = window.__viviAddonsPage;
+    if (!id || !AP?.isOn?.()) return '';
+    const a = AP.statusOf(id), play = a?.play?.state;
+    const st = a?.stream || {};
+    const copy = /^(flac|alac|wav|aiff|pcm)/i.test(st.codec || '') || st.bitDepth > 0 ? 'the lossless copy' : "the addon's copy";
+    if (a?.state === 'opening' || play === 'starting' || play === 'fetching') return a?.state === 'ready' || play === 'fetching' ? `Getting ${copy}…` : 'Asking your addons…';
+    if (play === 'fitting') return `Lining up ${copy} with YouTube's…`;
+    if (play === 'playing' && xf()?.addonTakeover?.(id) === 'switching') return `Switching to ${copy}…`;
+    return '';
+  }
   function progressRow(s) {
     const P = A()?.progressOf;
     const live = !!s?.live;
@@ -804,6 +816,7 @@
         if (p.status === 'error') { text = `Analysis of ${who} failed: ${p.why}`; kind = 'failed'; break; }
         if (p.status === 'tooLong') { text = `${who === 'this song' ? 'This song' : 'The next song'} is over 8 minutes: not analysed, a plain crossfade`; kind = 'note'; break; }
       }
+      if (!text) { const a = addonStage(cur); if (a) { text = a; kind = 'busy'; } }
       if (!text && s.loop?.state === 'loading') { text = 'Looking for a loop mix…'; kind = 'busy'; }
     }
     const { prog, progText, progFill } = ui;

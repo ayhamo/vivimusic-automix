@@ -538,14 +538,26 @@ and 4 are ours. Draft and BitChord's notes: `plan-progress-row.md`.
    - PC: waiting its turn 0, getting the audio 0, decoding 5, measuring the low end and keys 15,
      finding the beats, the key and the vocals 25, saving 95. The models run in one worker job that
      sends nothing until it ends, so the 25-95 stretch has no steps.
-6. **[all]** Analysis only (the user, 2026-11-24): the row never shows the addon fetch or the take-over,
-   and it stays hidden during a live mix (rule 4).
+6. **[all]** This song's addon copy (the user, 2026-11-26; replaces "analysis only" of 2026-11-24).
+   After this song's own analysis lines, and only when they have nothing to say, the row follows
+   the addon copy of the song now playing, with an indeterminate bar:
+   - an addon is opening the song's stream: "Asking your addons…";
+   - the file is being fetched: "Getting the lossless copy…" (lossless: FLAC, ALAC, WAV, AIFF or a
+     stated bit depth; any other copy is "the addon's copy");
+   - the copy is lined up with the app's own: "Lining up the lossless copy with <the app's source>'s…";
+   - the take-over, from the copy starting until it is what's heard: "Switching to the lossless
+     copy…".
+   Nothing once the copy is heard, refused or failed (the badge says that). The next song's copy is
+   never shown. Like the rest of the row, hidden during a live mix (rule 4).
 
 PC: built 2026-11-24. `src/automix/automix.js` `progressOf(id)` → `{status, stage, pct}` or
 `{status: 'error', why}`; the analysis frame (`host.js` `analyzeSong`) posts `{type: 'progress',
 fileKey, stage}` at its stage starts; the overview's `progressRow` in `src/automix-overview.js`
 (class `vivi-amx-ov-prog`, `src/plus/plus.css`). The snapshot names the songs (`curId`, `nextId`)
-even with no plan.
+even with no plan. Rule 6 (built 2026-11-26): `addonStage(id)` in the overview reads
+`window.__viviAddonsPage.statusOf(id)` (`state` 'opening', `play.state` starting/fetching/fitting/
+playing) and `window.__viviCrossfade.addonTakeover(id)` ('switching' until the addon deck is audible,
+then 'done'); the app's source is YouTube.
 
 ## 12. Effects, the mid band and noise
 

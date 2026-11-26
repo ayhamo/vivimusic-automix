@@ -3343,6 +3343,8 @@
     setPairPick,
     importPairPicks,
     queueSongs,
+    // editor.md §11 rule 6: the addon deck's take-over of song `id`: 'switching' until it is heard, then 'done'
+    addonTakeover: (id) => (sdeck?.addon && sdeck.addonId === id ? (sdeck.audible ? 'done' : 'switching') : null),
     pairPicksAll: () => JSON.parse(JSON.stringify(pairPicks)),
     curveAt,
     // the preview: the playing song jumps to just before its mix
