@@ -974,13 +974,13 @@
         : 'Pick a line to draw on.');
     }
     custom.classList.toggle('vivi-off', preset === 'loop');
-    for (const b of matchRow.chips) { mark(b, b.dataset.v === bm); b.disabled = !s?.toId || preset === 'loop'; }
+    for (const b of matchRow.chips) { mark(b, b.dataset.v === bm); b.disabled = !s?.toId || preset === 'loop' || preset === 'none'; }
     const isLoop = preset === 'loop' || (preset === 'auto' && s?.mix?.style === 'loop');
     for (const b of barsRow.chips) {
       const v = Number(b.dataset.v);
       mark(b, v === (ov.bars || 0));
-      b.disabled = !s?.toId || (isLoop && v !== 0);
-      setIf(b, 'title', b.disabled && v !== 0 && s?.toId ? 'A loop mix sets its own length' : '');
+      b.disabled = !s?.toId || preset === 'none' || (isLoop && v !== 0);
+      setIf(b, 'title', b.disabled && v !== 0 && s?.toId && preset !== 'none' ? 'A loop mix sets its own length' : '');
     }
     const winOn = windowEditable(s);
     for (const b of nudgeBtns) b.disabled = !winOn;

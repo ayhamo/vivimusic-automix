@@ -492,6 +492,13 @@
     try {
       const warnings = [...notes];
       const p = planFor({ fromId, toId, from, to, durationSec, pos, earliest, pick: ov, warnings });
+      // each song's speed (spotify-mixes.md rule 10): A plays at its own from before the mix (the blend's
+      // outRate is it), B at its own, through the mix and after it (set first: the curves' tempo shows them)
+      if (planSpeed) {
+        p.speedOut = planSpeed.out;
+        p.speedIn = planSpeed.in;
+        if (p.style !== 'blend') p.rate = planSpeed.in;
+      }
       p.curves = blendCurves(p);
       // a length the planner didn't use (a hand-over, a drop-in's two bars): why, not "fit here" (editor.md §6)
       if (ov?.bars && ov.preset !== 'loop' && warnings.length === notes.length && (p.handoff || p.bridge || p.fallback || (p.shape === 'dropin' && p.bars !== ov.bars))) {
@@ -512,13 +519,6 @@
           if (pc.loopBeats) p.loopSec = pc.loopBeats * (p.beatSec > 0 ? p.beatSec : editorGrid(from, 'out')?.beatSec || 0.5);
         }
       }
-      // each song's speed (spotify-mixes.md rule 10): A plays at its own from before the mix (the blend's
-      // outRate is it), B at its own, through the mix and after it
-      if (planSpeed) {
-        p.speedOut = planSpeed.out;
-        p.speedIn = planSpeed.in;
-        if (p.style !== 'blend') p.rate = planSpeed.in;
-      }
       // B's late entry (mix-file.md rule 2): B stays silent that long into the mix, then starts at its
       // mix-in; the curves stay where they are. Only a plain blend or crossfade plays it.
       const late = ov?.preset !== 'loop' ? ov?.window?.in?.delaySec : null;
@@ -528,7 +528,8 @@
         } else {
           const most = Math.max(0, p.durationSec - 0.5);
           if (late > most + 1e-6) p.warnings = [...(p.warnings || []), `B's late start of ${late} s is past the mix's end: ${most.toFixed(1)} s`];
-          p.inDelaySec = Math.round(Math.min(late, most) * 1e3) / 1e3;
+          const at = Math.round(Math.min(late, most) * 1e3) / 1e3;
+          if (at > 0) p.inDelaySec = at;   // (a mix of half a second or less has no room for it)
         }
       }
       return p;
@@ -758,6 +759,8 @@
     const unit = bars ? 'beat' : 'sec', N = bars ? bars * 4 : r3(D);
     const st = m.style || {};
     const c = m.curves || {};
+    // (spotify-mixes.md rules 6 and 9: no lane here plays a jogwheel, so it is named)
+    if (st.jogwheel || c.jogwheel) lost.notCarried.add('jogwheel');
     // (a number with no name here counts only on a lane with no drawing: a drawing carries it)
     const base = { ...SP_DEFAULT, ...spBase(st.basePresetId) };
     const pick = (map, k, lane) => {
@@ -2066,6 +2069,8 @@
   // A blend, filter mix or crossfade plan's curves.
   function blendCurves(m) {
     const D = m.durationSec, style = m.style;
+    // the songs' own speeds (spotify-mixes.md rule 10): B's glide back ends at it, not x1
+    const sIn = m.speedIn > 0 ? m.speedIn : 1, sOut = m.speedOut > 0 ? m.speedOut : 1;
     const out = {}, inn = {};
     if (m.v2 && style !== 'crossfade') {
       const s = djShape(m, style, D, curveSamples(D));
@@ -2098,6 +2103,10 @@
       }
       pts.push([D, R]);
       out.rate = pts.filter((p, i) => i === 0 || p[0] !== pts[i - 1][0] || p[1] !== pts[i - 1][1]);
+    } else if (!m.glide && Math.abs((style === 'blend' ? m.outRate || 1 : sOut) - 1) > 1e-4) {
+      // (A at a steady speed through the mix: its playlist speed, spotify-mixes.md rule 10)
+      const R = style === 'blend' ? m.outRate : sOut;
+      out.rate = [[0, R], [D, R]];
     }
     const rate = style === 'blend' ? m.rate : 1;
     if (style === 'blend' && m.glide) {
@@ -2105,11 +2114,11 @@
       const G = glideSteps(m.glide.q, m.glide.beats, m.glide.beatOutSec);
       const steps = (rates) => rates.flatMap((r, k) => (k ? [[G.at[k], rates[k - 1]], [G.at[k], r]] : [[0, r]]));
       out.rate = [...steps(G.outRate), [D, G.outRate[G.outRate.length - 1]]];
-      inn.rate = [...steps(G.inRate), [D, G.inRate[G.inRate.length - 1]], [D, 1]];
-    } else if (Math.abs(rate - 1) > 1e-9) {
-      const g = glideBack(rate);
-      inn.rate = g ? [[0, rate], [D, rate], [D + g.sec, 1]] : [[0, rate], [D, rate], [D, 1]];
-    }
+      inn.rate = [...steps(G.inRate), [D, G.inRate[G.inRate.length - 1]], [D, sIn]];
+    } else if (style === 'blend' && Math.abs(rate - 1) > 1e-9 && Math.abs(rate - sIn) > 1e-9) {
+      const g = glideBack(1 + rate - sIn);
+      inn.rate = g ? [[0, rate], [D, rate], [D + g.sec, sIn]] : [[0, rate], [D, rate], [D, sIn]];
+    } else if (Math.abs(sIn - 1) > 1e-4) inn.rate = [[0, sIn], [D, sIn]];   // (B at its own speed throughout)
     return { durationSec: D, out, in: inn };
   }
 

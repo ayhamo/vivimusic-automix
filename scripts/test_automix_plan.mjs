@@ -487,6 +487,41 @@ test('The mix\'s ceiling: engaged, a +5.4 dB sum stays at -1 dBFS; a quieter sum
   assert.ok(off.peakDb > 5);
 });
 
+test('The mix\'s ceiling: engaged mid-song, the frames already in the look-ahead are held too; a quick re-engage reports only its own dip', () => {
+  let Proc;
+  const port = { postMessage: (m) => { port.last = m; }, onmessage: null };
+  const ctx = vm.createContext({ sampleRate: 48000, Math, Float32Array, Float64Array,
+    AudioWorkletProcessor: class { constructor() { this.port = port; } }, registerProcessor: (n, c) => { Proc = c; } });
+  vm.runInContext(readFileSync(new URL('../src/automix/limiter-worklet.js', import.meta.url), 'utf8'), ctx);
+  const p = new Proc(), N = 128;
+  const run = (f, blocks) => {
+    let peak = 0;
+    for (let k = 0; k < blocks; k++) {
+      const a = new Float32Array(N);
+      for (let i = 0; i < N; i++) a[i] = f(k * N + i);
+      const o = [new Float32Array(N), new Float32Array(N)];
+      p.process([[a, a]], [o]);
+      for (let i = 0; i < N; i++) peak = Math.max(peak, Math.abs(o[0][i]));
+    }
+    return 20 * Math.log10(peak || 1e-9);
+  };
+  const P = Math.pow(10, 5.4 / 20), loud = (n) => P * Math.sin(2 * Math.PI * 220 * n / 48000);
+  port.onmessage({ data: { engaged: false } });
+  assert.ok(run(loud, 100) > 5, 'one song: its peaks as they are');
+  port.onmessage({ data: { engaged: true } });
+  // (the first block out after engaging holds the 5 ms the delay line had in it)
+  assert.ok(run(loud, 1) <= -1 + 1e-4, 'from the first frame after engaging');
+  assert.ok(run(loud, 200) <= -1 + 1e-4);
+  port.onmessage({ data: { engaged: false } });
+  assert.ok(port.last.minGainDb < -5, String(port.last.minGainDb));
+  // re-engaged 20 ms later on quiet audio, while the gain still rises back: that mix took nothing off
+  run(() => 0, 8);
+  port.onmessage({ data: { engaged: true } });
+  run((n) => 0.3 * Math.sin(2 * Math.PI * 220 * n / 48000), 100);
+  port.onmessage({ data: { engaged: false } });
+  assert.equal(port.last.minGainDb, 0);
+});
+
 test('The mix\'s ceiling: no input, no output, or a sample that is not a finite number never stops the limiter or makes NaN', () => {
   // the input itself: a non-finite sample is played as silence, the rest as it was
   const bad = (t) => { const k = Math.round(t * 48000); return k === 48000 ? Infinity : k === 48001 ? NaN : k === 48002 ? -Infinity : 0.5; };
@@ -1069,12 +1104,17 @@ test("B's late entry plays (mix-file.md rule 2): B silent and unstarted until th
   assert.equal(late.sched.length, 1);
   assert.equal(late.sched[0].output, 103.2);
   assert.equal(late.sched[0].input, 0);
-  // the fades still run from the mix start, over the whole mix; B's is 0 until it comes in
-  assert.deepEqual(late.fades.map(([t0, D]) => [t0, D]), [[100, 16], [100, 16]]);
-  const gIn = late.fades[0][2];
-  assert.ok(gIn.slice(0, 33).every((v) => v === 0), 'B silent to 3.2 s');
-  assert.equal(gIn[33], 33 / 160, 'then the curve, part way up');
-  assert.equal(late.fades[1][2][10], 1 - 10 / 160, "A's curve untouched");
+  // the fades still run from the mix start, over the whole mix; B's is 0 until exactly 3.2 s, then
+  // up to the curve in 10 ms (as events, however coarse the shape's samples), then the curve
+  assert.equal(late.fades.length, 1);
+  assert.deepEqual([late.fades[0][0], late.fades[0][1]], [100, 16]);
+  assert.equal(late.fades[0][2][10], 1 - 10 / 160, "A's curve untouched");
+  const [gT0, gIn] = late.events[0];
+  assert.equal(gT0, 100);
+  assert.equal(JSON.stringify(gIn.slice(0, 2)), JSON.stringify([[0, 0, false], [3.2, 0, false]]));
+  assert.ok(Math.abs(gIn[2][0] - 3.21) < 1e-9 && Math.abs(gIn[2][1] - 3.21 / 16) < 1e-9, JSON.stringify(gIn[2]));
+  assert.ok(Math.abs(gIn[3][0] - 3.3) < 1e-9 && Math.abs(gIn[3][1] - 33 / 160) < 1e-9, JSON.stringify(gIn[3]));
+  assert.ok(Math.abs(gIn[gIn.length - 1][0] - 16) < 1e-9 && gIn[gIn.length - 1][1] === 1);
   // B's place: at its mix-in until it comes in, then counted from there
   assert.equal(late.at(102), 0);
   assert.ok(Math.abs(late.at(110) - 6.8) < 1e-9);
@@ -1083,8 +1123,9 @@ test("B's late entry plays (mix-file.md rule 2): B silent and unstarted until th
   const mid = run(4, 30);
   assert.equal(mid.sched[0].output, 103.5);
   assert.equal(mid.sched[0].input, 29.5);
-  assert.ok(mid.fades[0][2].slice(0, 41).every((v) => v === 0));
-  assert.ok(mid.fades[0][2][41] > 0);
+  const mIn = mid.events[0][1];
+  assert.equal(JSON.stringify(mIn.slice(0, 2)), JSON.stringify([[0, 0, false], [4, 0, false]]));
+  assert.ok(mIn.slice(2).every(([t, v]) => t >= 4.01 - 1e-9 && v > 0));
   assert.equal(mid.at(101), 30);
   assert.equal(mid.at(103.99), 30);
   assert.ok(Math.abs(mid.at(110) - 36) < 1e-9);
@@ -1093,12 +1134,42 @@ test("B's late entry plays (mix-file.md rule 2): B silent and unstarted until th
   assert.equal(JSON.stringify(ev.slice(0, 2)), JSON.stringify([[0, 0, false], [4, 0, false]]));
   assert.ok(Math.abs(ev[2][0] - 4.01) < 1e-9 && Math.abs(ev[2][1] - 0.250625) < 1e-9, JSON.stringify(ev[2]));
   assert.equal(JSON.stringify(ev.slice(3)), JSON.stringify([[8, 0.5, false], [16, 1, false]]));
+  // a drawn curve that starts after B's entry holds its first value there, never a value before it
+  const lateEvents = vm.runInContext(between(xf, 'const LATE_RAMP', 'function lateFade(') + 'lateEvents', vm.createContext({}));
+  const held = lateEvents([[2, 0, false], [4, 1, false]], 0.5);
+  assert.equal(JSON.stringify(held.slice(0, 3)), JSON.stringify([[0, 0, false], [0.5, 0, false], [0.51, 0, false]]));
+  assert.ok(held.every(([, v]) => v >= 0));
+  assert.equal(JSON.stringify(lateEvents([[2, 0.3, false], [4, 1, false]], 0.5)[2]), JSON.stringify([0.51, 0.3, false]));
   // YouTube's player (beginAutomix): its gate gets the same mask, the late seconds still to come
   const begin = between(xf, 'function beginAutomix(', 'blendShape(g, style');
   assert.match(begin, /const late = matched \? \(m\.inDelaySec \|\| 0\) - skip : 0;/);
   assert.match(begin, /playEvents\(inn, lateEvents\(eIn, late\)/);
-  assert.match(begin, /fadeCurve\(inn, lateShape\(cIn, D, late\)/);
+  assert.match(begin, /lateFade\(inn, cIn, t0, D, late\)/);
   assert.match(between(xf, 'function blendTakeOver(', 'deck?.cancel();'), /inStartOf\(m\) \+ \(t - L\.t0\) \* rate/, 'the take-over counts B from its late start');
+});
+
+test("A mix called off during a late entry's wait on YouTube's player: B goes on from its mix-in; going back to A stops the mix at once, unmarked", () => {
+  const xf = srcOf('src/automix/crossfade.js');
+  const fn = between(xf, '  function abortLive(', "\n  const BY_LISTENER") + '\n' + between(xf, '  const BY_LISTENER', '// ───────── automix: the incoming song');
+  const run = (now, extra = {}) => {
+    const posts = [];
+    const L = { mix: { style: 'blend', nextId: 'b', mixInTrackTime: 30, inDelaySec: 4, rate: 1 }, t0: 100, askedAt: 98, oldId: 'a', ...extra };
+    const ctx = vm.createContext({
+      live: L, deck: null, st: { id: 'b' }, failedId: '', log() {}, post: (m) => posts.push(m),
+      graph: () => ({ ctx: { currentTime: now }, limit() {} }), streamDeckBack() {}, stopLoopDecks() {}, stopInDeck() {},
+      inTrackAt: () => -1, hideAutomixNotification() {}, cleanup() {}, dropPlan() {},
+    });
+    vm.runInContext(fn + `\nabortLive(${JSON.stringify(extra.why || 'skipped by you')});`, ctx);
+    return posts;
+  };
+  assert.deepEqual(run(102).map((p) => [p.type, p.t]), [['seek', 30]], 'during the wait: at the mix-in');
+  assert.deepEqual(run(105), [], 'B already came in: the player is where it should be');
+  assert.deepEqual(run(102, { why: 'seeked' }), [], "the listener's seek stands");
+  assert.deepEqual(run(102, { mix: { style: 'blend', nextId: 'b', mixInTrackTime: 30, rate: 1 } }), [], 'no late entry: nothing to fix');
+  // going back to the outgoing song once the queue named the incoming one: called off at once, not marked
+  const drive = between(xf, 'const changed = st && st.id && st.id !== live.oldId;', 'if (!live.newId)');
+  assert.match(drive, /if \(!changed\) \{[\s\S]*?if \(live\.newId\) \{ abortLive\('went back to the song'\); return; \}/);
+  assert.match(between(xf, '  const BY_LISTENER', ']);'), /'went back to the song'/);
 });
 
 test('Effects lane, mid band and noise (editor.md §12, spotify-mixes.md rules 4-6)', () => {
@@ -1374,4 +1445,80 @@ test('The curator blend: Auto\'s blend on Automix v2 sits 8 bars on the downbeat
   assert.equal(A.plan({ fromId: 'a', toId: 'b', from: cur, to: next, durationSec: 200, pos: 20, earliest: 24.5, curator: true, pick: { v: 1, bars: 4 } }).curator, undefined);
   // the fallback is the usual blend exactly
   assert.deepEqual(JSON.stringify(ask(cur, keyed(next, 'F# major'), { curator: true })), JSON.stringify(ask(cur, keyed(next, 'F# major'))));
+});
+
+test("The mix's noise plays at the player's volume and is silent while it is muted", () => {
+  const xf = srcOf('src/automix/crossfade.js').replace(/\r\n/g, '\n');
+  const shape = between(xf, '    live.noise = [];', '  function noiseVolOf');
+  assert.match(shape, /lvl\.connect\(live\.noiseVol\)/);
+  assert.doesNotMatch(shape, /lvl\.connect\(g\.entry\)/);
+  const fn = between(xf, '  function noiseVolOf', '\n') + '\n';
+  const ctx = vm.createContext({});
+  vm.runInContext(fn, ctx);
+  assert.equal(vm.runInContext('noiseVolOf({ muted: true, volRef: 1, k: 1 })', ctx), 0);
+  assert.equal(vm.runInContext('noiseVolOf({ muted: false, volRef: 0.5, k: 0.2 })', ctx), 0.1);
+  assert.match(between(xf, 'live.muted = muted;', '// An ad flag'), /live\.noiseVol\.gain\.setTargetAtTime\(noiseVolOf\(live\), now, 0\.03\)/);
+});
+
+test('No transition: the Beat match and Length chips are off (editor.md §2)', () => {
+  const ov = srcOf('src/automix-overview.js');
+  assert.match(ov, /for \(const b of matchRow\.chips\) \{[^\n]*preset === 'none'/);
+  assert.match(between(ov, 'for (const b of barsRow.chips) {', 'const winOn'), /b\.disabled = !s\?\.toId \|\| preset === 'none'/);
+});
+
+test("Addon copies: the fit's slack is the setting's; a file that doesn't decode is refused like a bad fit; a better copy refused leaves the playing one (protocol.md 8.1.4, 8.6)", () => {
+  const xf = srcOf('src/automix/crossfade.js').replace(/\r\n/g, '\n');
+  const prep = between(xf, '  function prepareAddon(', '  async function startAddonDeck(');
+  assert.doesNotMatch(prep, /slackSec: 5/);
+  assert.match(prep, /const slackSec = AP\.slackSec\?\.\(\) \?\? 5;/);
+  // the decode: caught, then the next row (or the playing copy kept, for an upgrade)
+  assert.match(prep, /decodeAt\(file\.bytes, F\.FIT_RATE, 2\)\.catch\(/);
+  assert.match(prep, /if \(!adBuf\) \{\n\s+if \(up\) return keep\('decode failed'\);\n\s+const nx = [^\n]*AP\.nextFor\(id, 'decode failed'\)/);
+  // an upgrade's refusal never asks for another row, and gives the playing copy back
+  assert.equal((prep.match(/if \(up\) return keep\(/g) || []).length, 3);
+  assert.match(prep, /if \(r\.kept && prepared\.get\(id\) === me\) \{ if \(r\.kept\.prev\?\.rec\) prepared\.set\(id, r\.kept\.prev\)/);
+  assert.match(between(xf, '  async function startAddonDeck(', '  async function playAddon('), /if \(r\.kept\) \{[^\n]*adeck = r\.kept\.run/);
+  assert.match(between(xf, 'AP.upgradeFor?.(id).then(', '}).catch'), /upgrading\.set\(id, \{ prev: prepared\.get\(id\), run \}\);\n\s+prepared\.delete\(id\);/);
+});
+
+test("Song speed in the plan's curves (spotify-mixes.md rule 10): B's tempo ends at its own speed, not x1; A's steady speed is drawn", () => {
+  const A = loadAutomix('auto');
+  const sp = (speed) => A.plan({ fromId: 'a', toId: 'b', from: song(100, 200), to: song(103, 200), durationSec: 200, pos: 20, earliest: 24.5, speed });
+  const p = sp({ out: 0.97, in: 1.03 });
+  const last = (pts) => pts[pts.length - 1][1];
+  assert.ok(p.curves.in.rate, JSON.stringify(p.curves.in));
+  assert.equal(last(p.curves.in.rate), 1.03);
+  assert.equal(JSON.stringify(p.curves.out.rate), JSON.stringify([[0, 0.97], [p.durationSec, 0.97]]));
+  // no speeds: as before (a blend's glide back ends at x1, or no rate lane)
+  const q = sp(null);
+  if (q.curves.in.rate) assert.equal(last(q.curves.in.rate), 1);
+});
+
+test("B's late entry: a mix of half a second or less has no room for it (plan.schema.json: inDelaySec > 0); a Spotify jogwheel is named as not carried", () => {
+  const A = loadAutomix('auto');
+  const xs = srcOf('src/automix/automix.js');
+  assert.match(xs, /const at = Math\.round\(Math\.min\(late, most\) \* 1e3\) \/ 1e3;\n\s+if \(at > 0\) p\.inDelaySec = at;/);
+  const t = (id, yt) => ({ uri: 'spotify:track:' + id, youtubeVideoId: yt, title: id, artists: ['X'], durationMs: 300000 });
+  const exp = { format: 'spotify-mix-export', version: 3, playlist: { name: 'T', tracks: [] }, mixes: [{
+    index: 1, from: t('a', 'rCwSRV7P6hY'), to: t('b', '0X3Y2m9wj5c'), fromStartMs: 100000, durationMs: 16000, bars: 8, fromBpm: 120,
+    style: { volume: 7, eq: 0, filter: 0, fx: 0, jogwheel: 2 }, curves: {} }] };
+  assert.match(A.readMixFile(JSON.stringify(exp)).notes.join(' | '), /not carried: jogwheel/);
+  exp.mixes[0].style.jogwheel = 0;
+  assert.ok(!/jogwheel/.test(A.readMixFile(JSON.stringify(exp)).notes.join(' | ')));
+});
+
+test('Stream deck and range relay: the container by its bytes; only https googlevideo, given up after 30 s; a mix lets go of its Effects sends', () => {
+  const xf = srcOf('src/automix/crossfade.js').replace(/\r\n/g, '\n');
+  assert.doesNotMatch(xf, /load\(bytes, 'audio\/webm'\)/);
+  const ctx = vm.createContext({ Uint8Array, ArrayBuffer });
+  vm.runInContext(between(xf, '  function audioMime(', '\n  }\n') + '\n  }', ctx);
+  assert.equal(vm.runInContext('audioMime(new Uint8Array([0x1a, 0x45, 0xdf, 0xa3, 1]).buffer)', ctx), 'audio/webm');
+  assert.equal(vm.runInContext("audioMime(new Uint8Array([0, 0, 0, 0x20, 0x66, 0x74, 0x79, 0x70]).buffer)", ctx), 'audio/mp4');
+  const relay = between(xf, "} else if (d.type === 'range') {", "} else if (d.type === 'vivi-dev-test')");
+  assert.match(relay, /protocol === 'https:'/);
+  assert.match(relay, /if \(!https \|\| !host\.endsWith\('\.googlevideo\.com'\)\)/);
+  assert.match(relay, /signal: AbortSignal\.timeout\(30000\)/);
+  assert.equal((xf.match(/setTimeout\(\(\) => dropCopy\(L\.vol, L\.sends\), 300\)/g) || []).length, 2);
+  assert.match(xf, /try \{ src\.stop\(\); \} catch \{ \/\* not started \*\/ \}\n\s+dropCopy\(vol, sends\);/);
+  assert.doesNotMatch(xf, /L\.vol\.disconnect\(\)/);
 });

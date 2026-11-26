@@ -9,7 +9,7 @@
  * Nothing happens while addons are off. The background keeps the links and
  * file URLs; this script holds tickets and what the page may show.
  *
- *   window.__viviAddonsPage = { statusOf(id), openFor(id), lookAhead(id), fetchFor(id), note(id, patch), isOn(), openDue(posSec, transitionSec), upgradeFor(id), upgradeQuality(id) }
+ *   window.__viviAddonsPage = { statusOf(id), openFor(id), lookAhead(id), fetchFor(id), note(id, patch), keepCopy(id, why), isOn(), slackSec(), openDue(posSec, transitionSec), upgradeFor(id), upgradeQuality(id) }
  *     statusOf: { state: 'off'|'looking'|'found'|'none'|'opening'|'ready', addon?, row?, stream?, why?, tried? }
  */
 (() => {
@@ -20,9 +20,13 @@
   const songs = new Map();   // id -> { state, meta, ticket, find (promise), open (promise), ... }
   const SONGS_MAX = 40;
 
+  // the length slack the addons were searched with (Settings, 0-10 s): the fit allows the same
+  let slack = 5;
+  const slackOf = (v) => { const n = Number(v); return Number.isFinite(n) ? Math.max(0, Math.min(10, n)) : 5; };
   try {
-    chrome.storage.local.get({ addonsEnabled: false }, (s) => { enabled = s.addonsEnabled === true; });
+    chrome.storage.local.get({ addonsEnabled: false, addonsSlackSec: 5 }, (s) => { enabled = s.addonsEnabled === true; slack = slackOf(s.addonsSlackSec); });
     chrome.storage.onChanged.addListener((ch, area) => {
+      if (area === 'local' && ch.addonsSlackSec) slack = slackOf(ch.addonsSlackSec.newValue);
       if (area !== 'local' || !ch.addonsEnabled) return;
       enabled = ch.addonsEnabled.newValue === true;
       if (!enabled) { songs.clear(); curId = nextId = ''; }   // turned on again: the playing song is asked for again
@@ -146,9 +150,23 @@
     s.upgrade = true;   // once per song
     const r = await ask({ type: 'VIVI_ADDONS_UPGRADE', ticket: s.ticket });
     if (!r?.addon) { if (r?.none && r.none !== 'no pass needed') log(`${s.meta?.artist} - ${s.meta?.song}: no better copy (${r.none})`, r.tried?.length ? r.tried : ''); return false; }
+    // (the playing copy is kept aside: a better one that is then refused gives it back, keepCopy)
+    s.prev = { addon: s.addon, row: s.row, stream: s.stream, tried: s.tried, cached: s.cached, play: s.play };
     Object.assign(s, { addon: r.addon, row: r.row, stream: r.stream, tried: r.tried, cached: false, play: null });
     show();
     log(`${s.meta?.artist} - ${s.meta?.song}: a better copy: ${r.addon.name} (${r.addon.host}) row ${r.row.id}, ${r.stream.codec || '?'}${r.stream.sampleRate ? ' ' + r.stream.sampleRate / 1000 + ' kHz' : ''}${r.stream.bitDepth ? '/' + r.stream.bitDepth : ''}`);
+    return true;
+  }
+
+  // 8.6: the better copy was refused (the fit, or its file): the playing copy is the song's again
+  async function keepCopy(id, why) {
+    const s = songs.get(id);
+    if (!s?.prev) return false;
+    const r = s.ticket ? await ask({ type: 'VIVI_ADDONS_KEEP', ticket: s.ticket, why: String(why || '') }) : null;
+    Object.assign(s, s.prev, { state: 'ready' });
+    s.prev = null;
+    show();
+    log(`${s.meta?.artist} - ${s.meta?.song}: the better copy is refused (${why}); the playing copy stays${r?.ok ? '' : ' (' + (r?.none || 'no ticket') + ')'}`);
     return true;
   }
 
@@ -161,7 +179,11 @@
     refreshing.add(id);
     try {
       const s = songs.get(id);
-      const r = s?.ticket ? await ask({ type: 'VIVI_ADDONS_REFRESH', ticket: s.ticket }) : null;
+      // (always asked: a search that found nothing has no ticket, and a suspended background lost its
+      // tickets, but the cached answers and the file still go, by the song and by the playing row)
+      const m = s?.meta;
+      const r = await ask({ type: 'VIVI_ADDONS_REFRESH', ticket: s?.ticket || '', song: m?.song ? { videoId: id, title: m.song, artist: m.artist } : null,
+        addonId: s?.addon?.id || null, rowId: s?.row?.id ?? null });
       songs.delete(id);
       known.delete(id);
       log(`${s?.meta?.artist || id} - ${s?.meta?.song || ''}: Upgrade quality: asking the addons again${r?.ok ? ` (${r.cleared} answers and ${r.files} cached files dropped)` : ''}`);
@@ -335,5 +357,5 @@
     return { state, addon, row, stream, why, tried, candidates, play };
   }
 
-  window.__viviAddonsPage = { statusOf, openFor, nextFor, lookAhead, fetchFor, note, isOn: () => enabled, openDue, upgradeFor, upgradeQuality, deckAlive: () => { deckAt = Date.now(); } };
+  window.__viviAddonsPage = { statusOf, openFor, nextFor, lookAhead, fetchFor, note, keepCopy, isOn: () => enabled, slackSec: () => slack, openDue, upgradeFor, upgradeQuality, deckAlive: () => { deckAt = Date.now(); } };
 })();

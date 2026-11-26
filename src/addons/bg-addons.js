@@ -29,6 +29,7 @@
  *                                          a copy under the lossy floor (protocol.md 8.2.1) never wins
  *     VIVI_ADDONS_REFRESH  { ticket }      -> { ok, cleared, files }: "Upgrade quality" (8.1.7): the song's cached answers and files go
  *     VIVI_ADDONS_UPGRADE  { ticket }      -> the better copy's OPEN answer, or { none }: the pass after a copy plays (8.2.1)
+ *     VIVI_ADDONS_KEEP     { ticket, why } -> { ok }: that better copy was refused by a later check; the playing one is the ticket's again (8.6)
  *     VIVI_ADDONS_FETCH    { ticket }      -> { bytes (ArrayBuffer), mime } or { none }: the opened file (Firefox passes ArrayBuffers)
  *
  * globalThis.__viviAddons
@@ -145,7 +146,7 @@
       if (!got.addon) return { none: plain(got.none), tried };
       const { row: r, stream: st } = got;
       return {
-        addon: { name: got.addon.name, host: got.addon.host },
+        addon: { name: got.addon.name, host: got.addon.host, id: got.addon.id },   // (the local list id: no secret)
         row: { id: r.id, title: r.title, artist: r.artist, album: r.album, durationSec: r.durationSec, isrc: r.isrc },
         stream: { codec: st.codec, tier: st.tier, sampleRate: st.sampleRate, bitDepth: st.bitDepth, bitrate: st.bitrate, transport: st.transport, mimeType: st.mimeType },
         tried,
@@ -199,10 +200,25 @@
       const t = tickets.get(ticket);
       if (!t) return { none: 'ticket expired' };
       if (!t.got) return { none: 'not opened' };
-      (t.refused ??= new Set()).add(rowMark(t.got.addon, t.got.row));
-      t.tried = [...t.tried, { addon: t.got.addon.host, row: t.got.row.id, why: 'refused: ' + C.scrub(String(why || 'a later check')) }];
+      refuse(t, why);
       t.got = null; t.opened = null;
       return open(ticket, ytKbps);
+    }
+    // a refused row isn't opened again for the song (8.1.4), nor replayed from the cache on its next play
+    function refuse(t, why) {
+      (t.refused ??= new Set()).add(rowMark(t.got.addon, t.got.row));
+      t.tried = [...t.tried, { addon: t.got.addon.host, row: t.got.row.id, why: 'refused: ' + C.scrub(String(why || 'a later check')) }];
+      const k = cacheKey(t.got.addon, t.got.row, t.opt);
+      if (k) files.drop(k).catch(() => {});
+    }
+    // 8.6: the better copy (upgrade) was refused by a later check: the copy that plays is the ticket's again
+    function keep(ticket, why) {
+      const t = tickets.get(ticket);
+      if (!t) return { none: 'ticket expired' };
+      if (!t.prev) return { none: 'no copy to keep' };
+      if (t.got) refuse(t, why);
+      t.got = t.prev; t.opened = Promise.resolve(t.prev); t.prev = null;
+      return { ok: true };
     }
     async function open(ticket, ytKbps = 0) {
       const t = tickets.get(ticket);
@@ -233,22 +249,37 @@
       if (!cur) return { none: t ? 'not opened' : 'ticket expired' };
       const want = Pick.upgradeWanted(cur.stream, t.opt?.tier, !!cur.cacheKey);
       if (!want) return { none: 'no pass needed' };
-      const at = t.found.findIndex((f) => f.addon.base === cur.addon.base);
-      const found = (want.aboveOnly ? t.found.slice(0, Math.max(0, at)) : t.found)
+      // (the rows refused for the song stay passed over, 8.1.4)
+      const all = passOver(t);
+      const at = all.findIndex((f) => f.addon.base === cur.addon.base);
+      const found = (want.aboveOnly ? all.slice(0, Math.max(0, at)) : all)
         .map((f) => (f.addon.base === cur.addon.base ? { ...f, rows: f.rows.filter((x) => x.id !== cur.row.id) } : f))
         .filter((f) => f.rows.length);
       if (!found.length) return { none: want.aboveOnly ? 'no addon ranked above it' : 'no other row' };
       const accept = (st) => Pick.qualityRank(st) >= want.minRank || 'not better';
       const got = await client.open(found, t.song, { ...t.opt, accept }, []).catch((e) => ({ none: C.scrub(e?.message || e), tried: [] }));
       if (!got.addon) return outward(got);
-      t.got = got; t.opened = Promise.resolve(got);
+      // (the playing copy kept: a better one refused by the fit gives it back, keep)
+      t.prev = cur; t.got = got; t.opened = Promise.resolve(got);
       return outward(got);
     }
     // 8.1.7 "Upgrade quality": the song's search and /stream answers forgotten, and (the PC) its
     // cached files, so the page's next FIND and OPEN ask the addons again
-    async function refresh(ticket) {
+    async function refresh(ticket, { song = null, addonId = null, rowId = null } = {}) {
       const t = tickets.get(ticket);
-      if (!t) return { none: 'ticket expired' };
+      // no ticket (the search found nothing, or a suspended background lost it): by the song, and the playing row's file
+      if (!t) {
+        if (!song?.title) return { none: 'ticket expired' };
+        const cleared = client.forget?.(song, []) || 0;
+        let dropped = 0;
+        if (addonId && rowId != null && files) {
+          const s = await get();
+          const a = s.addonsList.find((x) => x.id === addonId);
+          const k = a && files.keyOf(a.id, rowId, a.quality ?? s.addonsTier);
+          if (k && await files.drop(k).catch(() => false)) dropped++;
+        }
+        return { ok: true, cleared, files: dropped };
+      }
       tickets.delete(ticket);   // (first: a download still running for it is then not kept, fetchFile)
       const cleared = client.forget?.(t.song, t.found) || 0;
       let dropped = 0;
@@ -344,7 +375,10 @@
         case 'VIVI_ADDONS_OPEN': return open(String(msg.ticket || ''), Number(msg.ytKbps) || 0);
         case 'VIVI_ADDONS_NEXT': return next(String(msg.ticket || ''), msg.why, Number(msg.ytKbps) || 0);
         case 'VIVI_ADDONS_UPGRADE': return upgrade(String(msg.ticket || ''));
-        case 'VIVI_ADDONS_REFRESH': return refresh(String(msg.ticket || ''));
+        case 'VIVI_ADDONS_REFRESH': return refresh(String(msg.ticket || ''), {
+          song: msg.song && typeof msg.song === 'object' ? { title: String(msg.song.title || '').slice(0, 300), artist: String(msg.song.artist || '').slice(0, 300) } : null,
+          addonId: msg.addonId ? String(msg.addonId) : null, rowId: msg.rowId ?? null });
+        case 'VIVI_ADDONS_KEEP': return keep(String(msg.ticket || ''), msg.why);
         case 'VIVI_ADDONS_FETCH': return fetchFile(String(msg.ticket || ''));
         default: return undefined;
       }
@@ -363,7 +397,7 @@
     const store = create({ storage: chrome.storage.local, files });
     // content scripts (YouTube Music's tab) may only FIND, ISRC, OPEN, UPGRADE, REFRESH and FETCH; the list and its
     // settings change only from the extension's own pages (the popup)
-    const PAGE_TYPES = new Set(['VIVI_ADDONS_FIND', 'VIVI_ADDONS_ISRC', 'VIVI_ADDONS_OPEN', 'VIVI_ADDONS_NEXT', 'VIVI_ADDONS_UPGRADE', 'VIVI_ADDONS_REFRESH', 'VIVI_ADDONS_FETCH']);
+    const PAGE_TYPES = new Set(['VIVI_ADDONS_FIND', 'VIVI_ADDONS_ISRC', 'VIVI_ADDONS_OPEN', 'VIVI_ADDONS_NEXT', 'VIVI_ADDONS_UPGRADE', 'VIVI_ADDONS_KEEP', 'VIVI_ADDONS_REFRESH', 'VIVI_ADDONS_FETCH']);
     const ours = (sender) => typeof sender?.url === 'string' && sender.url.startsWith(chrome.runtime.getURL(''));
     chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       if (typeof msg?.type !== 'string' || !msg.type.startsWith('VIVI_ADDONS_')) return undefined;

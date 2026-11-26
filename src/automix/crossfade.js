@@ -145,7 +145,7 @@
     try {
       const bytes = await A.audioBytes(id);
       deck = SD.create(g.ctx, g.bassFilter);
-      await deck.load(bytes, 'audio/webm');
+      await deck.load(bytes, audioMime(bytes));
       const ytTap = g.ctx.createAnalyser(), dTap = g.ctx.createAnalyser();
       ytTap.fftSize = dTap.fftSize = 8192;
       g.source.connect(ytTap); deck.src.connect(dTap);
@@ -238,8 +238,11 @@
       let host = '';
       try { host = new URL(d.url).hostname; } catch { /* bad URL */ }
       const reply = (m, transfer) => window.postMessage({ ch: CHANNEL, dir: 'in', type: 'range', rid: d.rid, ...m }, window.location.origin, transfer);
-      if (!host.endsWith('.googlevideo.com')) { reply({ ok: false, why: 'host not allowed' }); return; }
-      fetch(d.url, { credentials: 'omit' })
+      let https = false;
+      try { https = new URL(d.url).protocol === 'https:'; } catch { /* bad URL */ }
+      if (!https || !host.endsWith('.googlevideo.com')) { reply({ ok: false, why: 'host not allowed' }); return; }
+      // (the page's own wait gives up after 30 s: so does the fetch, body and all)
+      fetch(d.url, { credentials: 'omit', signal: AbortSignal.timeout(30000) })
         .then(async (r) => { const bytes = await r.arrayBuffer(); reply({ ok: true, status: r.status, bytes }, [bytes]); })
         .catch((e) => reply({ ok: false, why: String(e?.message || e) }));
     } else if (d.type === 'vivi-dev-test') {
@@ -719,25 +722,27 @@
   const inStartOf = (m) => m.mixInTrackTime - (m.inDelaySec || 0) * (m.rate || 1);
   // B's gain with a late entry: 0 until `late` s into the curve whatever it says, then up to the curve
   // in 10 ms, so nothing of B before its mix-in is heard (a pre-roll, a player started early).
-  // A sampled shape (fadeCurve) over d seconds, and a preset's events [t, v, step]:
+  // A preset's events [t, v, step], and a sampled shape over d seconds (lateFade, which plays it as
+  // events so the 0 ends exactly at `late`, however far apart the shape's samples are):
   const LATE_RAMP = 0.01;
-  function lateShape(shape, d, late) {
-    if (!(late > 0) || !shape?.length) return shape;
-    const out = shape.slice(), n = out.length;
-    for (let i = 0; i < n && (d * i) / (n - 1) < late + LATE_RAMP; i++) out[i] = 0;
-    return out;
-  }
   function lateEvents(ev, late) {
     if (!(late > 0) || !ev?.length) return ev;
     const b = late + LATE_RAMP;
     let v = ev[ev.length - 1][1];
-    for (let i = 1; i < ev.length; i++) {
+    // (before the curve's first point it holds that point's value)
+    if (b <= ev[0][0]) v = ev[0][1];
+    else for (let i = 1; i < ev.length; i++) {
       if (ev[i][0] < b) continue;
       const [t1, v1] = ev[i - 1], [t2, v2] = ev[i];
       v = ev[i][2] || t2 <= t1 ? (b >= t2 ? v2 : v1) : v1 + ((v2 - v1) * (b - t1)) / (t2 - t1);
       break;
     }
     return [[0, 0, false], [late, 0, false], [b, v, false], ...ev.filter((e) => e[0] > b + 1e-6)];
+  }
+  function lateFade(param, shape, t0, d, late) {
+    if (!(late > 0) || !shape?.length) { fadeCurve(param, shape, t0, d); return; }
+    const n = shape.length;
+    playEvents(param, lateEvents(Array.from(shape, (v, i) => [(d * i) / Math.max(1, n - 1), v, false]), late), t0, t0, false);
   }
   // The next song's second at audio time t of a blend that started at t0.
   function inTrackAt(m, t0, t) {
@@ -959,7 +964,7 @@
     if (mix && mix.style !== 'loop' && (steady ? !steadyOutgoing(me, mix, p, st.off, sA)
       : mix.style === 'blend' && (mix.glide ? !glideOutgoing(me, mix, p, st.off) : mix.outRate > 1.0001 && !rampOutgoing(me, mix, p, st.off)))) {
       try { src.stop(); } catch { /* not started */ }
-      vol.disconnect();
+      dropCopy(vol, sends);
       // (the echo's feedback loop keeps itself alive: broken here)
       if (echo) { echo.fb.disconnect(); echo.wet.disconnect(); }
       hold(g.gate.gain, ctx.currentTime);
@@ -1072,7 +1077,7 @@
       // the stream deck plays the new song: YouTube's gate stays down (the deck brings it back if it fails)
       hold(L.vol.gain, now); L.vol.gain.setValueAtTime(L.vol.gain.value, now); L.vol.gain.linearRampToValueAtTime(0, now + 0.12);
       try { L.src.stop(now + 0.15); } catch { /* not started / already stopped */ }
-      setTimeout(() => { try { L.vol.disconnect(); } catch { /* gone */ } }, 300);
+      setTimeout(() => dropCopy(L.vol, L.sends), 300);
       return;
     }
     hold(g.gate.gain, now);
@@ -1089,7 +1094,7 @@
       g.gate.gain.setValueAtTime(1, now);
       try { L.src.stop(); } catch { /* already ended */ }
     }
-    setTimeout(() => { try { L.vol.disconnect(); } catch { /* gone */ } }, 300);
+    setTimeout(() => dropCopy(L.vol, L.sends), 300);
   }
 
   // The loop mix's decks fall silent (softly when cut short).
@@ -1136,6 +1141,11 @@
           if (g && L.askedAt && st?.id === L.mix.nextId && now > L.t0 && why !== 'seeked' && why !== 'ad') {   // (an ad: the song starts after it)
             post({ type: 'seek', t: inTrackAt(L.mix, L.t0, now) });
           }
+        } else if (L.mix.inDelaySec > 0 && g && L.askedAt && st?.id === L.mix.nextId && why !== 'seeked' && why !== 'ad') {
+          // YouTube's player was placed early for a late entry (beginAutomix): called off during the wait,
+          // the song goes on from its mix-in, never from before it (mix-file.md rule 2)
+          const now = g.ctx.currentTime;
+          if (now < L.t0 + L.mix.inDelaySec) post({ type: 'seek', t: L.mix.mixInTrackTime });
         }
         for (const t of L.toastTimers || []) clearTimeout(t);
         hideAutomixNotification();
@@ -1152,7 +1162,7 @@
     // either: the song plays again and is planned again (playback.md "The queue during a mix" rule 2).
     failedId = st && st.id === L.oldId && !(L.mix && !L.askedAt) && !BY_LISTENER.has(why) ? st.id : '';
   }
-  const BY_LISTENER = new Set(['previous pressed', 'skipped by you', 'paused by you', 'song changed', 'skipped again', 'seeked',
+  const BY_LISTENER = new Set(['previous pressed', 'skipped by you', 'paused by you', 'song changed', 'skipped again', 'seeked', 'went back to the song',
     'skipped before the mix', 'seeked before the mix', 'repeat one turned on', 'the queue changed before the mix',
     'the audio clock stopped']);   // (not the listener's either, but not the song's fault: it isn't marked)
 
@@ -1863,20 +1873,30 @@
     }
     // the noise (§12 rule 3): from the window's start to its end, not under the deck's fader
     live.noise = [];
+    // (at the player's volume, and silent while it is muted: driveLive moves it with the slider)
+    live.noiseVol = null;
     for (const side of ['out', 'in']) {
       const pts = c[side].noise;
       if (!pts?.some(([, v]) => v > 0)) continue;
       const ctx = g.ctx, src = new AudioBufferSourceNode(ctx, { buffer: noiseBuffer(ctx), loop: true });
       const hpN = new BiquadFilterNode(ctx, { type: 'highpass', frequency: 1500, Q: 0.7 }), lvl = new GainNode(ctx, { gain: 0 });
-      src.connect(hpN); hpN.connect(lvl); lvl.connect(g.entry);
+      if (!live.noiseVol) { live.noiseVol = new GainNode(ctx, { gain: noiseVolOf(live) }); live.noiseVol.connect(g.entry); }
+      src.connect(hpN); hpN.connect(lvl); lvl.connect(live.noiseVol);
       const ev = curveEvents(pts, curvesSec(m, D), false, null, D, skip).map(([t, v, step]) => [t, v * NOISE_LEVEL, step]);
       playEvents(lvl.gain, ev, t0, t0, false);
       lvl.gain.setValueAtTime(0, end);
       src.start(Math.max(ctx.currentTime, t0)); src.stop(end + 0.05);
-      src.onended = () => { try { lvl.disconnect(); } catch { /* gone */ } };
+      const vol = live.noiseVol, all = live.noise;
+      src.onended = () => {
+        try { lvl.disconnect(); } catch { /* gone */ }
+        src.done = true;
+        if (all.every((n) => n.done)) try { vol.disconnect(); } catch { /* gone */ }
+      };
       live.noise.push(src);
     }
   }
+  // the player's volume for the noise: the slider as it is now (before Next; a mute at any time)
+  function noiseVolOf(l) { return l.muted ? 0 : (l.volRef || 1) * (l.k ?? 1); }
   // editor.md §12 rule 3: the Effects returns, one set per audio context, fed by both decks' sends and
   // played into the EQ's entry, so a tail rings on after the mix
   const fxBuses = new WeakMap();
@@ -1913,6 +1933,16 @@
       from.connect(s[k]); s[k].connect(to);
     }
     return s;
+  }
+  // a song file's container (the page falls back to MP4/AAC where WebM/Opus isn't offered): WebM by its EBML magic
+  function audioMime(bytes) {
+    const u = new Uint8Array(bytes instanceof ArrayBuffer ? bytes : bytes.buffer, bytes.byteOffset || 0, Math.min(4, bytes.byteLength));
+    return u.length === 4 && u[0] === 0x1a && u[1] === 0x45 && u[2] === 0xdf && u[3] === 0xa3 ? 'audio/webm' : 'audio/mp4';
+  }
+  // the copy's output let go, with its Effects sends (the returns are the context's and ring on)
+  function dropCopy(vol, sends) {
+    try { vol.disconnect(); } catch { /* gone */ }
+    for (const n of Object.values(sends || {})) { try { n.disconnect(); } catch { /* gone */ } }
   }
   // stereo white noise decaying by 60 dB over `sec`
   function hallImpulse(ctx, sec) {
@@ -1986,7 +2016,7 @@
     out.cancelScheduledValues(now); out.setValueAtTime(1, now);
     const late = matched ? (m.inDelaySec || 0) - skip : 0;   // (its seconds still to come)
     if (preset) { const [eIn, eOut] = presetGains(m, D, skip); playEvents(inn, lateEvents(eIn, late), t0, t0, false); playEvents(out, eOut, t0, t0, false); }
-    else { const [cIn, cOut] = gainCurves(m, style, D); fadeCurve(inn, lateShape(cIn, D, late), t0, D); fadeCurve(out, cOut, t0, D); }
+    else { const [cIn, cOut] = gainCurves(m, style, D); lateFade(inn, cIn, t0, D, late); fadeCurve(out, cOut, t0, D); }
 
     blendShape(g, style, t0, D, rate, preset, skip);
     log(`automix: ${style}${style !== 'crossfade' ? ' of ' + m.bars + ' bars' : ''}, ${D.toFixed(1)} s, starting in ${(t0 - now).toFixed(2)} s; next song from ${m.mixInTrackTime.toFixed(2)} s at x${rate.toFixed(3)}${m.reason ? ' (' + m.reason + ')' : ''}${djNote(m, preset ? m.style : style)}`);
@@ -2162,7 +2192,7 @@
     out.cancelScheduledValues(now); out.setValueAtTime(1, now);
     // (a late entry: the deck's gain 0 until B's start, so its warm-up pre-roll isn't heard)
     if (presetOn(m, m.style)) { const [eIn, eOut] = presetGains(m, D); playEvents(ig, lateEvents(eIn, late), t0, t0, false); playEvents(out, eOut, t0, t0, false); }
-    else { const [cIn, cOut] = gainCurves(m, m.style, D); fadeCurve(ig, lateShape(cIn, D, late), t0, D); fadeCurve(out, cOut, t0, D); }
+    else { const [cIn, cOut] = gainCurves(m, m.style, D); lateFade(ig, cIn, t0, D, late); fadeCurve(out, cOut, t0, D); }
     blendShape(g, m.style, t0, D, rate);
     live.handoffAt = t0 + D / 2;
     addonEvent('blend', { id: m.nextId, t0, D, rate, mixIn: m.mixInTrackTime, mixOut: m.mixOutTrackTime, glide: !!G, inAddon: !!inPrep.addon, ...(late ? { inDelay: late } : {}) });
@@ -2282,7 +2312,7 @@
       if (live !== L || st?.id !== id) return;
       d = SD.create(g.ctx, g.bassFilter);
       sdeck = d;
-      await d.load(bytes, 'audio/webm');
+      await d.load(bytes, audioMime(bytes));
       // it follows the player only shortly before it takes over: until then the player is held to
       // the mix (silent seeks, the incoming deck's glide), its clock not yet the song's own
       const wait = (takeAt - 3 - g.ctx.currentTime) * 1000;
@@ -2336,6 +2366,9 @@
     });
   } catch { /* no window */ }
   const prepared = new Map();   // song id -> { promise, rec?, none? }: the playing song's, the next one's, the last one's
+  // protocol.md 8.2.1 and 8.6: a better copy found for the playing song is readied while its deck plays on;
+  // one that doesn't fit (or fetch, or decode) leaves the playing copy as it is: id -> { prev, run }
+  const upgrading = new Map();
   const addonEvents = [];       // what the addon path did, on the audio clock (tests)
   const addonEvent = (ev, x = {}) => { addonEvents.push({ ...x, ev, t: graph()?.ctx.currentTime ?? null }); if (addonEvents.length > 60) addonEvents.shift(); };
   const readyRec = (id) => (id && prepared.get(id)?.rec) || null;
@@ -2457,6 +2490,11 @@
     // kept: the playing song's, the next one's and the last one's (the mix's tail)
     for (const k of [...prepared.keys()]) if (prepared.size >= 3 && k !== st?.id && k !== st?.next && k !== adeck?.id && k !== live?.oldId && !keptLeft(k)) prepared.delete(k);
     const me = {};
+    const up0 = upgrading.get(id);
+    upgrading.delete(id);
+    const up = up0 && sdeck?.addon && sdeck.addonId === id ? up0 : null;
+    // (an upgrade's copy refused at any step: the ticket and the badge go back to the playing copy)
+    const keep = async (why) => { await AP.keepCopy?.(id, why); return { kept: up, none: why }; };
     me.promise = (async () => {
       const F = window.__viviOffsetFit, A = window.__viviAutomix;
       let s = await AP.openFor(id, durSec);
@@ -2478,6 +2516,7 @@
       for (let more = 0; ; more++) {
         const file = await AP.fetchFor(id);
         if (!file.bytes) {
+          if (up) return keep(file.none);
           // (a copy that is no audio at all, a playlist or manifest, is refused like a bad fit: 8.1.4 and 8.1.6)
           const nx = file.refused && more < NEXT_ROWS && prepared.get(id) === me && AP.nextFor ? await AP.nextFor(id, file.none) : null;
           if (nx?.state === 'ready' && prepared.get(id) === me) { s = nx; say('fetching'); continue; }
@@ -2488,7 +2527,15 @@
         if (fmt) AP.note(id, { stream: { ...s.stream, ...fmt, codec: 'flac' } });
         say('fitting');
         const t1 = performance.now();
-        const [ytBuf, adBuf] = await Promise.all([decodeAt(ytBytes, F.FIT_RATE, 2), decodeAt(file.bytes, F.FIT_RATE, 2)]);
+        const ytBuf = await decodeAt(ytBytes, F.FIT_RATE, 2);
+        // a file the browser can't decode (an HTML error page, a codec it lacks) is refused like a bad fit (8.1.4)
+        const adBuf = await decodeAt(file.bytes, F.FIT_RATE, 2).catch((e) => { log(`addons: ${s.addon.name} (${s.addon.host}): the file doesn't decode:`, e?.message || e); return null; });
+        if (!adBuf) {
+          if (up) return keep('decode failed');
+          const nx = more < NEXT_ROWS && prepared.get(id) === me && AP.nextFor ? await AP.nextFor(id, 'decode failed') : null;
+          if (nx?.state === 'ready' && prepared.get(id) === me) { s = nx; say('fetching'); continue; }
+          return { none: 'decode failed', state: 'refused' };
+        }
         // the mono mixes here (cheap); the fit, both loudness reads and the true-peak pass in the
         // analysis frame's worker (addons/fit.worker.js): on this thread they held the page about
         // 1 s per song. This thread only when that frame is out (the arrays are then still here).
@@ -2496,18 +2543,21 @@
         let yt = monoOf(ytBuf), ad = monoOf(adBuf);
         busy = performance.now() - busy;
         let where = 'worker';
-        let fitted = await A.addonWork({ op: 'fit', yt, ad, opt: { slackSec: 5 } }, [yt.buffer, ad.buffer])
+        // (the slack the addons were searched with, Settings; the same for the fit)
+        const slackSec = AP.slackSec?.() ?? 5;
+        let fitted = await A.addonWork({ op: 'fit', yt, ad, opt: { slackSec } }, [yt.buffer, ad.buffer])
           .catch((e) => { log('addons: no fit worker:', e?.message || e); return null; });
         if (!fitted) {
           if (!yt.length || !ad.length) { yt = monoOf(ytBuf); ad = monoOf(adBuf); }   // (handed to the worker)
           const t = performance.now();
-          const f = F.fit(yt, ad, { slackSec: 5 });
+          const f = F.fit(yt, ad, { slackSec });
           fitted = f.none ? { fit: f } : { fit: f, ytLufs: F.integratedLufs(yt, F.FIT_RATE), addonLufs: F.integratedLufs(ad, F.FIT_RATE) };
           busy += performance.now() - t; where = 'main thread';
         }
         const { fit, ytLufs, addonLufs } = fitted;
         if (fit.none) {
           log(`addons: ${s.addon.name} (${s.addon.host}) refused for this song: ${fit.none}`, fit);
+          if (up) return keep(fit.none);
           const nx = more < NEXT_ROWS && prepared.get(id) === me && AP.nextFor ? await AP.nextFor(id, fit.none) : null;
           if (nx?.state === 'ready' && prepared.get(id) === me) { s = nx; say('fetching'); continue; }
           return { none: fit.none, state: 'refused', fit };
@@ -2539,7 +2589,10 @@
           `${full.sampleRate} Hz x ${full.numberOfChannels}, ready after ${((t3 - t0) / 1000).toFixed(1)} s (fetch and YouTube's audio ${((t1 - t0) / 1000).toFixed(1)} s, fit, level and decode ${((t3 - t1) / 1000).toFixed(1)} s; fit and level in the ${where}, main thread busy ${busy.toFixed(0)} ms)`);
         return { rec };
       }
-    })().then((r) => { if (prepared.get(id) === me) Object.assign(me, r); return r; },
+    })().then((r) => {
+      if (r.kept && prepared.get(id) === me) { if (r.kept.prev?.rec) prepared.set(id, r.kept.prev); else prepared.delete(id); return r; }
+      if (prepared.get(id) === me) Object.assign(me, r); return r;
+    },
       (e) => { const r = { none: String(e?.message || e), state: 'failed' }; if (prepared.get(id) === me) Object.assign(me, r, { tries, failedAt: performance.now() }); return r; });
     prepared.set(id, me);
     return me.promise;
@@ -2553,6 +2606,8 @@
     addonTap(g);   // made now, so it holds YouTube's last moments by the time the deck needs them
     const r = await prepareAddon(g, id, AP, st.dur, (s) => { if (!gone()) say(s); });
     if (gone()) return;
+    // (the better copy was refused: the playing deck stays, and its run again the song's)
+    if (r.kept) { log(`addons: the better copy is refused (${r.none}); the playing copy stays`); if (r.kept.run) adeck = r.kept.run; return; }
     if (!r.rec) { if (r.state === 'failed') throw new Error(r.none); say(r.state, { why: r.none, fit: r.fit }); return; }
     await playAddon(g, v, r.rec, run, AP, {});
   }
@@ -2585,6 +2640,7 @@
     AP.upgradeFor?.(id).then((better) => {
       if (!better || adeck !== run || st?.id !== id || live) return;
       log('addons: a better copy was found; it takes over once it is fetched and fitted');
+      upgrading.set(id, { prev: prepared.get(id), run });
       prepared.delete(id);
       adeck = null;
     }).catch(() => {});
@@ -2709,6 +2765,7 @@
       live.vol.gain.setTargetAtTime(live.base * f, now, 0.03);
       if (deckOut && live.mix?.style === 'loop') { deckOut.gain.cancelScheduledValues(now); deckOut.gain.setTargetAtTime(live.deckBase * f, now, 0.03); }
       if (inBus && live.inDeck) { inBus.gain.cancelScheduledValues(now); inBus.gain.setTargetAtTime(live.inBase * f, now, 0.03); }
+      if (live.noiseVol) { live.noiseVol.gain.cancelScheduledValues(now); live.noiseVol.gain.setTargetAtTime(noiseVolOf(live), now, 0.03); }
     }
 
     // An ad flag that clears within AD_GRACE is an ad slot a blocker emptied
@@ -2737,6 +2794,9 @@
       const sinceAsk = now - live.askedAt;
       const changed = st && st.id && st.id !== live.oldId;
       if (!changed) {
+        // The queue named the incoming song, then the outgoing one again: the listener went back (playback.md
+        // "The queue during a mix" rule 1). The mix stops now, unmarked, instead of waiting out the 8 s below.
+        if (live.newId) { abortLive('went back to the song'); return; }
         // Between Next and the new song's title, the player can pause for a reason of its own: an ad slot (uBlock
         // empties it, the flag shows for a moment, AD_GRACE) or a load (its data gone, readyState under 3). Neither
         // is the listener's pause: an ad flag waits out its grace, as after the change; only a settled pause aborts.

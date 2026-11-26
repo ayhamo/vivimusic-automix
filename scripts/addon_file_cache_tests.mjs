@@ -192,6 +192,45 @@ const cacheWith = (maxBytes, st = fakeStorage(), c = fakeCache()) => ({ st, c, F
   check('NEXT before OPEN or on an expired ticket', [await S.handle({ type: 'VIVI_ADDONS_NEXT', ticket: (await S.handle({ type: 'VIVI_ADDONS_FIND', song: { title: 'New', artist: 'X', durationSec: 200 } })).ticket }), await S.handle({ type: 'VIVI_ADDONS_NEXT', ticket: 'tnope' })], [{ none: 'not opened' }, { none: 'ticket expired' }]);
 }
 
+// ---- (audit 2026-11-26) a refused row's cached file goes; the upgrade pass keeps refused rows passed over;
+// a better copy refused by the fit gives the playing one back (8.6); "Upgrade quality" without a ticket ----
+{
+  const st = fakeStorage({ addonsEnabled: true, addonsTier: 'LOSSLESS', addonsList: [{ id: 'idA', base: 'https://a.example/SECRET-A', name: 'A', host: 'a.example' }, { id: 'idB', base: 'https://b.example/SECRET-B', name: 'B', host: 'b.example' }] });
+  const c = fakeCache();
+  const files = FC.create({ open: () => c, storage: st, maxBytes: async () => 512e6, now: () => ++T });
+  const calls = [];
+  const rows = { idA: [{ id: 'a1' }, { id: 'a2' }], idB: [{ id: 'b1' }] };
+  const client = {
+    health: () => ({}),
+    find: async (song, addons) => ({ found: addons.map((a) => ({ addon: { ...a, name: a.id, host: a.id + '.example' }, rows: rows[a.id] })), tried: [] }),
+    open: async (found, song, opt, tried = []) => {
+      calls.push(found.map((f) => [f.addon.id, f.rows.map((r) => r.id)]));
+      const f = found[0];
+      const stream = f?.addon.id === 'idA' ? { transport: 'file', codec: 'aac', bitrate: 256 } : { transport: 'file', codec: 'flac', sampleRate: 44100, bitDepth: 16 };
+      return f ? { addon: { base: f.addon.base, name: f.addon.name, host: f.addon.host, id: f.addon.id }, row: f.rows[0], stream, tried } : { none: 'no addon has it', tried };
+    },
+  };
+  const S = A.create({ storage: st, client, fetch: async () => ({ ok: true, status: 200, headers: { get: () => null }, arrayBuffer: async () => bytes(100) }), files });
+  const f = await S.handle({ type: 'VIVI_ADDONS_FIND', song: { title: 'Up', artist: 'X', durationSec: 200 } });
+  const o = await S.handle({ type: 'VIVI_ADDONS_OPEN', ticket: f.ticket });
+  const kA1 = files.keyOf('idA', 'a1', 'LOSSLESS');
+  await files.put(kA1, bytes(100), { mime: 'audio/flac', stream: { codec: 'aac', transport: 'file' } });
+  const n1 = await S.handle({ type: 'VIVI_ADDONS_NEXT', ticket: f.ticket, why: 'different edit' });
+  await new Promise((r) => setTimeout(r, 5));
+  check('NEXT: the refused row\'s cached file is dropped too (not replayed on its next play)', [o.row.id, n1.row.id, await files.has(kA1)], ['a1', 'a2', null]);
+  check('OPEN answers carry the local addon id (no base, no secret)', [n1.addon.id, /SECRET/.test(JSON.stringify(n1))], ['idA', false]);
+  const u = await S.handle({ type: 'VIVI_ADDONS_UPGRADE', ticket: f.ticket });
+  check('UPGRADE: the refused row stays passed over (only the other lane is opened)', [u.row?.id, calls.at(-1)], ['b1', [['idB', ['b1']]]]);
+  const k = await S.handle({ type: 'VIVI_ADDONS_KEEP', ticket: f.ticket, why: 'no match' });
+  check('KEEP: the better copy refused, the playing one is the ticket\'s again', [k, S.ticketOf(f.ticket).got.row.id, S.ticketOf(f.ticket).refused.has('https://b.example/SECRET-B|b1')], [{ ok: true }, 'a2', true]);
+  check('KEEP again, or on an expired ticket', [await S.handle({ type: 'VIVI_ADDONS_KEEP', ticket: f.ticket }), await S.handle({ type: 'VIVI_ADDONS_KEEP', ticket: 'tnope' })], [{ none: 'no copy to keep' }, { none: 'ticket expired' }]);
+  const kA2 = files.keyOf('idA', 'a2', 'LOSSLESS');
+  await files.put(kA2, bytes(100), { mime: 'audio/aac', stream: { codec: 'aac', transport: 'file' } });
+  const rf = await S.handle({ type: 'VIVI_ADDONS_REFRESH', ticket: '', song: { title: 'Up', artist: 'X' }, addonId: 'idA', rowId: 'a2' });
+  check('REFRESH without a ticket: the playing row\'s file still goes', [rf, await files.has(kA2)], [{ ok: true, cleared: 0, files: 1 }, null]);
+  check('REFRESH without a ticket or a song: nothing to go by', await S.handle({ type: 'VIVI_ADDONS_REFRESH', ticket: '' }), { none: 'ticket expired' });
+}
+
 {
   // §8.1.6: a playlist or manifest is never kept, and one already in the store is never served
   const { F, c } = cacheWith(1e6);

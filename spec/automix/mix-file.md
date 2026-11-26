@@ -55,7 +55,7 @@ Test: `node --test scripts/test_automix_plan.mjs` (the "mix file" tests).
        and the window line reads "B enters at 0:00.0, 3.2 s into the mix". Moving the mix-in keeps
        it. `mixChanges` shows it in the mix-in row.
      - PC: `automix.js` `plan` (`inDelaySec`); `crossfade.js` `inStartOf` (the deck and the
-       player start that long into the mix) and `lateShape` / `lateEvents` (B's gain 0 until
+       player start that long into the mix) and `lateEvents` / `lateFade` (B's gain 0 until
        then); `automix-overview.js` `setLate`.
 
 3. **[all] Reading.** The whole file is refused, with nothing imported, when:

@@ -38,6 +38,8 @@ const chrome = {
       setTimeout(() => {
         if (msg.type === 'VIVI_ADDONS_FIND') cb(msg.song.title === 'Vaina Loca' || msg.song.title === 'Poker Face' ? { ticket: 't-' + msg.song.title, candidates: [{ addon: 'nullbeat.example', rows: 1 }], tried: [] } : { none: 'no addon has it', tried: [] });
         else if (msg.type === 'VIVI_ADDONS_REFRESH') cb({ ok: true, cleared: 2, files: 1 });
+        else if (msg.type === 'VIVI_ADDONS_UPGRADE') cb({ addon: { name: 'Better', host: 'better.example' }, row: { id: 'better-1' }, stream: { codec: 'flac', sampleRate: 96000, bitDepth: 24 }, tried: [] });
+        else if (msg.type === 'VIVI_ADDONS_KEEP') cb({ ok: true });
         else if (msg.type === 'VIVI_ADDONS_OPEN') cb({ addon: { name: 'NullBeat', host: 'nullbeat.example' }, row: { id: 'r-' + msg.ticket }, stream: { codec: 'flac', sampleRate: 44100, bitDepth: 16 }, tried: [] });
       }, 1);
     },
@@ -77,7 +79,7 @@ const refreshed = [];
 win.dispatchEvent = (e) => refreshed.push(e.detail.id);
 ctx.CustomEvent = class { constructor(type, o) { this.type = type; this.detail = o?.detail; } };
 const up = await P.upgradeQuality('s1');
-check('upgradeQuality: REFRESH with the ticket, the song forgotten, crossfade told', [up, sent.at(-1), P.statusOf('s1').state, refreshed], [true, { type: 'VIVI_ADDONS_REFRESH', ticket: 't-Poker Face' }, 'none', ['s1']]);
+check('upgradeQuality: REFRESH with the ticket, the song forgotten, crossfade told', [up, sent.at(-1), P.statusOf('s1').state, refreshed], [true, { type: 'VIVI_ADDONS_REFRESH', ticket: 't-Poker Face', song: { videoId: 's1', title: 'Poker Face', artist: 'Lady Gaga' }, addonId: null, rowId: 'r-t-Poker Face' }, 'none', ['s1']]);
 const again = await P.openFor('s1');
 check("then FIND and OPEN again, with YouTube's bitrate", [again.state, types().slice(-2), sent.at(-1).ytKbps], ['ready', ['VIVI_ADDONS_FIND:Poker Face', 'VIVI_ADDONS_OPEN:t-Poker Face'], 150]);
 storageListeners.forEach((f) => f({ addonsEnabled: { newValue: false } }, 'local'));
@@ -89,6 +91,25 @@ check('turned off: off, forgotten', P.statusOf('s1').state, 'off');
   state('s1', '');
   for (let i = 0; i < 6; i++) await tick();
   check('turned on again on the same song: FIND and OPEN again', [types().slice(n), P.statusOf('s1').state], [['VIVI_ADDONS_FIND:Poker Face', 'VIVI_ADDONS_OPEN:t-Poker Face'], 'ready']);
+  storageListeners.forEach((f) => f({ addonsEnabled: { newValue: false } }, 'local'));
+}
+
+{
+  // (audit 2026-11-26) 8.6: a better copy refused by the fit gives the playing one back; the fit's length slack is the setting's
+  storageListeners.forEach((f) => f({ addonsEnabled: { newValue: true } }, 'local'));
+  state('s1', '');
+  for (let i = 0; i < 6; i++) await tick();
+  P.note('s1', { play: { state: 'playing' } });
+  const better = await P.upgradeFor('s1');
+  const during = [P.statusOf('s1').addon.host, P.statusOf('s1').play];
+  const kept = await P.keepCopy('s1', 'no match');
+  const s1 = P.statusOf('s1');
+  check('upgradeFor stages the better copy; keepCopy: KEEP sent, the playing copy and its badge back',
+    [better, during, kept, sent.at(-1), s1.state, s1.addon.host, s1.row.id, s1.play.state, await P.keepCopy('s1', 'again')],
+    [true, ['better.example', null], true, { type: 'VIVI_ADDONS_KEEP', ticket: 't-Poker Face', why: 'no match' }, 'ready', 'nullbeat.example', 'r-t-Poker Face', 'playing', false]);
+  check('the length slack: the setting (5 s by default), then its changes, kept within 0-10 s', [P.slackSec(),
+    (storageListeners.forEach((f) => f({ addonsSlackSec: { newValue: 2 } }, 'local')), P.slackSec()),
+    (storageListeners.forEach((f) => f({ addonsSlackSec: { newValue: 40 } }, 'local')), P.slackSec())], [5, 2, 10]);
   storageListeners.forEach((f) => f({ addonsEnabled: { newValue: false } }, 'local'));
 }
 
