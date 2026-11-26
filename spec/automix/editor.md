@@ -546,7 +546,9 @@ and 4 are ours. Draft and BitChord's notes: `plan-progress-row.md`.
      stated bit depth; any other copy is "the addon's copy");
    - the copy is lined up with the app's own: "Lining up the lossless copy with <the app's source>'s…";
    - the take-over, from the copy starting until it is what's heard: "Switching to the lossless
-     copy…".
+     copy…". While the song is paused the copy can't line up with a source that stands still (or,
+     taken over before, the source has the sound again): "The lossless copy is ready: it takes over
+     when the song plays", with no bar moving (the user, 2026-11-26: the busy bar ran on while paused).
    Nothing once the copy is heard, refused or failed (the badge says that). The next song's copy is
    never shown. Like the rest of the row, hidden during a live mix (rule 4).
 

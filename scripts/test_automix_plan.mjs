@@ -1543,13 +1543,13 @@ test('Stream deck and range relay: the container by its bytes; only https google
 test('Progress row: the addon copy is fetched, lined up, then taken over; hidden in a live mix (editor.md §11 rule 6)', () => {
   const ov = srcOf('src/automix-overview.js').replace(/\r\n/g, '\n');
   const fn = between(ov, '  function addonStage(', '  function progressRow(');
-  const run = (status, takeover, on = true) => {
+  const run = (status, takeover, on = true, paused = false) => {
     const ctx = vm.createContext({
       window: { __viviAddonsPage: { isOn: () => on, statusOf: () => status } },
       xf: () => ({ addonTakeover: () => takeover }),
     });
     vm.runInContext(fn, ctx);
-    return vm.runInContext("addonStage('a')", ctx);
+    return vm.runInContext(`addonStage('a', ${paused})`, ctx);
   };
   const flac = { codec: 'flac', bitDepth: 24 };
   assert.equal(run({ state: 'opening' }), 'Asking your addons…');
@@ -1558,11 +1558,14 @@ test('Progress row: the addon copy is fetched, lined up, then taken over; hidden
   assert.equal(run({ state: 'ready', stream: flac, play: { state: 'fitting' } }), "Lining up the lossless copy with YouTube's…");
   assert.equal(run({ state: 'ready', stream: flac, play: { state: 'playing' } }, 'switching'), 'Switching to the lossless copy…');
   assert.equal(run({ state: 'ready', stream: flac, play: { state: 'playing' } }, 'done'), '');
+  // paused: the deck can't line up with a sound that stands still; no busy bar while it waits (rule 6)
+  assert.equal(run({ state: 'ready', stream: flac, play: { state: 'playing' } }, 'switching', true, true), 'The lossless copy is ready: it takes over when the song plays');
+  assert.equal(run({ state: 'ready', stream: { codec: 'opus' }, play: { state: 'playing' } }, 'switching', true, true), "The addon's copy is ready: it takes over when the song plays");
   assert.equal(run({ state: 'ready', stream: flac, play: { state: 'refused' } }), '');
   assert.equal(run({ state: 'opening' }, null, false), '');
   // after the analysis, and only outside a live mix
   const row = between(ov, '  function progressRow(', '\n  }\n');
-  assert.match(row, /if \(P && s && !live\) \{[\s\S]*if \(!text\) \{ const a = addonStage\(cur\);/);
+  assert.match(row, /if \(P && s && !live\) \{[\s\S]*if \(!text\) \{ const a = addonStage\(cur, !!s\.paused\); if \(a\) \{ text = a; kind = a\.endsWith\('…'\) \? 'busy' : 'note'; \}/);
   const xfs = srcOf('src/automix/crossfade.js');
   assert.match(xfs, /addonTakeover: \(id\) => \(sdeck\?\.addon && sdeck\.addonId === id \? \(sdeck\.audible \? 'done' : 'switching'\) : null\)/);
 });
