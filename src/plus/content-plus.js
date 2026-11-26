@@ -523,7 +523,9 @@
         const state = xf.automix?.state === 'idle' && m ? 'planned' : xf.automix?.state || 'idle';
         let text = `Automix · ${state}`;
         if (engine.bpm) text += ` · ${engine.bpm.toFixed(1)} BPM (grid ${(engine.conf || 0).toFixed(2)})`;
-        if (m) text += ` · ${m.style || 'blend'}${m.bars ? ` ${m.bars} bars` : ''} / ${m.mixSec.toFixed(1)} s from ${fmt(m.startAt)}${m.rate && Math.abs(m.rate - 1) > 0.002 ? ` · next ×${m.rate.toFixed(3)}` : ''}`;
+        // the editor's preset (the overview's chip) beside the style the engine plays it as
+        const preset = m?.preset && m.preset !== 'auto' ? (m.preset === 'none' ? 'No transition' : m.preset[0].toUpperCase() + m.preset.slice(1)) + ': ' : '';
+        if (m) text += ` · ${preset}${m.style || 'blend'}${m.bars ? ` ${m.bars} bars` : ''} / ${m.mixSec.toFixed(1)} s from ${fmt(m.startAt)}${m.rate && Math.abs(m.rate - 1) > 0.002 ? ` · next ×${m.rate.toFixed(3)}` : ''}`;
         if (m?.reason) text += ` · ${m.reason}`;
         if (state === 'fallback' && engine.reason) text += ` · ${engine.reason}`;
         if (xf.live) text += ' · mixing';

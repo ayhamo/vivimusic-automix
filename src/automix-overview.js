@@ -773,8 +773,16 @@
   function loop() {
     frame = 0;
     if (!ui) return;
-    try { render(); } catch (e) { console.warn('[ViVi automix overview]', e); }
+    try { clearPlayerBar(ui.root); render(); } catch (e) { console.warn('[ViVi automix overview]', e); }
     frame = requestAnimationFrame(loop);
+  }
+  // The card ends above YouTube's player bar (it is drawn over the overlay), and scrolls inside
+  // what's left, so its last rows are never hidden under the bar.
+  function clearPlayerBar(root) {
+    const r = document.querySelector('ytmusic-player-bar')?.getBoundingClientRect();
+    const under = r && r.height > 0 && r.top < innerHeight ? Math.round(innerHeight - r.top) : 0;
+    const pad = `${16 + under}px`;
+    if (root.style.paddingBottom !== pad) root.style.paddingBottom = pad;
   }
 
   function describe(m, s) {

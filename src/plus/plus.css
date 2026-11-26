@@ -391,8 +391,11 @@ ytmusic-player-bar:has(ytmusic-player-expanding-menu:not([aria-hidden="true"]):n
 .vivi-amx-ov.vivi-open { opacity: 1; }
 .vivi-amx-ov-card {
   width: min(760px, 100%);
-  max-height: calc(100vh - 32px);
+  max-height: 100%;   /* the overlay's room above the player bar (automix-overview.js clearPlayerBar) */
   overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.35) transparent;
   box-sizing: border-box;
   padding: 18px 20px 16px;
   border-radius: 18px;

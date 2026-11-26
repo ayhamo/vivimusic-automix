@@ -1549,3 +1549,28 @@ test('Progress row: the addon copy is fetched, lined up, then taken over; hidden
   const xfs = srcOf('src/automix/crossfade.js');
   assert.match(xfs, /addonTakeover: \(id\) => \(sdeck\?\.addon && sdeck\.addonId === id \? \(sdeck\.audible \? 'done' : 'switching'\) : null\)/);
 });
+
+test("The overview ends above YouTube's player bar and scrolls; the stats name the preset beside the style", () => {
+  const ov = srcOf('src/automix-overview.js').replace(/\r\n/g, '\n');
+  const fn = between(ov, '  function clearPlayerBar(', '\n  }\n') + '\n  }\n';
+  const pad = (rect, h = 1000) => {
+    const root = { style: { paddingBottom: '' } };
+    const ctx = vm.createContext({ innerHeight: h, document: { querySelector: () => (rect ? { getBoundingClientRect: () => rect } : null) } });
+    vm.runInContext(fn, ctx);
+    ctx.clearPlayerBar(root);
+    return root.style.paddingBottom;
+  };
+  assert.equal(pad({ top: 920, height: 80 }), '96px');
+  assert.equal(pad(null), '16px');
+  assert.equal(pad({ top: 1000, height: 0 }), '16px');
+  assert.match(ov, /try \{ clearPlayerBar\(ui\.root\); render\(\); \}/);
+  const css = srcOf('src/plus/plus.css');
+  assert.match(between(css, '.vivi-amx-ov-card {', '}'), /max-height: 100%;[\s\S]*overflow: auto;/);
+  const plus = srcOf('src/plus/content-plus.js').replace(/\r\n/g, '\n');
+  const line = between(plus, "        // the editor's preset", "if (m?.reason)");
+  const ctx = vm.createContext({});
+  vm.runInContext(`function f(m){ ${line.replace("if (m) text +=", 'return')} }`.replace(/\$\{fmt\(m\.startAt\)\}/, '${m.startAt}'), ctx);
+  assert.equal(vm.runInContext("f({ preset: 'custom', style: 'crossfade', mixSec: 5, startAt: 163 })", ctx), ' · Custom: crossfade / 5.0 s from 163');
+  assert.equal(vm.runInContext("f({ preset: 'auto', style: 'blend', bars: 16, mixSec: 8, startAt: 100 })", ctx), ' · blend 16 bars / 8.0 s from 100');
+  assert.equal(vm.runInContext("f({ preset: 'none', style: 'crossfade', mixSec: 0.5, startAt: 1 })", ctx), ' · No transition: crossfade / 0.5 s from 1');
+});
