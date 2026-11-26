@@ -1665,3 +1665,25 @@ test("Overview: B's late entry and each song's playlist speed on the overview's 
   assert.equal(plain.in(10), 10 + 8 + 2);
   assert.equal(plain.out(-2), 98);
 });
+
+test('B\'s late entry (mix-file.md rule 2): the equal-power trim reads B\'s heard rise: A at its own curve while B is held, no step as B comes in', () => {
+  // BitChord 1b #7, ruled 2026-11-26: the trim is worked out from B's heard gain (0 while held, its
+  // 10 ms rise, then its curve); the curves' shapes are unchanged
+  const A = loadAutomix('auto', { automixVersion: 3 });
+  const D = 16, n = 1601, dt = D / (n - 1), late = 8;   // (10 ms a sample; B comes in mid-blend, where the trim is deepest)
+  const m = { v2: true, clash: 0, bpm: 120, swapAt: 0.5 };
+  const base = A.djShape(m, 'blend', D, n), held = A.djShape({ ...m, inDelaySec: late }, 'blend', D, n);
+  const at = (s) => Math.round(s / dt);
+  const db = (x, y) => 20 * Math.log10(x / y);
+  let dip = 0;
+  for (let i = 0; i < at(late); i++) { assert.ok(held.gOut[i] >= base.gOut[i] - 1e-6, `A not under its trimmed curve at ${i * dt}`); dip = Math.max(dip, db(held.gOut[i], base.gOut[i])); }
+  assert.ok(dip > 1, `while B is held A isn't trimmed (${dip.toFixed(2)} dB over the trimmed curve)`);
+  // what is heard: B 0 until `late`, its 10 ms rise, then its curve (crossfade.js lateFade); A as planned
+  const bHeard = (i) => held.gIn[i] * Math.min(1, Math.max(0, (i * dt - late) / 0.01));
+  const out = (i) => 10 * Math.log10(held.gOut[i] ** 2 + bHeard(i) ** 2);
+  for (let i = at(late - 0.5); i < at(late + 0.5); i++) assert.ok(Math.abs(out(i + 1) - out(i)) <= 1 + 1e-9, `the output steps ${(out(i + 1) - out(i)).toFixed(2)} dB in 10 ms at ${((i + 1) * dt).toFixed(2)} s`);
+  for (let i = at(late + 0.02); i < n; i++) assert.ok(Math.abs(held.gOut[i] - base.gOut[i]) < 1e-6 && Math.abs(held.gIn[i] - base.gIn[i]) < 1e-6, `both on their trimmed curves once B is in (${(i * dt).toFixed(2)} s)`);
+  const none = A.djShape({ ...m, inDelaySec: 0 }, 'blend', D, n);
+  assert.deepEqual([...none.gOut], [...base.gOut], 'no late entry: as before');
+});
+

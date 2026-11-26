@@ -2017,6 +2017,7 @@
   // seconds, sampled at n points over p = 0..1. The clash (the share both
   // sing, from the plan) deepens the filters and moves the fader towards a
   // vocal-safe pair.
+  const LATE_RISE_SEC = 0.01;   // B's rise at a late entry (crossfade.js LATE_RAMP)
   function djShape(m, style, D, n) {
     if (style === 'blend' && (m.shape === 'dropin' || m.shape === 'muffle' || m.shape === 'echo')) return ladderShape(m, D, n);
     const clash = clamp(m.clash || 0, 0, 1);
@@ -2047,13 +2048,20 @@
       fall = (p) => held(Math.cos(p * S), p <= fallFrom ? 1 : Math.cos(((p - fallFrom) / (1 - fallFrom)) * S));
     }
     const mk = (f) => Float32Array.from({ length: n }, (_, i) => f(i / (n - 1)));
+    // The equal-power trim is worked out from B's heard rise (mix-file.md rule 2, "A while B is held",
+    // ruled 2026-11-26 on BitChord 1b #7): with a late entry B is silent until inDelaySec, then reaches
+    // its curve in 10 ms (crossfade.js lateFade), so A isn't trimmed while it plays alone and its trim
+    // follows B in; the curves' shapes are unchanged, only what the trim reads
+    const late = m.inDelaySec > 0 && D > 0 ? m.inDelaySec : 0;
+    const heard = (p) => (!late ? 1 : clamp((p * D - late) / LATE_RISE_SEC, 0, 1));
     const gIn = new Float32Array(n), gOut = new Float32Array(n);
     for (let i = 0; i < n; i++) {
       const p = i / (n - 1);
       let r = rise(p), f = fall(p);
       r += (Math.sin(Math.pow(p, 1.65) * S) - r) * clash;
       f += (Math.cos(Math.pow(p, 0.65) * S) - f) * clash;
-      const trim = r + f <= 1 ? 1 : Math.max(0.5, 1 / Math.sqrt(r + f));
+      const rh = r * heard(p);
+      const trim = rh + f <= 1 ? 1 : Math.max(0.5, 1 / Math.sqrt(rh + f));
       gIn[i] = r * trim; gOut[i] = f * trim;
     }
     return { D, style, gIn, gOut, inHp: mk(inHp), outHp: mk(outHp), outLp: mk(outLp) };

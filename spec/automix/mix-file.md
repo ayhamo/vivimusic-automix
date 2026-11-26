@@ -45,6 +45,15 @@ Test: `node --test scripts/test_automix_plan.mjs` (the "mix file" tests).
        that 0. A skip or abort during the wait puts B at its mix-in, not before it. (PC audit
        2026-11-26: a mix-in of 30 s with "B in after 4 s" played B from 26 s through the rising
        curve on YouTube's player, and the deck's 0.5 s pre-roll from 29.5 s at about 22%.)
+     - **[all] A while B is held.** A trim that keeps the two songs at equal power (Automix v2's
+       own blend, `1/sqrt(rise + fall)`) is worked out from B's heard gain, not from B's curve: 0
+       while B is held, its 10 ms rise, then its curve. So A plays its own curve, untrimmed, while
+       it plays alone, and its trim follows B in, with no step in the output (no more than 1 dB per
+       10 ms across B's entry) and no ramp of its own. Only what the trim reads changes: the curves
+       as drawn or saved are unchanged, and a preset, which has no such trim, is unaffected.
+       (BitChord audit 2026-11-26, 1b #7: A dipped up to 3 dB under B's silent hold. The PC builds
+       it in automix.js `djShape`; BitChord's heardInto counts a held B as silent and follows its
+       rise; the phone has no trim driven by B.)
      - The plan carries it as `inDelaySec` (plan.schema.json), at most the mix's length − 0.5 s
        (a longer one is shortened, with a warning).
      - Only a plain blend or crossfade plays it. A loop mix never does, and a hand-over, a
