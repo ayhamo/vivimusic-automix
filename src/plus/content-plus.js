@@ -141,30 +141,35 @@
   let lyricsCanvasUrl = null;
   const LYRICS_CANVAS_ID = 'vivi-lyrics-canvas';
 
+  // each look-up's number: a song's Canvas choice changed while one was out (§15, VP.reCheckCanvas on the
+  // same song) starts another, and the older reply, the same song's, must not show over the newer
+  let lyricsCanvasGen = 0;
   async function fetchLyricsCanvas(track, key) {
+    const gen = ++lyricsCanvasGen;
+    const still = () => gen === lyricsCanvasGen && key === C.trackKey() && canvasPlacement !== 'cover';
     try {
       // the Canvas sources (music video, Spotify) in the listener's order, the ones on only (§13), with
       // the song's own choices (§15 rules 2 and 7): its Use first, its switched-off sources left out
       const want = songOrder(track?.videoId).filter((n) => n !== 'apple' && canvasSet.on.includes(n) && !songOff(track?.videoId)[n]);
       if (!want.includes('spotify')) {
         const mv = want.includes('video') ? await window.__viviVideoCanvas?.(track, 'video') : null;
-        if (mv && key === C.trackKey() && canvasPlacement !== 'cover') setLyricsCanvas(mv);
+        if (mv && still()) setLyricsCanvas(mv);
         return;
       }
       if (want[0] === 'video') {
         const mv = await window.__viviVideoCanvas?.(track, 'video');
-        if (mv) { if (key === C.trackKey() && canvasPlacement !== 'cover') setLyricsCanvas(mv); return; }
+        if (mv) { if (still()) setLyricsCanvas(mv); return; }
       } else await window.__viviVideoCanvas?.(track, 'spotify');   // the song's length for the Spotify match
       const r = await chrome.runtime.sendMessage({
         type: 'VIVI_SPOTIFY_CANVAS',
         track: { song: track.song, artist: track.artist, videoId: track.videoId, album: track.album || null, duration: track.lengthSec || null },
       });
-      if (key !== C.trackKey() || canvasPlacement === 'cover') return;
+      if (!still()) return;
       if (r?.ok && r.videoUrl) { setLyricsCanvas(r.videoUrl); return; }
       log('No Spotify Canvas for the lyrics background:', r?.error || 'none');
       if (want[1] === 'video') {
         const mv = await window.__viviVideoCanvas?.(track, 'video');
-        if (mv && key === C.trackKey() && canvasPlacement !== 'cover') setLyricsCanvas(mv);
+        if (mv && still()) setLyricsCanvas(mv);
       }
     } catch (e) {
       warn('Spotify Canvas (lyrics background):', e?.message || e);

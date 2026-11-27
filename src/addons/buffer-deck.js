@@ -49,6 +49,11 @@
   // after YouTube (re)starts, this much of its new sound in the tap before a match is tried, and
   // that many tries 0.25 s apart before its time is used (it plays meanwhile: nothing goes unheard)
   const FRESH_SEC = ANCHOR_SEC + 0.15, TAP_TRIES = 4, RETRY_SEC = 0.25;
+  // a take-over from YouTube's sound waits for its output to be matched: its time can be ~0.1 s off
+  // what is heard, a jump the listener hears (a small cut or repeat) and nothing later puts right. A
+  // quiet stretch is waited out; no match in TAKE_TRIES tries (5 s) leaves the song to YouTube. Only a
+  // muted YouTube (nothing heard, nothing on the tap) or no tap at all takes over by its time.
+  const TAKE_TRIES = 20;
   // how far YouTube's output runs ahead of its element's currentTime (Firefox: ~150 ms), learnt
   // from each anchor on the tap: for the anchor by time (a muted YouTube) and for telling a seek
   let timeBias = null;
@@ -229,7 +234,7 @@
           return { t: tRead, at: est(tRead), score: null, by: 'time', missed: true };
         }
       }
-      return { t: tRead, at: est(tRead), score: null, by: 'time' };
+      return { t: tRead, at: est(tRead), score: null, by: 'time', silent: !!this.tp };
     }
 
     // the deck's place against YouTube's output (the tap): moved only when it is off there too
@@ -257,9 +262,19 @@
       try {
         const a = await this.findAnchor(c);
         if (this.state !== 'following') return;
-        // no match yet: YouTube keeps playing, another try shortly (its time is only a last resort:
-        // after a seek it can be ~0.1 s off what is heard)
-        if (a.missed && ++this.tapMisses < TAP_TRIES) { this.retryAt = this.ctx.currentTime + RETRY_SEC; return; }
+        if (first && a.by !== 'tap') {
+          // a take-over from YouTube's sound: on its output only (TAKE_TRIES above); YouTube plays meanwhile
+          const heard = this.level() > 0;
+          if (a.missed && heard) {
+            if (++this.tapMisses >= TAKE_TRIES) { this.handBack('YouTube\'s output never matched the file'); return; }
+            this.retryAt = this.ctx.currentTime + RETRY_SEC; return;
+          }
+          if (a.silent && heard) { this.retryAt = this.ctx.currentTime + RETRY_SEC; return; }   // a quiet stretch
+        } else if (a.missed && ++this.tapMisses < TAP_TRIES) {
+          // a re-anchor with no match yet: another try shortly (its time is only a last resort:
+          // after a seek it can be ~0.1 s off what is heard)
+          this.retryAt = this.ctx.currentTime + RETRY_SEC; return;
+        }
         this.tapMisses = 0;
         const t = Math.max(this.ctx.currentTime + START_LEAD, a.t + START_LEAD);
         this.stopVoices(t);

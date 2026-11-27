@@ -2496,7 +2496,7 @@
     const up = up0 && sdeck?.addon && sdeck.addonId === id ? up0 : null;
     // (an upgrade's copy refused at any step: the ticket and the badge go back to the playing copy)
     const keep = async (why) => { await AP.keepCopy?.(id, why); return { kept: up, none: why }; };
-    me.promise = (async () => {
+    const work = async () => {
       const F = window.__viviOffsetFit, A = window.__viviAutomix;
       let s = await AP.openFor(id, durSec);
       if (s?.state !== 'ready') return { none: s?.why || 'no addon has it', state: 'none' };
@@ -2535,6 +2535,7 @@
           if (up) return keep('decode failed');
           const nx = more < NEXT_ROWS && prepared.get(id) === me && AP.nextFor ? await AP.nextFor(id, 'decode failed') : null;
           if (nx?.state === 'ready' && prepared.get(id) === me) { s = nx; say('fetching'); continue; }
+          await AP.refuseFor?.(id, 'decode failed');   // (its cached file goes: not fitted again next time)
           return { none: 'decode failed', state: 'refused' };
         }
         // the mono mixes here (cheap); the fit, both loudness reads and the true-peak pass in the
@@ -2561,6 +2562,7 @@
           if (up) return keep(fit.none);
           const nx = more < NEXT_ROWS && prepared.get(id) === me && AP.nextFor ? await AP.nextFor(id, fit.none) : null;
           if (nx?.state === 'ready' && prepared.get(id) === me) { s = nx; say('fetching'); continue; }
+          await AP.refuseFor?.(id, fit.none);
           return { none: fit.none, state: 'refused', fit };
         }
         // the whole file at the audio context's rate (what the decks play), and its level: YouTube's
@@ -2590,7 +2592,10 @@
           `${full.sampleRate} Hz x ${full.numberOfChannels}, ready after ${((t3 - t0) / 1000).toFixed(1)} s (fetch and YouTube's audio ${((t1 - t0) / 1000).toFixed(1)} s, fit, level and decode ${((t3 - t1) / 1000).toFixed(1)} s; fit and level in the ${where}, main thread busy ${busy.toFixed(0)} ms)`);
         return { rec };
       }
-    })().then((r) => {
+    };
+    // (an upgrade that throws on the way, YouTube's audio missing or the file's full decode, gives the
+    // playing copy back too: its ticket, its badge and its prepared copy)
+    me.promise = work().catch((e) => { if (up) return keep(String(e?.message || e)); throw e; }).then((r) => {
       if (r.kept && prepared.get(id) === me) { if (r.kept.prev?.rec) prepared.set(id, r.kept.prev); else prepared.delete(id); return r; }
       if (prepared.get(id) === me) Object.assign(me, r); return r;
     },
@@ -3297,7 +3302,7 @@
       // a pick for this pair stays undoable while there is no mix to show
       const pairKey = !live && st.next ? st.id + '>' + st.next : '';
       // (the songs, for the overview's progress row: editor.md §11)
-      const ids = { curId: st.id, nextId: st.next || null, live: !!live };
+      const ids = { curId: st.id, nextId: st.next || null, live: !!live, paused: !live && !!g?.video?.paused };
       return pairKey && pairPicks[pairKey] ? { why, pairKey, toId: st.next, pick: pairPicks[pairKey], noTransition: noMix, ...ids } : { why, ...ids };
     }
     const fromId = live ? live.oldId : st.id;

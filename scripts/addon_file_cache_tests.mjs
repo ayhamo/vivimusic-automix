@@ -243,6 +243,17 @@ const cacheWith = (maxBytes, st = fakeStorage(), c = fakeCache()) => ({ st, c, F
   await new Promise((r) => setTimeout(r, 5));
   check('NEXT: the refused row\'s cached file is dropped too (not replayed on its next play)', [o.row.id, n1.row.id, await files.has(kA1)], ['a1', 'a2', null]);
   check('OPEN answers carry the local addon id (no base, no secret)', [n1.addon.id, /SECRET/.test(JSON.stringify(n1))], ['idA', false]);
+  {
+    // the phone's B2-07 (cross-check 2026-11-27): the row refused with no other tried (the page's limit) leaves the cache too
+    const kA2r = files.keyOf('idA', 'a2', 'LOSSLESS');
+    await files.put(kA2r, bytes(100), { mime: 'audio/flac', stream: { codec: 'flac', transport: 'file' } });
+    const T = S.ticketOf(f.ticket), was = T.got;
+    const r = await S.handle({ type: 'VIVI_ADDONS_REFUSE', ticket: f.ticket, why: 'no match' });
+    await new Promise((res) => setTimeout(res, 5));
+    check('REFUSE: no other row opened, the refused row passed over and its cached file dropped', [r, await files.has(kA2r), T.refused.has(was.addon.base + '|a2'), calls.length], [{ ok: true }, null, true, 2]);
+    T.refused.delete(was.addon.base + '|a2');   // (the rest of this block goes on with a2 playing)
+    check('REFUSE on an expired ticket', await S.handle({ type: 'VIVI_ADDONS_REFUSE', ticket: 'tnope' }), { none: 'ticket expired' });
+  }
   const u = await S.handle({ type: 'VIVI_ADDONS_UPGRADE', ticket: f.ticket });
   check('UPGRADE: the refused row stays passed over (only the other lane is opened)', [u.row?.id, calls.at(-1)], ['b1', [['idB', ['b1']]]]);
   const k = await S.handle({ type: 'VIVI_ADDONS_KEEP', ticket: f.ticket, why: 'no match' });

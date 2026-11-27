@@ -44,20 +44,24 @@
   // ---- fetching: the stream's headers, no credentials, a time limit each, one byte budget ----
   function fetcher({ base, fetch: doFetch, signal, maxBytes, requestMs = REQUEST_MS, headers = {} }) {
     const budget = { left: maxBytes };
-    async function get(url, { range = null, cap = null, what = 'a segment' } = {}) {
+    async function get(url, { range = null, cap = null, what = 'a segment', stop: halt = null } = {}) {
       const off = C.offLimits(base, url);
       if (off) refuse(`${what} link: ${off}`);
+      // (an empty or backwards range would count more bytes back into the budget than it took)
+      if (range && !(Number.isSafeInteger(range[0]) && Number.isSafeInteger(range[1]) && range[0] >= 0 && range[1] >= range[0])) refuse(`${what}: a bad byte range`);
       if (signal?.aborted) throw new Failure('the file took too long');
+      if (halt?.aborted) throw new Failure(`${what} was stopped: another part failed`);
       const ctl = new AbortController();
       const stop = () => ctl.abort();
       signal?.addEventListener?.('abort', stop, { once: true });
+      halt?.addEventListener?.('abort', stop, { once: true });
       const timer = setTimeout(stop, requestMs);
       try {
         const h = { ...headers };
         if (range) h.Range = `bytes=${range[0]}-${range[1]}`;
         let r;
         try { r = await doFetch(url, { headers: h, signal: ctl.signal, credentials: 'omit', cache: 'no-store' }); }
-        catch (e) { throw new Failure(ctl.signal.aborted ? (signal?.aborted ? 'the file took too long' : `${what} took too long`) : `${what} failed: ${e?.message || e}`); }
+        catch (e) { throw new Failure(ctl.signal.aborted ? (signal?.aborted ? 'the file took too long' : halt?.aborted ? `${what} was stopped: another part failed` : `${what} took too long`) : `${what} failed: ${e?.message || e}`); }
         const roff = C.offLimits(base, r.url || url);
         if (roff) { try { await r.body?.cancel?.(); } catch { /* gone */ } refuse(`${what} was redirected: ${roff}`); }
         if (!r.ok) { try { await r.body?.cancel?.(); } catch { /* gone */ } throw new Failure(`${what} answered ${r.status}`); }
@@ -80,7 +84,7 @@
           }
         }
         return { bytes, url: r.url || url, type: (r.headers?.get?.('content-type') || '').split(';')[0].trim().toLowerCase() };
-      } finally { clearTimeout(timer); signal?.removeEventListener?.('abort', stop); }
+      } finally { clearTimeout(timer); signal?.removeEventListener?.('abort', stop); halt?.removeEventListener?.('abort', stop); }
     }
     // cap: a number (its own limit) or the shared budget (counted down as bytes come)
     async function readCapped(r, cap) {
@@ -123,11 +127,13 @@
     if (list.length > MAX_SEGMENTS) refuse(`too many segments (${list.length})`);
     const out = new Array(list.length);
     let next = 0, err = null;
+    // the first part that fails or is refused stops the others in flight (not each at its own time limit)
+    const halt = new AbortController();
     const lane = async () => {
       while (!err && next < list.length) {
         const i = next++;
-        try { out[i] = new Uint8Array((await F.get(list[i].url, { range: list[i].range })).bytes); }
-        catch (e) { err = err || e; }
+        try { out[i] = new Uint8Array((await F.get(list[i].url, { range: list[i].range, stop: halt.signal })).bytes); }
+        catch (e) { if (!err) { err = e; halt.abort(); } }
       }
     };
     await Promise.all(Array.from({ length: Math.min(parallel, list.length) }, lane));
@@ -186,6 +192,7 @@
     const byterange = (v, uri) => {
       const m = String(v).match(/^(\d+)(?:@(\d+))?$/);
       if (!m) return null;
+      if (!(Number(m[1]) > 0)) refuse('a byte range of no length');
       const len = Number(m[1]), at = m[2] != null ? Number(m[2]) : (lastEnd.get(uri) ?? 0);
       lastEnd.set(uri, at + len);
       return [at, at + len - 1];
@@ -195,6 +202,7 @@
       else if (l.startsWith('#EXT-X-KEY:')) { if (encrypted(attrs(l.slice(11)))) refuse('encrypted (HLS key)'); }
       else if (l.startsWith('#EXT-X-MAP:')) {
         const a = attrs(l.slice(11));
+        if (!a.URI) refuse('an #EXT-X-MAP without a URI');
         const uri = resolve(a.URI, url);
         const m = { url: uri, range: a.BYTERANGE ? byterange(a.BYTERANGE, uri) : null };
         if (!map || map.url !== m.url || String(map.range) !== String(m.range)) { maps++; map = m; }
@@ -250,7 +258,8 @@
     if (isEbml(first)) return { bytes: join(parts).buffer, mime: 'audio/webm' };
     if (first.byteLength >= 4 && String.fromCharCode(...first.subarray(0, 4)) === 'fLaC') return { bytes: join(parts).buffer, mime: 'audio/flac' };
     // packed audio (HLS): each segment an ID3 tag (its timestamp) then ADTS or MPEG audio frames
-    const bare = parts.map((p) => p.subarray(id3Len(p)));
+    // (every ID3 tag at a segment's start, not only the first: one left would be read as audio)
+    const bare = parts.map((p) => { let o = 0, n; while (o < p.byteLength && (n = id3Len(p, o))) o += n; return p.subarray(Math.min(o, p.byteLength)); });
     const b0 = bare.find((p) => p.byteLength) || new Uint8Array(0);
     if (adts(b0)) return { bytes: join(bare).buffer, mime: 'audio/aac' };
     if (mpa(b0)) return { bytes: join(bare).buffer, mime: 'audio/mpeg' };
@@ -293,6 +302,7 @@
         } else if (pid === audioPid) {
           if (pusi) {
             if (payload[0] !== 0 || payload[1] !== 0 || payload[2] !== 1) { pes = null; continue; }
+            if (payload.length < 9 || 9 + payload[8] > payload.length) { pes = null; continue; }   // (no room for its own header)
             pes = true;
             const data = payload.subarray(9 + payload[8]);
             if (data.byteLength) out.push(data);
@@ -308,7 +318,8 @@
 
   // ---- DASH: a small XML reader (no DOM in a service worker) ----
   const ENT = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" };
-  const unent = (s) => String(s).replace(/&(#x[0-9a-f]+|#\d+|\w+);/gi, (m, e) => (e[0] === '#' ? String.fromCodePoint(e[1] === 'x' || e[1] === 'X' ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10)) : ENT[e] ?? m));
+  const codePoint = (n) => (n <= 0x10ffff ? String.fromCodePoint(n) : refuse('a character past Unicode in the manifest'));
+  const unent = (s) => String(s).replace(/&(#x[0-9a-f]+|#\d+|\w+);/gi, (m, e) => (e[0] === '#' ? codePoint(e[1] === 'x' || e[1] === 'X' ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10)) : ENT[e] ?? m));
   const local = (n) => n.replace(/^.*:/, '');
   function parseXml(t) {
     const root = { name: '#root', attrs: {}, kids: [], text: '' };
@@ -335,11 +346,18 @@
     const [y, mo, w, dd, h, mi, s] = m.slice(1).map((x) => Number(x) || 0);
     return y * 31536000 + mo * 2592000 + w * 604800 + dd * 86400 + h * 3600 + mi * 60 + s;
   }
-  const rangeOf = (r) => { const m = String(r || '').match(/^(\d+)-(\d+)$/); return m ? [Number(m[1]), Number(m[2])] : null; };
+  const rangeOf = (r) => {
+    const m = String(r || '').match(/^(\d+)-(\d+)$/);
+    if (!m) return null;
+    if (Number(m[2]) < Number(m[1])) refuse(`a backwards byte range (${m[0]})`);
+    return [Number(m[1]), Number(m[2])];
+  };
   function fill(tpl, v) {
     return String(tpl).replace(/\$(RepresentationID|Number|Bandwidth|Time|)(?:%0(\d+)d)?\$/g, (m, k, w) => {
       if (!k) return '$';
       const x = String(v[k] ?? '');
+      // (a width past 32 is no real template: refused before a string that long is made)
+      if (w && Number(w) > 32) refuse(`a template width of ${w}`);
       return w && k !== 'RepresentationID' ? x.padStart(Number(w), '0') : x;
     });
   }
@@ -416,6 +434,7 @@
         if (n > MAX_SEGMENTS) refuse('too many segments');
         for (let k = 0; k < n; k++) add(null);
       }
+      if (!segs.length) refuse('a SegmentTemplate without segments');
     } else if (lists.length) {
       const list = lists[lists.length - 1];
       const initEl = lists.map((x) => kid(x, 'Initialization')).filter(Boolean).pop();
@@ -446,7 +465,8 @@
     } catch (e) {
       if (e instanceof Refusal) return { none: C.scrub(e.message), refused: true };
       if (e instanceof Failure) return { none: C.scrub(e.message) };
-      return { none: C.scrub(`the stream failed: ${e?.message || e}`) };
+      // (anything else is thrown reading the stream itself, a link or a number it can't hold: malformed, refused)
+      return { none: C.scrub(`the stream is malformed: ${e?.message || e}`), refused: true };
     }
   }
 

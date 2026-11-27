@@ -100,8 +100,13 @@ check('turned off: off, forgotten', P.statusOf('s1').state, 'off');
   state('s1', '');
   for (let i = 0; i < 6; i++) await tick();
   P.note('s1', { play: { state: 'playing' } });
+  P.note('s1', { stream: { codec: 'mp3', bitrate: 320 } });
+  P.deckAlive();
+  const before = P.badgeFor('s1');
   const better = await P.upgradeFor('s1');
   const during = [P.statusOf('s1').addon.host, P.statusOf('s1').play];
+  // (audit 2026-11-27) while the better copy is fetched and fitted, the playing copy keeps its badge
+  check('upgradeFor: the playing copy keeps its badge while the better one is readied', [before?.kind, P.badgeFor('s1')?.kind, P.badgeFor('s1')?.title], ['high', 'high', before?.title]);
   const kept = await P.keepCopy('s1', 'no match');
   const s1 = P.statusOf('s1');
   check('upgradeFor stages the better copy; keepCopy: KEEP sent, the playing copy and its badge back',

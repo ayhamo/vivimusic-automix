@@ -507,6 +507,21 @@
         p.speedIn = planSpeed.in;
         if (p.style !== 'blend') p.rate = planSpeed.in;
       }
+      // B's late entry (mix-file.md rule 2): B stays silent that long into the mix, then starts at its
+      // mix-in; the curves stay where they are. Only a plain blend or crossfade plays it. Set before the
+      // curves: djShape trims A's dip by it (its warnings go last, after the pick's)
+      const lateNotes = [];
+      const late = ov?.preset !== 'loop' ? ov?.window?.in?.delaySec : null;
+      if (late > 0) {
+        if (p.fallback || p.handoff || p.bridge || p.shape || p.glide || !['blend', 'crossfade'].includes(p.style)) {
+          lateNotes.push(`B's late start (${late} s) isn't played in this kind of mix: B starts with it`);
+        } else {
+          const most = Math.max(0, p.durationSec - 0.5);
+          if (late > most + 1e-6) lateNotes.push(`B's late start of ${late} s is past the mix's end: ${most.toFixed(1)} s`);
+          const at = Math.round(Math.min(late, most) * 1e3) / 1e3;
+          if (at > 0) p.inDelaySec = at;   // (a mix of half a second or less has no room for it)
+        }
+      }
       p.curves = blendCurves(p);
       // a length picked is kept whatever the move (editor.md §6); only a song with no tempo can't take it
       if (ov?.bars && ov.preset !== 'loop' && warnings.length === notes.length && pinnedSec(from) == null && (p.handoff || p.bridge || p.fallback)) {
@@ -527,19 +542,7 @@
           if (pc.loopBeats) p.loopSec = pc.loopBeats * (p.beatSec > 0 ? p.beatSec : editorGrid(from, 'out')?.beatSec || 0.5);
         }
       }
-      // B's late entry (mix-file.md rule 2): B stays silent that long into the mix, then starts at its
-      // mix-in; the curves stay where they are. Only a plain blend or crossfade plays it.
-      const late = ov?.preset !== 'loop' ? ov?.window?.in?.delaySec : null;
-      if (late > 0) {
-        if (p.fallback || p.handoff || p.bridge || p.shape || p.glide || !['blend', 'crossfade'].includes(p.style)) {
-          p.warnings = [...(p.warnings || []), `B's late start (${late} s) isn't played in this kind of mix: B starts with it`];
-        } else {
-          const most = Math.max(0, p.durationSec - 0.5);
-          if (late > most + 1e-6) p.warnings = [...(p.warnings || []), `B's late start of ${late} s is past the mix's end: ${most.toFixed(1)} s`];
-          const at = Math.round(Math.min(late, most) * 1e3) / 1e3;
-          if (at > 0) p.inDelaySec = at;   // (a mix of half a second or less has no room for it)
-        }
-      }
+      if (lateNotes.length) p.warnings = [...(p.warnings || []), ...lateNotes];
       return p;
     } finally { pinnedBars = null; planSpeed = null; fallbackSec = FALLBACK_SEC; curatorAsk = false; }
   }
@@ -677,7 +680,10 @@
   const stable = (v) => (Array.isArray(v) ? `[${v.map(stable).join(',')}]`
     : v && typeof v === 'object' ? `{${Object.keys(v).sort().map((k) => JSON.stringify(k) + ':' + stable(v[k])).join(',')}}` : JSON.stringify(v));
   const noGrid = (o) => { if (!o) return o; const { gridBpm, ...rest } = o; return rest; };
-  const sameMix = (a, b) => stable(noGrid(mixOverride(a))) === stable(noGrid(mixOverride(b)));
+  // (the beat match as it plays, beatMatchOf, mix-file.md rule 5: an own export's beatMatch "auto" is the
+  // saved mix's unwritten Auto, not a change)
+  const forSame = (o) => { const n = mixOverride(o); if (!n) return n; const r = noGrid(n); delete r.beatMatch; if (n.preset !== 'loop') r.beatMatch = beatMatchOf(n); return r; };
+  const sameMix = (a, b) => stable(forSame(a)) === stable(forSame(b));
   function readMixFile(text) {
     if (typeof text !== 'string') return { refused: 'not a Vivimusic mix file' };
     if (text.length > MIX_FILE_MAX_BYTES) return { refused: 'the file is over 2 MB: not a Vivimusic mix file' };
@@ -891,6 +897,16 @@
     });
   }
   // entries: [{ from: { videoId, title?, artist? }, to, override }] (an invalid one is left out)
+  // A saved mix as it goes into a file (mix-file.md rules 6, 8): with the tempo its beats count on
+  // (gridBpm: as saved, else this app's for A) and its beat match as it plays (beatMatchOf). A file's
+  // mix carries gridBpm, so an own mix's Auto is written as "auto" (unwritten it would come back as
+  // Sync) and an imported one with none as Sync. A loop mix has no beat match.
+  function exportOverride(ov, bpm = null) {
+    if (!ov) return ov;
+    const grid = ov.gridBpm || (bpm > 0 ? bpm : null);
+    const bm = ov.preset !== 'loop' ? beatMatchOf(ov) : null;
+    return { ...ov, ...(grid ? { gridBpm: grid } : {}), ...(bm && grid ? { beatMatch: bm } : {}) };
+  }
   function writeMixFile(entries) {
     const mixes = [];
     for (const e of entries || []) {
@@ -910,7 +926,7 @@
       ['preset', a.preset || 'auto', b.preset || 'auto'],
       ...['volume', 'eq', 'effect', 'fx', 'looping'].map((k) => [k === 'fx' ? 'effects' : k, lane(a, k), lane(b, k)]),
       ['length', a.bars ? a.bars + ' bars' : 'auto', b.bars ? b.bars + ' bars' : 'auto'],
-      ['beat match', a.beatMatch || 'auto', b.beatMatch || 'auto'],
+      ['beat match', a.preset === 'loop' ? 'auto' : beatMatchOf(a), b.preset === 'loop' ? 'auto' : beatMatchOf(b)],
       ['speed', speedText(a.speed), speedText(b.speed)],
       ['mix-out', pos(a.window?.out) || 'auto', pos(b.window?.out) || 'auto'],
       ['mix-in', pos(a.window?.in) || 'auto', pos(b.window?.in) || 'auto'],
@@ -2194,7 +2210,7 @@
       const steps = (rates) => rates.flatMap((r, k) => (k ? [[G.at[k], rates[k - 1]], [G.at[k], r]] : [[0, r]]));
       out.rate = [...steps(G.outRate), [D, G.outRate[G.outRate.length - 1]]];
       inn.rate = [...steps(G.inRate), [D, G.inRate[G.inRate.length - 1]], [D, sIn]];
-    } else if (style === 'blend' && Math.abs(rate - 1) > 1e-9 && Math.abs(rate - sIn) > 1e-9) {
+    } else if (style === 'blend' && Math.abs(rate - sIn) > 1e-9) {
       const g = glideBack(1 + rate - sIn);
       inn.rate = g ? [[0, rate], [D, rate], [D + g.sec, sIn]] : [[0, rate], [D, rate], [D, sIn]];
     } else if (Math.abs(sIn - 1) > 1e-4) inn.rate = [[0, sIn], [D, sIn]];   // (B at its own speed throughout)
@@ -2939,7 +2955,7 @@
     kickLock,
     kickSource,
     loopOrBlend,
-    presetCurves, migratePick, normalizeOverride, readMixFile, writeMixFile, mixChanges, importPlan, mixQueue, foldOverride, foldNote, MIX_FORMAT, MIX_VERSION, SPOTIFY_FORMAT, SPOTIFY_VERSION, editorGrid, windowLimits, nudgeWindow, beatMatchOf,
+    presetCurves, migratePick, normalizeOverride, readMixFile, writeMixFile, exportOverride, mixChanges, importPlan, mixQueue, foldOverride, foldNote, MIX_FORMAT, MIX_VERSION, SPOTIFY_FORMAT, SPOTIFY_VERSION, editorGrid, windowLimits, nudgeWindow, beatMatchOf,
     pointCurves, drawSec, drawX, shapeDrawing, normalizeDrawing, DRAW_MAX_POINTS, songSpeed, normalizeSpeed,
     resolveWindow,
     PRESET_LANES,

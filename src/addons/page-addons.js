@@ -9,7 +9,7 @@
  * Nothing happens while addons are off. The background keeps the links and
  * file URLs; this script holds tickets and what the page may show.
  *
- *   window.__viviAddonsPage = { statusOf(id), openFor(id), lookAhead(id), fetchFor(id), note(id, patch), keepCopy(id, why), isOn(), slackSec(), openDue(posSec, transitionSec), upgradeFor(id), upgradeQuality(id) }
+ *   window.__viviAddonsPage = { statusOf(id), openFor(id), lookAhead(id), fetchFor(id), note(id, patch), keepCopy(id, why), isOn(), slackSec(), openDue(posSec, transitionSec), upgradeFor(id), upgradeQuality(id), badgeFor(id) }
  *     statusOf: { state: 'off'|'looking'|'found'|'none'|'opening'|'ready', addon?, row?, stream?, why?, tried? }
  */
 (() => {
@@ -131,6 +131,13 @@
 
   // 8.1.4: the opened copy was refused by a later check (the fit): the next ready row or lane, while the
   // song still plays YouTube's audio. "Refused" is per row; the song's other rows and addons still count.
+  // the row refused with no other tried: the background passes it over and drops its cached file (8.1.4)
+  async function refuseFor(id, why) {
+    const s = songs.get(id);
+    if (!enabled || !s?.ticket) return false;
+    const r = await ask({ type: 'VIVI_ADDONS_REFUSE', ticket: s.ticket, why: String(why || '') }).catch(() => null);
+    return !!r?.ok;
+  }
   async function nextFor(id, why) {
     const s = songs.get(id);
     if (!enabled || s?.state !== 'ready' || !s.ticket) return null;
@@ -255,8 +262,10 @@
     return null;
   }
   function badgeOf(id, st) {
-    if (st.play?.state === 'playing' && st.stream) {
-      const q = quality(st);
+    // a better copy being fetched and fitted (8.6): the copy playing meanwhile keeps its badge
+    const playing = st.play?.state === 'playing' && st.stream ? st : !st.play && st.prev?.play?.state === 'playing' && st.prev.stream ? st.prev : null;
+    if (playing) {
+      const q = quality(playing);
       known.delete(id); known.set(id, q);
       if (known.size > 200) known.delete(known.keys().next().value);
       return q;
@@ -330,9 +339,14 @@
     if (b.title !== tip) b.title = tip;
     b.hidden = false;
   }
+  // the song's badge: its state, with the copy kept aside while a better one is readied (upgradeFor)
+  function badgeFor(id) {
+    const st = statusOf(id), prev = songs.get(id)?.prev;
+    return badgeOf(id, prev && enabled ? { ...st, prev } : st);
+  }
   function badge() {
     let q = null;
-    try { q = badgeOf(curId, statusOf(curId)); } catch { /* no state yet */ }
+    try { q = badgeFor(curId); } catch { /* no state yet */ }
     try { artBadge(q); } catch { /* no player bar */ }
     try { pageLabel(q); } catch { /* no player page */ }
   }
@@ -358,5 +372,5 @@
     return { state, addon, row, stream, why, tried, candidates, play };
   }
 
-  window.__viviAddonsPage = { statusOf, openFor, nextFor, lookAhead, fetchFor, note, keepCopy, isOn: () => enabled, slackSec: () => slack, openDue, upgradeFor, upgradeQuality, deckAlive: () => { deckAt = Date.now(); } };
+  window.__viviAddonsPage = { statusOf, openFor, nextFor, lookAhead, fetchFor, note, keepCopy, isOn: () => enabled, slackSec: () => slack, openDue, upgradeFor, upgradeQuality, badgeFor, refuseFor, deckAlive: () => { deckAt = Date.now(); } };
 })();

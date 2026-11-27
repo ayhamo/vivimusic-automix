@@ -58,6 +58,15 @@
     if (isLocal(url)) return 'points at this machine';
     return null;
   }
+  // A fetch whose every redirect hop is checked before it is sent (protocol.md §1, §4): Firefox's blocking
+  // webRequest (fx-headers.js __viviHopWatch) cancels a hop off https or to this machine before it
+  // connects. Where there is none (the Chromium build) only the final URL is checked, by the callers.
+  function guarded(doFetch, base) {
+    return async (url, opt) => {
+      const release = globalThis.__viviHopWatch?.add?.(url, base, offLimits) || (() => {});
+      try { return await doFetch(url, opt); } finally { release(); }
+    };
+  }
   const scrub = (t) => text(t).replace(/https?:\/\/[^\s'"<>)]+/gi, (u) => redact(u));
 
   class AddonError extends Error {
@@ -190,7 +199,7 @@
         const ctl = new AbortController();
         const timer = setTimeout(() => ctl.abort(), TIMEOUT_MS);   // (until the body is read too)
         try {
-          r = await doFetch(url, { headers: { Accept: 'application/json' }, signal: ctl.signal, credentials: 'omit', cache: 'no-store' });
+          r = await guarded(doFetch, base)(url, { headers: { Accept: 'application/json' }, signal: ctl.signal, credentials: 'omit', cache: 'no-store' });
           const off = offLimits(base, r.url);
           if (off) { try { await r.body?.cancel?.(); } catch { /* gone */ } throw new AddonError('error', `redirected: ${off}`); }
           if (r.status < 400 && r.status !== 429) {
@@ -376,7 +385,7 @@
       const ctl = new AbortController();
       const timer = setTimeout(() => ctl.abort(), PROBE_TIMEOUT_MS);
       try {
-        const r = await doFetch(url, { headers: { ...headers, Range: 'bytes=0-0' }, signal: ctl.signal, credentials: 'omit', cache: 'no-store' });
+        const r = await guarded(doFetch, base)(url, { headers: { ...headers, Range: 'bytes=0-0' }, signal: ctl.signal, credentials: 'omit', cache: 'no-store' });
         try { await r.body?.cancel?.(); } catch { /* already read */ }
         const off = offLimits(base, r.url);
         if (off) return { ok: false, why: `stream redirected: ${off}` };
@@ -516,7 +525,7 @@
     return { discover, manifest, search, stream, streamWait, probe, find, open, resolve, forget, health, healthFor, paramsFor, readStream };
   }
 
-  const api = { create, baseOf, sameAddon, paramsFor, readManifest, redact, AddonError, scrub, offLimits };
+  const api = { create, baseOf, sameAddon, paramsFor, readManifest, redact, AddonError, scrub, offLimits, guarded };
   globalThis.__viviAddonClient = api;
   if (typeof module === 'object' && module.exports) module.exports = api;
 })();

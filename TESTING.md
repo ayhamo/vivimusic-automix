@@ -3,11 +3,11 @@
 About 60–90 minutes for everything. Do it in order: later parts assume earlier ones work.
 Tick each box; anything that fails, note the step number, what you saw, and the console lines (see "Before you start").
 
-Settings are in the popup (toolbar icon): **Artwork, Audio playback, Lyrics, Appearance, Spotify Canvas, Last.fm, ListenBrainz, Updates**.
+Settings are in the popup (toolbar icon): **Artwork, Audio playback, Addons, Lyrics, Appearance, Spotify Canvas, Last.fm, ListenBrainz, Updates**.
 
 ## Before you start
 
-- [ ] Install the newest release zip (sign it on AMO, open the signed `.xpi`). `about:addons` shows Vivimusic Web with the new version.
+- [ ] Install the newest release: open its signed `.xpi` (the release workflow signs it on AMO when the repo has the AMO secrets; without them, sign the `-firefox.zip` on AMO by hand, README_CUSTOM.md part C). `about:addons` shows Vivimusic Web+ with the new version.
 - [ ] Open https://music.youtube.com, press **F12 → Console**, type `Vivi` in the filter box. Our lines start with `[ViVi` / `[Vivi`.
 - [ ] Known harmless noise you can ignore: `Content-Security-Policy: (Report-Only…`, `[Vivimusic] CSP blocked: img-src data`, `OpaqueResponseBlocking`, `Source map error`, and any `TIMEOUT waiting for …` from `moz-extension://…/js/content.js` (another add-on).
 - [ ] Press **Shift + D** to show the Stats HUD (bottom left). Keep it on; it shows crossfade / automix state live.
@@ -86,6 +86,21 @@ Automix on, bars **Auto**. Use dance/pop tracks; seek to ~70 s before the end so
 - [ ] 7.5 A song with no clear beat (ballad, spoken intro): HUD `fallback` with a reason, then a normal 6 s crossfade still happens.
 - [ ] 7.6 Lyrics during an automix blend: the old song's lyrics keep going until halfway, then the new song's lyrics take over.
 - [ ] 7.7 First analysis after opening the page can take ~15 s; later ones are faster. If the HUD says `analysis too slow`, note the song.
+- [ ] 7.8 Automix version → **Automix v2 (test)**: pairs close in tempo still blend; a pair that can't blend gets a drop-in, a muffle, an echo out or a hand-over (the overview's header names it). No mix is louder than the songs (the limiter holds the peaks).
+- [ ] 7.9 Overview (the Automix button in the player bar, or click the toast): both songs, the waveforms, the volume curves and a playhead. A preset (Fade, Rise, Wave…) re-plans the pair at once; Custom shows the lanes, and a lane's Draw lets you draw its curve (Undo, Repeat).
+- [ ] 7.10 Beat match (Auto / Sync / Glide / Off), Length and Window (A/B ±10 ms, B in after N s) change the plan; ▶ Preview jumps to just before the mix; Lock keeps the edit; Reset to Auto clears it.
+- [ ] 7.11 The progress row under the drawing shows what is being prepared; paused, it doesn't keep a busy bar moving.
+- [ ] 7.12 Mix files: Export this pair, then Reset to Auto, then Import… that file: the edit comes back. Import a file from `spec/automix/mixes/`, then Play these mixes: its songs queue in order and mix as saved.
+
+## 7b. Addons
+
+Needs Crossfade and Automix on, and an addon link of your own.
+
+- [ ] 7b.1 Addons → Play songs from addons on, paste the link, Add: the addon shows by name (never its link). Reorder and the per-addon Quality picker work.
+- [ ] 7b.2 Play a song the addon has: the badge says Upgrading Quality, then Lossless or Hi-Res Lossless once the addon copy takes over; no jump, cut or repeat at the take-over.
+- [ ] 7b.3 Seek and pause: the addon copy stays in place. Play the song again: it comes from Keep played songs at once.
+- [ ] 7b.4 Click the badge (Upgrade quality): it asks the addons again and the new copy takes over; the playing copy keeps its badge meanwhile.
+- [ ] 7b.5 A song no addon has, or a copy that doesn't line up: YouTube's own audio plays on.
 
 ## 8. SponsorBlock
 
@@ -115,7 +130,7 @@ Automix on, bars **Auto**. Use dance/pop tracks; seek to ~70 s before the end so
 
 ## 13. Repo and automation (on GitHub)
 
-- [ ] 13.1 Actions → "Fork sync and release" → Run workflow: green, and a new release with a zip appears under Releases.
+- [ ] 13.1 Actions → "Fork sync and release" → Run workflow: green, and a new release appears under Releases with both zips (and the signed `.xpi` when the AMO secrets are set).
 - [ ] 13.2 Run it again without changes: it says `already released, nothing to do`.
 - [ ] 13.3 Locally: `python scripts/sync_upstream_firefox.py` prints `nothing new from upstream` and exits 0.
 

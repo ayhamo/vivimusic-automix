@@ -72,6 +72,40 @@ try {
   console.debug('[Vivi] webRequest redirect watch unavailable:', e?.message);
 }
 
+// Addon requests (protocol.md §1, §4; the phone's B2-04): each redirect hop is checked before it is sent.
+// client.js guarded() registers the URL it fetches with its addon's base; a hop of that request off https
+// or to this machine (client.offLimits) is cancelled here, before its request goes out. The addon's own
+// headers go on with a hop that passes (an addon's CDN may need them), as on the phone.
+const viviHopUrls = new Map();   // url -> { base, off, n }
+const viviHopReqs = new Map();   // requestId -> { base, off, first }
+globalThis.__viviHopWatch = {
+  add(url, base, off) {
+    let key;
+    try { key = new URL(String(url)).href; } catch { return () => {}; }
+    const w = viviHopUrls.get(key) || { base, off, n: 0 };
+    w.n++; viviHopUrls.set(key, w);
+    return () => { if (--w.n <= 0 && viviHopUrls.get(key) === w) viviHopUrls.delete(key); };
+  },
+};
+try {
+  chrome.webRequest.onBeforeRequest.addListener((details) => {
+    const w = viviHopUrls.get(details.url);
+    if (!w || !viviIsFromExtension(details) || viviHopReqs.has(details.requestId)) return;
+    viviHopReqs.set(details.requestId, { base: w.base, off: w.off, first: details.url });
+    if (viviHopReqs.size > 500) viviHopReqs.delete(viviHopReqs.keys().next().value);
+  }, { urls: ['<all_urls>'] });
+  chrome.webRequest.onBeforeSendHeaders.addListener((details) => {
+    const h = viviHopReqs.get(details.requestId);
+    if (!h || details.url === h.first) return {};
+    return h.off(h.base, details.url) ? { cancel: true } : {};
+  }, { urls: ['<all_urls>'] }, ['blocking']);
+  const done = (details) => { viviHopReqs.delete(details.requestId); };
+  chrome.webRequest.onCompleted.addListener(done, { urls: ['<all_urls>'] });
+  chrome.webRequest.onErrorOccurred.addListener(done, { urls: ['<all_urls>'] });
+} catch (e) {
+  console.debug('[Vivi] webRequest hop check unavailable:', e?.message);
+}
+
 try {
   chrome.webRequest.onBeforeSendHeaders.addListener(
     (details) => {

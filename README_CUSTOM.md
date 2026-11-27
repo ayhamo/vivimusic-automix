@@ -1,11 +1,11 @@
 # Vivimusic Web+ — maintainer notes
 
-> **Credits.** Vivimusic Web is created by **[Archimetrix](https://github.com/Archimetrix)**, and the large majority of this code is theirs: the theme, Canvas / Apple artwork, lyrics, Kawarp, Spotify, Last.fm, the popup and the crossfade core. Huge thanks to them for building it. This fork adds a Firefox port, an Edge / Chrome build, Automix (from BitChord), crossfade fixes, ListenBrainz and extra lyrics providers on top. Upstream's code stays under upstream's licence ([LICENSE.txt](LICENSE.txt)); it is not relicensed by this fork.
+> **Credits.** Vivimusic Web is created by **[Archimetrix](https://github.com/Archimetrix)**, and the large majority of this code is theirs: the theme, Canvas / Apple artwork, lyrics, Kawarp, Spotify, Last.fm, the popup and the crossfade core. Huge thanks to them for building it. This fork adds a Firefox port, an Edge / Chrome build, Automix and addon playback (from BitChord), crossfade fixes, ListenBrainz and extra lyrics providers on top. Upstream's code stays under upstream's licence ([LICENSE.txt](LICENSE.txt)); it is not relicensed by this fork.
 
-The landing page for the repo is [`.github/README.md`](.github/README.md); these are the notes for maintaining it. Fork of [Archimetrix/VIVIMUSIC_WEB](https://github.com/Archimetrix/VIVIMUSIC_WEB) v10.2.0 (GitHub and AMO), built for Firefox (142+) and Edge / Chrome, with extra features ported from [BitChord](https://github.com/ayhamo/BitChord) and [heydavidf/automix](https://github.com/heydavidf/automix).
+The landing page for the repo is [`.github/README.md`](.github/README.md); these are the notes for maintaining it. Fork of [Archimetrix/VIVIMUSIC_WEB](https://github.com/Archimetrix/VIVIMUSIC_WEB) v11.5.0 (GitHub and AMO), built for Firefox (142+) and Edge / Chrome, with extra features ported from [BitChord](https://github.com/ayhamo/BitChord) and [heydavidf/automix](https://github.com/heydavidf/automix).
 
 - Name **Vivimusic Web+** (renamed from "Vivimusic Web" on 7 Nov 2026, so it can't be mistaken for upstream), repo `ayhamo/vivimusic-automix` (renamed from `vivimusic-firefox` the same day)
-- Manifest V3, version `10.2.0`, gecko id `vivimusic-automix@ayhamo` (was `vivimusic-web@custom` until 7 Nov 2026, when the add-on was re-created on AMO under the new name). Don't change it again: Firefox and AMO treat a new id as a different add-on, and its settings would be lost
+- Manifest V3, version `11.5.0`, gecko id `vivimusic-automix@ayhamo` (was `vivimusic-web@custom` until 7 Nov 2026, when the add-on was re-created on AMO under the new name). Don't change it again: Firefox and AMO treat a new id as a different add-on, and its settings would be lost
 - Firefox port pieces are taken from upstream's own AMO build (`vivimusicweb-10.1.1.xpi`), which is a separate port of the same version; the GitHub repo only holds the Chrome source.
 
 ---
@@ -20,7 +20,7 @@ The landing page for the repo is [`.github/README.md`](.github/README.md); these
 | Automix blend | Working in Edge: 16-bar blends with the next song time-stretched, beat lock within 1-3 ms; finished on every pair tested (7 Nov) |
 | Automix loop mix | Working in Edge: Levels → One More Time with the synced-lyrics check (4-bar loops, 126→123 BPM, 19.3 s), YouTube's player took over on time. In Firefox it is planned the same way, but the automated test browser's player stalls before the hand-over |
 | Analysis cache and Clear button | Working (Edge: 17 songs → 0) |
-| Spotify Canvas | Lookup verified with a real account (connect, token, Canvas URL for Midnight Sun); needs "Connect" in the popup once, and Canvas priority set to Spotify to prefer it over Apple |
+| Spotify Canvas | Lookup verified with a real account (connect, token, Canvas URL for Midnight Sun). Without "Connect" it uses an anonymous web-player token (`src/plus/bg-canvas.js`). Which source wins is the Canvas source order (`canvasSourceOrder`, default Music video → Spotify → Apple; `src/plus/canvas-settings.js`) |
 | Last.fm, ListenBrainz | Code paths fixed but not tested (need your accounts) |
 
 ---
@@ -32,7 +32,7 @@ The landing page for the repo is [`.github/README.md`](.github/README.md); these
    - `src/fx-headers.js` — blocking `webRequest` for Origin/Referer spoofing (Apple `amp-api`, Spotify), the `sp_dc` cookie on `open.spotify.com` requests, a CSP patch so YouTube Music allows `moz-extension:` frames/images/fonts, a `VIVI_FETCH` proxy and a keep-alive for long background tasks. Replaces the previous agent's DNR cookie hack in `spotify.js`.
    - `src/fx-compat.js` (page-world `getVideoData` helper; its fetch wrapper is skipped because `net.js` already relays fetches), plus the Firefox fixes in `kawarp.js` (half-float FBO), `kawarp-bg.js` (artwork through the background), `content.js`, `theme.css`, `lyrics-ui.js`.
    - Permissions now match upstream's Firefox build: `webRequest`, `webRequestBlocking` instead of DNR, plus the `ytimg` / `ggpht` / `scdn` / `itunes` hosts.
-3. **Settings randomly read as "off".** Firefox's `storage.local.get` sometimes fails while a page loads ("An unexpected error occurred") and callbacks get `undefined`. `src/fx-storage.js` (first script in each content-script group) retries those reads. `null` defaults in `storage.get` were also replaced with `false`.
+3. **Settings randomly read as "off".** Firefox's `storage.local.get` sometimes fails while a page loads ("An unexpected error occurred") and callbacks get `undefined`. `src/fx-storage.js` (first script of the `document_start` isolated content-script group; the later isolated scripts share its world, so it is injected once) retries those reads. `null` defaults in `storage.get` were also replaced with `false`.
 4. **Crossfade audio capture had holes.** YouTube Music appends one segment in several chunks; only the first chunk has a cluster/fragment header, and the others were dropped, so decoding stopped after a few seconds (this also hurt upstream's crossfade after seeks). `crossfade-page.js` now joins continuation chunks to their segment and keeps one stream format per decode.
 5. **Manual-skip crossfade looped.** The hand-over presses Next with a synthetic click, which our own click interceptor caught again. Only trusted clicks/keys are intercepted now, a late tail can no longer hand over onto the next song, and the click is never held longer than 1.5 s.
 6. **Automix was rewritten** (see below). The old version could never work: it fetched Track B's audio from the InnerTube player API (YouTube only returns ciphered stream URLs there), played Track B's intro and then started Track B from 0 again, used an undefined `warn()`, and disabled itself for the rest of the session after one fallback.
@@ -46,12 +46,12 @@ The landing page for the repo is [`.github/README.md`](.github/README.md); these
 14. **Animated art / Canvas missing on songs that have one.** The artwork cache saved failed lookups (for example while the background page was broken) as "no Canvas", forever. Upstream's Apple resolver also reported network/token errors as "no Canvas". Failed lookups are now reported as failures and never cached, and the first start of this version clears every saved "no Canvas" once (`viviCanvasNotFoundPurgedV1`), so those songs are looked up again.
 15. **Automix gave up on dance tracks** ("fallback, no usable beat grid" at ~65 BPM). The beat model often locks onto half time; the planner now folds the tempo into 90–180 BPM (65 → 130), fills in the downbeats between the detected ones, and tries shorter blends (16 → 8 → 4 bars) before giving up.
 16. **Lyrics jumped to the next song as soon as a blend started**, while the old song was still the louder one (for up to 30 s with automix). During a blend the lyrics now stay on the old song, on its own clock, until the middle of the blend, then switch.
-17. **Canvas kept playing while the song was paused.** Apple animated art, Spotify Canvas and the lyrics dancer now pause with the song and resume with it (`syncCanvasWithSong` in content.js; the Apple frame no longer restarts itself on tab focus while the page has it paused).
+17. **Canvas kept playing while the song was paused.** Apple animated art, Spotify Canvas and the lyrics dancer now pause with the song and resume with it (`syncCanvasWithSong` in `src/plus/content-plus.js`; the Apple frame no longer restarts itself on tab focus while the page has it paused).
 18. **Spotify "Disconnect" logged you out of Spotify, and "Connect" could hang.** Upstream's disconnect deleted the browser's own `sp_dc` login cookie, so the next Connect waited for a fresh Spotify login; Connect also rewrote that cookie without an expiry (a remembered login became session-only). Disconnect now only forgets the session in the extension (`spotifyDisconnected` flag, so it is not picked up again until Connect), and Connect leaves an existing cookie untouched.
 19. **Automix "analysis too slow" on short songs.** The beat model loaded only at the first analysis near the end. It now loads in the middle of the song (`warmup()` in automix.js), so the real analysis has the time.
 20. **Spotify Connect stuck on "Opening Spotify…".** Firefox lets the user withhold an add-on's site access; without Spotify's, the cookie is invisible. Connect now asks Firefox for that access first and reports it if it is still missing.
 21. **YouTube Music's own look kept.** The theme stays, but the Vivimusic logo swap, the "Upgrade" → "Support" (Buy Me a Coffee) swap, the loading splash, the `VIVIMUSIC` tab title and the Vivimusic tab icon are gone (`loader.js`, `favicon-main.js` and the custom logos deleted; the sync scripts keep them deleted).
-22. **New: where the Spotify Canvas plays** (Spotify Canvas → "Show the Spotify Canvas"): on the cover (the original, default), behind the lyrics (only while the Lyrics tab is open), behind the side panel (every tab), or off. Behind the panel it is blurred, darkened and fades out at the edges, pauses with the song, and the cover shows Apple's animated art when the song has it, otherwise the normal cover (`fetchLyricsCanvas` / `placeLyricsCanvas` in content.js, `#vivi-lyrics-canvas` in canvas.css). A "Blur behind the panel" slider (0–20 px, default 3) sets its blur, and Lyrics → "Blur around the current line" (off / low, the new default / normal) sets how much the Apple Music style blurs the other lines.
+22. **New: where the Spotify Canvas plays** (Spotify Canvas → "Show the Spotify Canvas"): on the cover (the original, default), behind the lyrics (only while the Lyrics tab is open), behind the side panel (every tab), or off. Behind the panel it is blurred, darkened and fades out at the edges, pauses with the song, and the cover shows Apple's animated art when the song has it, otherwise the normal cover (`fetchLyricsCanvas` / `placeLyricsCanvas` in `src/plus/content-plus.js`, `#vivi-lyrics-canvas` in `src/plus/plus.css`). A "Blur behind the panel" slider (0–20 px, default 3) sets its blur, and Lyrics → "Blur around the current line" (off / low, the new default / normal) sets how much the Apple Music style blurs the other lines.
 23. **Apple animated art lookups made sturdier** (ported from BitChord's AppleMusicCanvas.kt): no baked-in token any more (it had expired). The last scraped web-player token is kept in storage (`viviAppleTokenBackup`) and used when a scrape fails, until it expires. The web player's JWT is picked by its kid/iss. A 401 strikes the token off, re-scrapes and retries once (never cached as "no Canvas"), and a failed scrape waits 30 min. The storefront follows the browser's region (en-GB → gb, else us), older `motionSquareVideo1x1` / `motionTallVideo3x4` keys are read, and a second rendition is tried before falling back to the still cover.
 24. **UI text in a serif font on Windows.** The theme forced `"Inter","PingFangSC-Regular","Apple SD Gothic Neo"` (none bundled, none on Windows) onto all UI text, so Firefox fell back to Times New Roman. `--font-family` in theme.css is now YouTube Music's own stack (YouTube Sans, Roboto, …). Lyrics keep their own font setting.
 25. **First song after a page reload opened on Up next, not Lyrics.** After a reload YT Music can open the player with an empty tab bar and fill in the tabs seconds later; the auto-switch gave up after 3 s. It now waits up to 15 s for the Lyrics tab, and stops as soon as the user picks a tab themselves (`clickLyricsTabWithRetry` in lyrics-ui.js).
@@ -83,7 +83,7 @@ The landing page for the repo is [`.github/README.md`](.github/README.md); these
 
 A port of **BitChord web's** automix (`web/app/src/playback/automix`, itself AutoMix by heydavidf; AGPL-3.0-only).
 
-Files: `src/automix/automix.js` (BitChord's analyzer queue + transition planner), `src/automix/host.html` + `host.js` (hidden extension iframe that runs the worker), `src/vendor/automix/*` (BitChord's analysis worker: essentia + Beat This, ONNX runtime WASM, model), `src/crossfade.js` (the blend and the incoming deck), `src/crossfade-page.js` (downloads, queue, player control), `src/equalizer.js` (the player path's automix filters).
+Files: `src/automix/automix.js` (BitChord's analyzer queue, the transition planner, the editor's presets and curves, mix files), `src/automix/host.html` + `host.js` (hidden extension iframe that runs the worker), `src/vendor/automix/*` (BitChord's analysis worker: essentia + Beat This, ONNX runtime WASM, model), `src/automix/crossfade.js` (the blend, the decks and the addon copy), `src/automix/crossfade-page.js` (downloads, queue, player control), `src/automix/limiter-worklet.js` (the output limiter), `src/automix-overview.js` (the overview and transition editor), `src/plus/fx-plus.js` (the player path's automix filters and the limiter, hooked into upstream's `src/equalizer.js`), `src/plus/stream-deck.js` (Smooth hand-over). Upstream's `src/crossfade.js` and `src/crossfade-page.js` stay in the tree unchanged so merges stay clean; the manifest loads ours. The rules are in `spec/automix/` (`versions.md`, `editor.md`, `mix-file.md`, `playback.md`).
 
 1. Needs **Crossfade on** and the Automix toggle on (Audio playback card).
 2. As soon as a song plays, the page world downloads the **whole current song and the whole next song** (the next one read from YouTube Music's queue store, autoplay and repeat-all included) through an app client, like BitChord: VISIONOS (two versions), then ANDROID_VR; Opus then AAC; each URL probed at its end first; one retry later if all fail.
@@ -100,9 +100,36 @@ Files: `src/automix/automix.js` (BitChord's analyzer queue + transition planner)
     - a 3-band waveform for each song (low under 200 Hz, mid to 2.5 kHz, high above, decoded on demand from the song Automix already downloaded), dimmed outside the mix;
     - the mix's frame with its beat grid (bars brighter), each song's volume curve as the mix plays it, the bar count, and a playhead.
 
-    Beyond BitChord, a **style** (Auto, Loop, Blend, Filter, Fade) and a **length** (Auto, 4, 8, 16, 32 bars; Spotify stops at 16) can be picked per pair of songs. The pick is kept in `storage.local` under `automixPairPicks` (last 300 pairs) for the next time the pair plays, and the plan is redone at once (`plan({ pick })` in automix.js; unit tests in `scripts/test_automix_plan.mjs`). A loop mix's length comes from its loops and a fade is 12 s, so length is fixed for those, and the note line says why. A pick stays undoable when it leaves no mix to show: the overview then offers only Auto, which clears it and plans the pair again. **Preview** jumps to just before the mix (12 s before a loop mix's hand-over, the outro lead before a blend). During a mix, a pick applies to the next time the pair plays.
+    It is also the **transition editor** (`spec/automix/editor.md`). Per pair of songs:
+    - a **preset** (Auto, Custom, Fade, Rise, Wave, Blend, Slam, Melt, Afterglow, Surge, Dissolve, No transition, Loop); Custom shows the **lanes** (Volume, EQ, Filter, Effects, Looping), each a shape or, with **Draw**, a curve drawn by hand;
+    - **Beat match** (Auto, Sync, Glide, Off), the **Length** (Auto, 2 to 32 bars) and the **Window** (A and B nudged by 10 ms, and B's late entry, "B in after N s");
+    - **Lock** keeps the edit past the 300 kept pairs, **Reset to Auto** clears it, **Preview** jumps to just before the mix;
+    - the **progress row** under the drawing says what is being prepared (each song's analysis, the loop search, the switch to an addon's lossless copy);
+    - **Mix files**: Import… a mix file (`.json`, `spec/automix/mix-file.md`) or a Spotify mix export as it is (`spotify-mixes.md`), Export this pair or Export all, and Play these mixes queues the imported file's songs in order.
+
+    The edits are kept in `storage.local` under `automixPairPicks` (last 300 pairs, locked ones kept) and the plan is redone at once (`plan({ pick })` in automix.js; unit tests in `scripts/test_automix_plan.mjs`, presets and lanes in `scripts/editor_cases.mjs`). During a mix, an edit applies to the next time the pair plays.
+12. **Automix v2** (popup → Automix version, "Automix v2 (test)"; Classic is the default): Classic with Orchard's rules (`spec/automix/versions.md`). Close tempos are sped up or glide to meet; pairs further apart, or with clashing bass styles or keys, get a beatless bridge, a hand-over or an echo out; a blend both songs would sing over becomes a drop-in or a muffle. Levels are matched over the blend.
+13. **The output limiter** (`src/automix/limiter-worklet.js`, versions.md "The mix's ceiling"): while a mix runs, a look-ahead peak limiter holds the sum under -1 dBFS; otherwise it passes every sample unchanged.
+14. **Smooth hand-over** (popup, off by default; `src/plus/stream-deck.js`): after a blend the new song plays on from the copy Automix downloaded, in step with YouTube's muted player, instead of switching back to the player. If the copy falls out of step, YouTube's sound comes back at the same spot.
 
 Measured in Edge, 6 Nov 2026: Despacito → LALA (blend, 16 bars, next song ×0.962) and LALA → Gata Only (blend, 16 bars, ×0.914): beat lock within 1-3 ms through the blend after the first second. Edge, same day: Levels → LoopeDe loop mix (4-bar loops, 131→126 BPM, 12 bars, 26.2 s; vocal-mask limits loosened in the test copy so a pair qualified): the new song's player took over at 11.4 s (planned 11.47 s), no abort. Edge, 7 Nov 2026, synced-lyrics check (normal limits): Levels → One More Time loop mix (4-bar loops at 182.87 s and 1.38 s, "no lyric line" on both sides, 126→123 BPM, 8 bars, 19.3 s): YouTube's player was held and took over, no abort. Seven other radio pairs (Levitating, Moves Like Jagger, Don't Call Me Up, Levels → others) had lyric lines in the way and got the blend, which finished each time. Lyrics for one side and the mask for the other also worked (Levels → a song without synced lyrics). An ad mid-mix and a pause during the hold both dropped the mix cleanly; the Clear button emptied the cache (17 songs → 0). Firefox: downloads, analysis and planning checked; the handover can't be reached there in the signed-out automated browser (YouTube's player stalls at ~0:45-0:50, also without the extension).
+
+---
+
+## Addons
+
+BitChord-compatible addons (popup → Addons, off by default; needs Crossfade and Automix on): an addon link with the user's own token can have a song in lossless or Hi-Res. YouTube still plays the song and controls playback and the queue. The addon's file is lined up against YouTube's audio and takes over from it, with YouTube muted underneath. The rules are in `spec/addons/protocol.md` (§8.6 is the PC as built) and `spec/addons/offset-map.md`.
+
+Files, all in `src/addons/`:
+- `bg-addons.js` (background): the addon list, the song tickets and the page's messages (find, open, fetch, next row, upgrade); links and tokens never leave the background.
+- `client.js`: the addon protocol (manifest, search, `/stream`), the race between addons and their request limits. `track-matcher.js` is BitChord's matcher; `pick.js` holds our rules on top (ISRC first, the lossy floor, the preview probe, quality ranks).
+- `stream-assemble.js`: an HLS or DASH row put together into one file; encrypted, live or malformed streams are refused and the next row is tried.
+- `file-cache.js`: the persistent cache of played files (Cache API; popup "Keep played songs", default 512 MB), keyed by addon, row and quality, never by the file URL.
+- `offset-fit.js` + `fit.worker.js`: the offset fit and the level against YouTube's audio (a copy that doesn't fit is refused).
+- `buffer-deck.js` + `tap-worklet.js`: the deck that plays the decoded file on YouTube's clock, placed by matching YouTube's output (the tap) on the file.
+- `page-addons.js` (page): the look-ahead for the next song, the quality badge on the art (Hi-Res Lossless, Lossless, High Quality, Upgrading Quality) and "Upgrade quality" (a click on the badge).
+
+Tests: `scripts/addon_*_tests.mjs` and `addon_*_fixtures.mjs` (see `spec/README.md`).
 
 ---
 
@@ -131,7 +158,7 @@ git fetch upstream --tags
 ```bash
 python scripts/merge_upstream.py vX.Y.Z --commit
 ```
-Merges upstream's GitHub tag. It keeps the star-gate and funding files deleted and keeps our `manifest.json` version; anything else that conflicts is left for you (exit code 2).
+Merges upstream's GitHub tag. It keeps the star-gate and funding files deleted, and when upstream changed `manifest.json` or `src/background.js` it rebuilds `manifest.json` from upstream's plus `manifest-plus.json` (the version is ours only if we changed it since the last merge); anything else that conflicts is left for you (exit code 2).
 
 ```bash
 python scripts/sync_upstream_firefox.py --save-xpi
@@ -142,13 +169,13 @@ Dry run: downloads upstream's current AMO build, stores it in `upstream-amo/`, a
 python scripts/sync_upstream_firefox.py --apply --save-xpi
 ```
 
-If it prints new `manifest.json` changes, copy them into our `manifest.json` by hand, then record them as handled:
+If it prints new `manifest.json` changes, add them to `manifest-plus.json` as operations (never to `manifest.json`, which is built), rebuild with `python scripts/apply_manifest.py --ref <upstream tag>`, then record them as handled:
 ```bash
 python scripts/sync_upstream_firefox.py --accept-manifest
 ```
-When editing the manifest, keep: gecko id `vivimusic-automix@ayhamo`, `data_collection_permissions: none`, `fx-storage.js` first in both isolated content-script groups, `net.js` before `fx-compat.js`, the automix entries and the `'wasm-unsafe-eval'` CSP. `src/background.js` always keeps our side where it conflicts with AMO (upstream's Firefox build deletes the `VIVI_NET_FETCH` relay that `net.js` needs); the script does that automatically.
+`manifest-plus.json` keeps: gecko id `vivimusic-automix@ayhamo`, `data_collection_permissions: none`, `fx-storage.js` first in the `document_start` isolated group only (the `document_idle` scripts share its world, so a second copy would run twice), `net.js` before `fx-compat.js`, the automix and addon entries and the `'wasm-unsafe-eval'` CSP. `src/background.js` always keeps our side where it conflicts with AMO (upstream's Firefox build deletes the `VIVI_NET_FETCH` relay that `net.js` needs); the script does that automatically.
 
-Then test in Firefox (crossfade, manual skip, automix, lyrics), bump `version` in `manifest.json` (keep three parts, e.g. `10.1.8`), commit and push:
+Then run `bash scripts/run_spec.sh` and test in Firefox (crossfade, manual skip, automix, addons, lyrics), bump `version` in `manifest.json` (keep three parts, e.g. `10.1.8`), commit and push:
 ```bash
 git push
 ```
@@ -159,8 +186,8 @@ Last synced: GitHub v11.5.0 + AMO 11.5.0 (2026-11-17); manifest rebuilt with `py
 
 - **Runs only by hand**, no schedule: Actions → "Fork sync and release" → Run workflow (`force` rebuilds and replaces the release even if nothing changed). Upstream is watched by hand.
 - **Firefox auto-update is off:** the repo variable `UPDATE_URL` is unset, so builds carry no `update_url` and no `updates.json` is attached. Setting it again (to a public `…/releases/latest/download/updates.json`) turns it back on; tested working 2026-11-17 while the repo was public.
-- A run checks upstream's latest GitHub release, upstream's AMO version and this repo's `main`. When any of them is new, it does part A in the runner (nothing is pushed back), lints, and publishes a **GitHub release** (repo page → Releases) with `vivimusic-automix-<version>-firefox.zip` and `vivimusic-automix-<version>-edge-chrome.zip` attached. Release tag: `fork-<upstream tag>-amo<AMO version>-<fork commit>`.
-- A red run means upstream changed something that needs a human (a conflict or new AMO manifest changes) or the linter found errors. Nothing is published; do part A locally to see and fix it.
+- A run checks upstream's latest GitHub release, upstream's AMO version and this repo's `main`. When any of them is new, it does part A in the runner (nothing is pushed back), runs the spec suites on the merged code (`bash scripts/run_spec.sh`) and lints and signs the build. Then it publishes a **GitHub release** (repo page → Releases) with `vivimusic-automix-<version>-firefox.zip` and `vivimusic-automix-<version>-edge-chrome.zip` attached (and the signed `.xpi`, part C). Release tag: `fork-<upstream tag>-amo<AMO version>-b<run number, 5 digits>-<fork commit, 7 characters>`, e.g. `fork-v11.5.0-amo11.5.0-b00058-45841b0`.
+- A red run means upstream changed something that needs a human (a conflict or new AMO manifest changes), a spec suite failed, or the linter found errors. Nothing is published; do part A locally to see and fix it.
 - A green run after an upstream update only built a release: still do part A locally and push, so `main` has the merge.
 - Release version is `<manifest version>.<run number>` (e.g. `10.1.7.3`). AMO refuses a version it has seen before, and the run number makes every build higher. Keep `manifest.json` at three parts.
 
@@ -188,7 +215,10 @@ Without signing (Developer Edition / Nightly only): `about:config` → `xpinstal
 python scripts/build_zip.py
 ```
 ```bash
-npx addons-linter vivimusic-automix-firefox.zip
+npx addons-linter@10.15.0 vivimusic-automix-firefox.zip
+```
+```bash
+bash scripts/run_spec.sh
 ```
 Last result: 0 errors, 20 warnings (upstream `innerHTML` uses, one vendor dynamic import, and the Chrome-only `background.service_worker` key that Firefox ignores).
 
@@ -202,10 +232,12 @@ For quick tests without installing: `about:debugging#/runtime/this-firefox` → 
   - `src/plus/plus.css` (after `canvas.css`): our rules and the overrides of upstream rules (RTL lyrics margins, line blur, pill bar). `canvas.css` stays exactly upstream's.
   - `src/plus/theme-plus.css`: our font stack; `bg-plus.js` injects it next to upstream's `theme.css` on `VIVI_THEME_CSS`.
   - `src/plus/bg-plus.js`: Spotify header rule, ListenBrainz, Paxsenix, Genius, Apple artist art. Loaded by `importScripts` (Chrome) and `background.scripts` (Firefox).
+  - `src/automix/*`, `src/addons/*`, `src/automix-overview.js`: Automix, the editor and addons. `src/automix/crossfade.js` and `crossfade-page.js` are our rewrites of upstream's `src/crossfade.js` / `src/crossfade-page.js`, which stay in the tree unchanged; upstream's edits to them are ported by hand.
+  - `src/plus/autoplay-row-page.js` (page world): YouTube Music hides Up next's Autoplay row when a song starts on the Lyrics tab and doesn't bring it back; this runs YouTube Music's own rule again while Up next shows.
   - `src/plus/popup-plus.js`: our popup rows, placed next to upstream elements found by id (a row whose anchor is gone lands at the end of the popup with a console warning), plus branding and the Spotify Connect permission request. Upstream's popup files keep four one-line hooks marked `// Vivimusic Web+`.
   - `manifest-plus.json`: our manifest changes as operations. After a merge, rebuild with `python scripts/apply_manifest.py --ref <upstream tag>`; `--check` only compares. Exit 1 means an anchor is gone.
   - `NOTICES-PLUS.md`: notices for what we bundle; `THIRD_PARTY_NOTICES.md` stays upstream's.
-- `scripts/merge_upstream.py` auto-resolves only routine conflicts: files deleted here on purpose (star gate, `.github/FUNDING.yml`) and `manifest.json` hunks that differ only in `version`. It never commits a file with conflict markers.
+- `scripts/merge_upstream.py` auto-resolves only routine conflicts: files deleted here on purpose (star gate, `.github/FUNDING.yml`) and `manifest.json` hunks that differ only in `version`, and it rebuilds `manifest.json` with `apply_manifest.py` when upstream changed it or `src/background.js`. It also prints a reminder when upstream changed a file we rewrote (`FORKED`) or one whose functions `bg-plus.js` replaces (`SHADOWED`: those edits merge cleanly and then do nothing). It never commits a file with conflict markers. Its own tests: `scripts/merge_upstream_tests.py` (in `run_spec.sh`).
 
 ---
 

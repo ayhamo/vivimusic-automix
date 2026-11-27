@@ -6,13 +6,13 @@
 
 **YouTube Music with Automix: beatmatched blends and loop mixes between songs, on top of Vivimusic Web's synced lyrics, Canvas artwork, crossfade and scrobbling.**
 
-Firefox and Edge / Chrome · Manifest V3 · based on Vivimusic Web 10.2.0
+Firefox and Edge / Chrome · Manifest V3 · based on Vivimusic Web 11.5.0
 
 </div>
 
 ---
 
-Vivimusic Web is made by **[Archimetrix](https://github.com/Archimetrix/VIVIMUSIC_WEB)**, and most of this code is theirs: the theme, Apple and Spotify Canvas, lyrics, the popup, Last.fm, the playlist transfer and the crossfade core. This fork adds a Firefox port, Automix ported from [BitChord](https://github.com/ayhamo/BitChord), and a set of fixes. Upstream's own README, describing the base features, is [`readme.md`](../readme.md).
+Vivimusic Web is made by **[Archimetrix](https://github.com/Archimetrix/VIVIMUSIC_WEB)**, and most of this code is theirs: the theme, Apple and Spotify Canvas, lyrics, the popup, Last.fm, the playlist transfer and the crossfade core. This fork adds a Firefox port, Automix and addon playback ported from [BitChord](https://github.com/ayhamo/BitChord), and a set of fixes. Upstream's own README, describing the base features, is [`readme.md`](../readme.md).
 
 ## What this fork adds
 
@@ -25,9 +25,15 @@ Vivimusic Web is made by **[Archimetrix](https://github.com/Archimetrix/VIVIMUSI
 - **Analysis cache.** Each song is analysed once. The Audio playback card shows how many are saved and has a **Clear** button.
 - A toast shows each mix (bars, length, BPM) and "Blend finished". A pause, seek, skip or ad during a mix stops it cleanly.
 
+### Addons (from BitChord)
+- **Your own addons as the source.** Add a BitChord-compatible addon link (with your own token) in the popup's **Addons** card. When an addon has the playing song, its copy, lossless or Hi-Res when it has one, is lined up against YouTube's audio and takes over. YouTube's player still controls playback and the queue, and its sound comes back if the copy doesn't line up.
+- HLS and DASH streams are put together into one file. Played songs are kept in a local cache (up to 2 GB, your choice), so a replay needs no download.
+- A quality badge on the artwork shows what is playing; click it to ask your addons again.
+- Off by default. Needs Crossfade and Automix on. The rules are in [`spec/addons/protocol.md`](../spec/addons/protocol.md).
+
 ### Firefox and Edge / Chrome
 - Runs in Firefox 142+ (event-page background, Firefox's header handling) and in Edge / Chrome from the same code.
-- Releases come from a daily workflow that merges upstream's GitHub and AMO releases, then builds and lints both zips.
+- Releases come from a workflow, started by hand, that merges upstream's GitHub and AMO releases, runs the spec tests, then builds, lints and signs.
 
 ### Fixes and smaller additions
 - Crossfade on manual skip without double skips or replayed audio; full audio capture.
@@ -54,7 +60,7 @@ Then open the popup → **Audio playback**, turn **Crossfade** on, and turn on A
 
 ## Staying in sync with upstream
 
-`.github/workflows/fork-sync-release.yml` runs daily (and on demand). Inside the runner it merges upstream's newest GitHub release and AMO Firefox build, lints, and publishes both zips as a release. When a merge needs a person, the run fails and nothing is published. Upstream's original Firefox build is kept in `upstream-amo/` for reference.
+`.github/workflows/fork-sync-release.yml` runs when started by hand. Inside the runner it merges upstream's newest GitHub release and AMO Firefox build, runs the spec tests on the merged code and lints it. Then it publishes both zips as a release, with an AMO-signed `.xpi` when the repo has AMO API keys. When a merge needs a person, the run fails and nothing is published. Upstream's original Firefox build is kept in `upstream-amo/` for reference.
 
 ## Building
 

@@ -438,6 +438,33 @@ check('bitchordAuth: needs official BitChord, said once', await fresh().discover
   check('an unknown transport: passed over, named', /if \(!\['file', 'hls', 'dash'\]\.includes\(s\.transport\)\) \{ tried\.push\([^\n]*not played here[^\n]*continue; \}/.test(src), true);
 }
 
+{
+  // the phone's B2-04 (cross-check 2026-11-27): in Firefox each redirect hop of an addon request is checked
+  // before it is sent (fx-headers.js, blocking webRequest); a hop off https or to this machine is cancelled
+  const { readFileSync } = await import('node:fs');
+  const vm = await import('node:vm');
+  const L = {};
+  const on = (name) => ({ addListener: (f, filter, opts) => { (L[name] ||= []).push({ f, filter, opts }); } });
+  const ctx = vm.createContext({ chrome: { runtime: { getURL: () => 'moz-extension://abc/', onMessage: on('msg'), getPlatformInfo: () => Promise.resolve({}) }, storage: { local: { get: async () => ({}) } }, cookies: { get: async () => null }, webRequest: { onBeforeRedirect: on('redirect'), onCompleted: on('done'), onErrorOccurred: on('err'), onBeforeSendHeaders: on('send'), onBeforeRequest: on('req'), onHeadersReceived: on('hdr') } }, console: { debug() {} }, URL });
+  vm.runInContext(readFileSync(new URL('../src/fx-headers.js', import.meta.url), 'utf8'), ctx);
+  const guard = L.send.find((l) => l.opts?.includes('blocking') && l.filter.urls.includes('<all_urls>'));
+  const base = 'https://addon.example/TOKEN', ours = { originUrl: 'moz-extension://abc/background.html' };
+  const hop = (requestId, url, first) => { L.req[0].f({ ...ours, requestId, url: first }); return [guard.f({ ...ours, requestId, url: first }), guard.f({ ...ours, requestId, url })]; };
+  const release = ctx.__viviHopWatch.add('https://cdn.example/a.flac', base, C.offLimits);
+  check('a hop to plain http is cancelled before it is sent', hop('1', 'http://cdn2.example/a.flac', 'https://cdn.example/a.flac'), [{}, { cancel: true }]);
+  check('a hop to this machine is cancelled', hop('2', 'https://127.0.0.1/x', 'https://cdn.example/a.flac'), [{}, { cancel: true }]);
+  check('a hop to another https host goes on (with the addon\'s headers)', hop('3', 'https://cdn2.example/a.flac', 'https://cdn.example/a.flac'), [{}, {}]);
+  release();
+  check('a request not registered is never touched', hop('4', 'http://x.example/', 'https://other.example/'), [{}, {}]);
+  // guarded(): registers the URL for the fetch's length only
+  const seen = [];
+  ctx.__viviHopWatch.add = (url, b) => { seen.push(['add', url, b]); return () => seen.push(['release', url]); };
+  globalThis.__viviHopWatch = ctx.__viviHopWatch;
+  await C.guarded(async () => ({ ok: true }), base)('https://cdn.example/b.flac', {});
+  delete globalThis.__viviHopWatch;
+  check('guarded(): the URL registered with its base, released after the answer', seen, [['add', 'https://cdn.example/b.flac', base], ['release', 'https://cdn.example/b.flac']]);
+}
+
 server.close();
 console.log(failed ? `${failed} failed` : 'all passed');
 process.exit(failed ? 1 : 0);

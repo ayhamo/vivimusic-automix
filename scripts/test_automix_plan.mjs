@@ -1193,6 +1193,12 @@ test("B's late entry (mix-file.md rule 2): normalized, a mix file round trip, th
   const far = go({ preset: 'custom', bars: 8, lanes, window: { out: { sec: 150 }, in: { sec: 0, delaySec: 40 } } });
   assert.equal(far.inDelaySec, Math.round((far.durationSec - 0.5) * 1e3) / 1e3);
   assert.ok(far.warnings.some((w) => /past the mix's end/.test(w)), js(far.warnings));
+  // an Auto blend's curves are made with it (audit 2026-11-27 M1): A isn't dipped while B is still silent
+  const autoBase = go({ bars: 8, window: { out: { sec: 150 }, in: { sec: 0 } } });
+  const autoLate = go({ bars: 8, window: { out: { sec: 150 }, in: { sec: 0, delaySec: 3.2 } } });
+  assert.equal(autoLate.inDelaySec, 3.2);
+  assert.equal(autoLate.style, 'blend');
+  assert.notEqual(js(autoLate.curves), js(autoBase.curves), 'the late entry reaches the curves');
   // a loop mix never plays it
   assert.equal(A.normalizeOverride({ v: 1, preset: 'loop', window: { in: { sec: 0, delaySec: 3 } } }).window, undefined);
 });
@@ -1596,7 +1602,12 @@ test("Addon copies: the fit's slack is the setting's; a file that doesn't decode
   assert.match(prep, /decodeAt\(file\.bytes, F\.FIT_RATE, 2\)\.catch\(/);
   assert.match(prep, /if \(!adBuf\) \{\n\s+if \(up\) return keep\('decode failed'\);\n\s+const nx = [^\n]*AP\.nextFor\(id, 'decode failed'\)/);
   // an upgrade's refusal never asks for another row, and gives the playing copy back
-  assert.equal((prep.match(/if \(up\) return keep\(/g) || []).length, 3);
+  assert.equal((prep.match(/if \(up\) return keep\(/g) || []).length, 4);
+  // (the phone's B2-07) a row refused with no other tried still leaves the cache: REFUSE before giving up
+  assert.match(prep, /await AP\.refuseFor\?\.\(id, 'decode failed'\);[^\n]*\n\s+return \{ none: 'decode failed', state: 'refused' \};/);
+  assert.match(prep, /await AP\.refuseFor\?\.\(id, fit\.none\);\n\s+return \{ none: fit\.none, state: 'refused', fit \};/);
+  // (audit 2026-11-27) an upgrade that throws on the way (YouTube's audio missing, the full decode) gives it back too
+  assert.match(prep, /me\.promise = work\(\)\.catch\(\(e\) => \{ if \(up\) return keep\(String\(e\?\.message \|\| e\)\); throw e; \}\)\.then\(/);
   assert.match(prep, /if \(r\.kept && prepared\.get\(id\) === me\) \{ if \(r\.kept\.prev\?\.rec\) prepared\.set\(id, r\.kept\.prev\)/);
   assert.match(between(xf, '  async function startAddonDeck(', '  async function playAddon('), /if \(r\.kept\) \{[^\n]*adeck = r\.kept\.run/);
   assert.match(between(xf, 'AP.upgradeFor?.(id).then(', '}).catch'), /upgrading\.set\(id, \{ prev: prepared\.get\(id\), run \}\);\n\s+prepared\.delete\(id\);/);
@@ -1613,6 +1624,13 @@ test("Song speed in the plan's curves (spotify-mixes.md rule 10): B's tempo ends
   // no speeds: as before (a blend's glide back ends at x1, or no rate lane)
   const q = sp(null);
   if (q.curves.in.rate) assert.equal(last(q.curves.in.rate), 1);
+  // B blended at x1 with a playlist speed of its own: it is drawn at x1 through the mix, then glides back to
+  // its speed, as it plays (deckGlideBack; audit 2026-11-27): not at its speed throughout
+  const same = A.plan({ fromId: 'a', toId: 'b', from: song(100, 200), to: song(100, 200), durationSec: 200, pos: 20, earliest: 24.5, speed: { in: 1.03 } });
+  if (same.style === 'blend' && Math.abs(same.rate - 1) < 1e-9) {
+    assert.equal(JSON.stringify(same.curves.in.rate.slice(0, 2)), JSON.stringify([[0, 1], [same.durationSec, 1]]));
+    assert.equal(last(same.curves.in.rate), 1.03);
+  } else assert.fail('expected a blend at x1, got ' + same.style + ' at ' + same.rate);
 });
 
 test("B's late entry: a mix of half a second or less has no room for it (plan.schema.json: inDelaySec > 0); a Spotify jogwheel is named as not carried", () => {
@@ -1672,6 +1690,8 @@ test('Progress row: the addon copy is fetched, lined up, then taken over; hidden
   assert.match(row, /if \(P && s && !live\) \{[\s\S]*if \(!text\) \{ const a = addonStage\(cur, !!s\.paused\); if \(a\) \{ text = a; kind = a\.endsWith\('…'\) \? 'busy' : 'note'; \}/);
   const xfs = srcOf('src/automix/crossfade.js');
   assert.match(xfs, /addonTakeover: \(id\) => \(sdeck\?\.addon && sdeck\.addonId === id \? \(sdeck\.audible \? 'done' : 'switching'\) : null\)/);
+  // with no mix to show (nothing queued, still planning) the snapshot says it is paused too (audit 2026-11-27)
+  assert.match(xfs, /const ids = \{ curId: st\.id, nextId: st\.next \|\| null, live: !!live, paused: !live && !!g\?\.video\?\.paused \};/);
 });
 
 test("The overview ends above YouTube's player bar and scrolls; the stats name the preset beside the style", () => {
@@ -1794,3 +1814,76 @@ test('B\'s late entry (mix-file.md rule 2): the equal-power trim reads B\'s hear
   assert.deepEqual([...none.gOut], [...base.gOut], 'no late entry: as before');
 });
 
+
+test("The addon copy takes over from YouTube's sound only where its output is matched: no switch by time while it is heard (the small cut, 2026-11-27)", async () => {
+  const param = () => ({ value: 0, setValueAtTime() {}, linearRampToValueAtTime() {}, cancelScheduledValues() {}, setTargetAtTime() {} });
+  class GainNode { constructor(ctx, o = {}) { this.gain = param(); this.gain.value = o.gain ?? 1; } connect(n) { return n; } disconnect() {} }
+  class AudioBufferSourceNode { constructor() { this.starts = []; } connect(n) { return n; } start(...a) { this.starts.push(a); } stop() {} }
+  const ctx = vm.createContext({ window: {}, console: { log() {} }, GainNode, AudioBufferSourceNode, setInterval: () => 0, clearInterval() {}, setTimeout, Math, Float32Array });
+  vm.runInContext(srcOf('src/addons/buffer-deck.js'), ctx);
+  const BD = ctx.window.__viviBufferDeck;
+  const deckWith = (anchor, level = 1) => {
+    const d = BD.create({ currentTime: 10, sampleRate: 48000 }, {});
+    d.load({ duration: 200, length: 200 * 48000, numberOfChannels: 2 }, 0.5, new Float32Array(0));
+    Object.assign(d, { state: 'following', level: () => level, gate: param(), tp: {}, tapMisses: 0, retryAt: 0, audibleAt: Infinity, timer: 0 });
+    d.handedBack = null; d.onHandback = (why) => { d.handedBack = why; };
+    d.findAnchor = async () => anchor;
+    return d;
+  };
+  const c = { pos: 30, playing: true };
+  const tap = { t: 10, at: 30.5, score: 0.97, by: 'tap' }, missed = { t: 10, at: 30.6, score: null, by: 'time', missed: true }, silent = { t: 10, at: 30.6, score: null, by: 'time', silent: true };
+  // matched: in at once
+  let d = deckWith(tap); await d.anchorAndStart(c, true);
+  assert.equal(d.started, true);
+  // heard but not matched: YouTube stays, tried again; after 5 s of tries the song is left to YouTube
+  d = deckWith(missed);
+  for (let i = 0; i < 19; i++) { await d.anchorAndStart(c, true); assert.equal(d.started, false, 'never in by time while heard'); }
+  assert.equal(d.handedBack, null);
+  await d.anchorAndStart(c, true);
+  assert.equal(d.started, false);
+  assert.equal(d.handedBack, "YouTube's output never matched the file");
+  // a quiet stretch: waited out, never in by time
+  d = deckWith(silent);
+  for (let i = 0; i < 40; i++) await d.anchorAndStart(c, true);
+  assert.equal(d.started, false);
+  assert.equal(d.handedBack, null);
+  // muted (nothing heard): by its time, as before
+  d = deckWith(silent, 0); await d.anchorAndStart(c, true);
+  assert.equal(d.started, true);
+  // no tap at all: by its time
+  d = deckWith({ t: 10, at: 30.6, score: null, by: 'time', silent: false }); await d.anchorAndStart(c, true);
+  assert.equal(d.started, true);
+});
+
+test('Export writes the beat match as it plays (mix-file.md rule 6, the phone\'s P1-3): an own Auto mix comes back Auto, an imported one Sync', () => {
+  const A = loadAutomix('auto');
+  const round = (ov, bpm) => A.readMixFile(JSON.stringify(A.writeMixFile([{ from: { videoId: 'aaaaaaaaaaa' }, to: { videoId: 'bbbbbbbbbbb' }, override: A.exportOverride(ov, bpm) }]))).mixes[0].override;
+  // an own mix, Auto (no beatMatch stored), exported with this app's tempo: Auto again, not Sync
+  const own = round({ v: 1, bars: 8 }, 120);
+  assert.equal(own.gridBpm, 120);
+  assert.equal(A.beatMatchOf(own), 'auto');
+  // an imported mix with no beatMatch plays Sync, and is written so
+  const imp = round({ v: 1, bars: 8, gridBpm: 100 }, 120);
+  assert.equal(imp.beatMatch, 'sync');
+  assert.equal(imp.gridBpm, 100);
+  // a picked one is kept; a loop mix has none; no tempo known: as before
+  assert.equal(round({ v: 1, bars: 8, beatMatch: 'glide' }, 120).beatMatch, 'glide');
+  assert.equal(round({ v: 1, preset: 'loop' }, 120).beatMatch, undefined);
+  assert.equal(A.beatMatchOf(round({ v: 1, bars: 8 }, null)), 'auto');
+});
+
+test('Re-importing an own export lists as the same (mix-file.md rule 5): the beat match compared as it plays, not as written', () => {
+  const A = loadAutomix('auto');
+  const exportOf = (ov, bpm) => A.readMixFile(JSON.stringify(A.writeMixFile([{ from: { videoId: 'aaaaaaaaaaa' }, to: { videoId: 'bbbbbbbbbbb' }, override: A.exportOverride(ov, bpm) }]))).mixes;
+  // an own Auto mix (no beatMatch, no gridBpm) against its own export (beatMatch "auto", gridBpm): the same
+  const own = { v: 1, bars: 8 };
+  const p = A.importPlan(exportOf(own, 120), { [exportOf(own, 120)[0].key]: own });
+  assert.equal(p.same.length, 1, JSON.stringify(p.replace.map((r) => r.changes)));
+  // an imported mix saved with no beatMatch (Sync) against its export (beatMatch "sync"): the same
+  const imp = { v: 1, bars: 8, gridBpm: 100 };
+  assert.equal(A.importPlan(exportOf(imp, 120), { [exportOf(imp, 120)[0].key]: imp }).same.length, 1);
+  // a real change is still one, named as it plays: an own Auto mix against a file's Sync
+  const r = A.importPlan(exportOf({ v: 1, bars: 8, beatMatch: 'sync' }, 120), { [exportOf(own, 120)[0].key]: own });
+  assert.equal(r.replace.length, 1);
+  assert.ok(r.replace[0].changes.includes('beat match: auto → sync'), JSON.stringify(r.replace[0].changes));
+});

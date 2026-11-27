@@ -1016,7 +1016,7 @@
 
   /** Throws unless [from, to] is a byte range of at most MAX_CUT bytes. */
   function checkPart(from, to) {
-    if (!Number.isSafeInteger(from) || !Number.isSafeInteger(to) || to < from || to - from + 1 > MAX_CUT) {
+    if (!Number.isSafeInteger(from) || !Number.isSafeInteger(to) || from < 0 || to < from || to - from + 1 > MAX_CUT) {
       throw new Error('part too big or bad: bytes ' + from + '-' + to);
     }
   }

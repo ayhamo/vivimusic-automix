@@ -129,7 +129,7 @@ const flat = (v) => new Array(W * H).fill(v);
     && throws(() => V.headOf({ initRange: { end: '740' }, indexRange: { start: '741', end: String(64 * 1024 * 1024) } }))
     && throws(() => V.headOf({})));
   check('cut: a part within MAX_CUT is read, a longer or backwards one is refused', !throws(() => V.checkPart(1501, 1500 + V.MAX_CUT))
-    && throws(() => V.checkPart(1501, 1501 + V.MAX_CUT)) && throws(() => V.checkPart(2000, 1999)) && throws(() => V.checkPart(NaN, 10)));
+    && throws(() => V.checkPart(1501, 1501 + V.MAX_CUT)) && throws(() => V.checkPart(2000, 1999)) && throws(() => V.checkPart(NaN, 10)) && throws(() => V.checkPart(-1, 10)));
 }
 
 // ───────────── extra: remux round trip ─────────────
@@ -205,6 +205,16 @@ const flat = (v) => new Array(W * H).fill(v);
     check('sourceOn with the song: its own switch', vm.runInContext("[P.sourceOn('spotify'), P.sourceOn('spotify', 's1'), P.sourceOn('apple', 's1')].join()", ctx) === 'true,false,true');
   }
   check('the lyrics/side canvas takes the song\'s Use and switches', /const want = songOrder\(track\?\.videoId\)\.filter\(\(n\) => n !== 'apple' && canvasSet\.on\.includes\(n\) && !songOff\(track\?\.videoId\)\[n\]\);/.test(cp));
+  {
+    // (audit 2026-11-27) a choice changed while a look-up was out starts another on the same song: the older reply is dropped
+    const set = [], waits = [];
+    const ctx = vm.createContext({ songOrder: () => ['video'], canvasSet: { on: ['video'] }, songOff: () => ({}), C: { trackKey: () => 'k' }, canvasPlacement: 'side',
+      setLyricsCanvas: (u) => set.push(u), log() {}, warn() {}, chrome: {}, window: { __viviVideoCanvas: () => new Promise((r) => waits.push(r)) } });
+    vm.runInContext(cp.slice(cp.indexOf('  let lyricsCanvasGen'), cp.indexOf('  function setLyricsCanvas(url) {')) + ';globalThis.f = fetchLyricsCanvas;', ctx);
+    const first = ctx.f({ videoId: 's1' }, 'k'), second = ctx.f({ videoId: 's1' }, 'k');
+    waits[1]('new'); await second; waits[0]('old'); await first;
+    check('the lyrics canvas: an older look-up\'s reply never shows over the newer one', set.join() === 'new', set.join());
+  }
   check('the Canvas menu: each source behind its master switch', /const masterOn = \{ video: set\.canvasOn && videoOn, spotify: set\.canvasOn, apple: set\.appleOn \};\n\s+const firstOn = [^\n]*\.find\(\(n\) => masterOn\[n\] && /.test(menu));
   // the page's fetch relay: https only, no redirect, 15 s, 8 MB
   const relay = src('src/plus/video-canvas.js');

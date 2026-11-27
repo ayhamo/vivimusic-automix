@@ -29,6 +29,8 @@
  *                                          a copy under the lossy floor (protocol.md 8.2.1) never wins
  *     VIVI_ADDONS_REFRESH  { ticket }      -> { ok, cleared, files }: "Upgrade quality" (8.1.7): the song's cached answers and files go
  *     VIVI_ADDONS_UPGRADE  { ticket }      -> the better copy's OPEN answer, or { none }: the pass after a copy plays (8.2.1)
+ *     VIVI_ADDONS_REFUSE   { ticket, why } -> { ok }: the opened row was refused and no other is tried (the page's
+ *                          limit): it is passed over and its file leaves the cache all the same (8.1.4)
  *     VIVI_ADDONS_KEEP     { ticket, why } -> { ok }: that better copy was refused by a later check; the playing one is the ticket's again (8.6)
  *     VIVI_ADDONS_FETCH    { ticket }      -> { bytes (ArrayBuffer), mime } or { none }: the opened file (Firefox passes ArrayBuffers)
  *
@@ -218,6 +220,14 @@
       const k = cacheKey(t.got.addon, t.got.row, t.opt);
       if (k) files.drop(k).catch(() => {});
     }
+    // the opened row refused with no other tried (the page's NEXT_ROWS reached): refused all the same, so its
+    // file is not replayed from the cache and fitted again on the song's next play (the phone's B2-07)
+    function refuseOnly(ticket, why) {
+      const t = tickets.get(ticket);
+      if (!t?.got) return { none: t ? 'not opened' : 'ticket expired' };
+      refuse(t, why);
+      return { ok: true };
+    }
     // 8.6: the better copy (upgrade) was refused by a later check: the copy that plays is the ticket's again
     function keep(ticket, why) {
       const t = tickets.get(ticket);
@@ -354,11 +364,11 @@
         // progressive one (stream-assemble.js). Never through the cache (§8.1.6.1): opened from its own URL each time.
         if (s.transport === 'hls' || s.transport === 'dash') {
           if (!Assemble) return { none: `${s.transport} is not supported here`, refused: true };
-          const a = await Assemble.assemble(s, { base: got.addon.base, fetch: doFetch, signal: ctl.signal, maxBytes: FILE_MAX_BYTES });
+          const a = await Assemble.assemble(s, { base: got.addon.base, fetch: C.guarded ? C.guarded(doFetch, got.addon.base) : doFetch, signal: ctl.signal, maxBytes: FILE_MAX_BYTES });
           if (!a.bytes) return { none: ctl.signal.aborted ? 'the file took too long' : a.none, ...(a.refused ? { refused: true } : {}) };
           return { bytes: a.bytes, mime: a.mime };
         }
-        const r = await doFetch(s.url, { headers: { ...(s.headers || {}) }, signal: ctl.signal, credentials: 'omit', cache: 'no-store' });
+        const r = await (C.guarded ? C.guarded(doFetch, got.addon.base) : doFetch)(s.url, { headers: { ...(s.headers || {}) }, signal: ctl.signal, credentials: 'omit', cache: 'no-store' });
         // (redirected off https, or to this machine: refused before its body is read, like a bad row; client.offLimits)
         const off = C.offLimits?.(got.addon.base, r.url);
         if (off) { try { await r.body?.cancel(); } catch { /* gone */ } return { none: `the file was redirected: ${off}`, refused: true }; }
@@ -397,6 +407,7 @@
         case 'VIVI_ADDONS_ISRC': return noteIsrc(msg.videoId, msg.isrc);
         case 'VIVI_ADDONS_OPEN': return open(String(msg.ticket || ''), Number(msg.ytKbps) || 0);
         case 'VIVI_ADDONS_NEXT': return next(String(msg.ticket || ''), msg.why, Number(msg.ytKbps) || 0);
+        case 'VIVI_ADDONS_REFUSE': return refuseOnly(String(msg.ticket || ''), msg.why);
         case 'VIVI_ADDONS_UPGRADE': return upgrade(String(msg.ticket || ''));
         case 'VIVI_ADDONS_REFRESH': return refresh(String(msg.ticket || ''), {
           song: msg.song && typeof msg.song === 'object' ? { title: String(msg.song.title || '').slice(0, 300), artist: String(msg.song.artist || '').slice(0, 300) } : null,
@@ -420,7 +431,7 @@
     const store = create({ storage: chrome.storage.local, files });
     // content scripts (YouTube Music's tab) may only FIND, ISRC, OPEN, UPGRADE, REFRESH and FETCH; the list and its
     // settings change only from the extension's own pages (the popup)
-    const PAGE_TYPES = new Set(['VIVI_ADDONS_FIND', 'VIVI_ADDONS_ISRC', 'VIVI_ADDONS_OPEN', 'VIVI_ADDONS_NEXT', 'VIVI_ADDONS_UPGRADE', 'VIVI_ADDONS_KEEP', 'VIVI_ADDONS_REFRESH', 'VIVI_ADDONS_FETCH']);
+    const PAGE_TYPES = new Set(['VIVI_ADDONS_FIND', 'VIVI_ADDONS_ISRC', 'VIVI_ADDONS_OPEN', 'VIVI_ADDONS_NEXT', 'VIVI_ADDONS_REFUSE', 'VIVI_ADDONS_UPGRADE', 'VIVI_ADDONS_KEEP', 'VIVI_ADDONS_REFRESH', 'VIVI_ADDONS_FETCH']);
     const ours = (sender) => typeof sender?.url === 'string' && sender.url.startsWith(chrome.runtime.getURL(''));
     chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       if (typeof msg?.type !== 'string' || !msg.type.startsWith('VIVI_ADDONS_')) return undefined;

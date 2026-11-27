@@ -293,5 +293,37 @@ const mpd = (inner, root = 'type="static" mediaPresentationDuration="PT10S"') =>
   check('FETCH of a protected DASH row: refused, so the page tries the next row (8.1.4)', [bad.none, bad.refused, bad.bytes], ['encrypted (ContentProtection)', true, undefined]);
 }
 
+// ---- malformed streams are refused, so the page tries the next row (audit 2026-11-27) ----
+{
+  const media = (body) => ({ 'https://cdn.example/r.m3u8': { body: '#EXTM3U\n' + body + '#EXT-X-ENDLIST\n' }, 'https://cdn.example/f.mp4': { body: [...INIT, ...SEG(1)] } });
+  const zero = await run(media('#EXT-X-MAP:URI="f.mp4"\n#EXT-X-BYTERANGE:0@16\n#EXTINF:4,\nf.mp4\n'), { transport: 'hls', url: 'https://cdn.example/r.m3u8' });
+  check('HLS: a byte range of no length is refused, never fetched (the budget is not credited back)', [zero.a.none, zero.a.refused, zero.s.log.length], ['a byte range of no length', true, 1]);
+  const noUri = await run(media('#EXT-X-MAP:BYTERANGE="16@0"\n#EXTINF:4,\nf.mp4\n'), { transport: 'hls', url: 'https://cdn.example/r.m3u8' });
+  check('HLS: an #EXT-X-MAP without a URI is refused', [noUri.a.none, noUri.a.refused], ['an #EXT-X-MAP without a URI', true]);
+  const back = await run({ 'https://cdn.example/m.mpd': { body: mpd('<AdaptationSet mimeType="audio/mp4"><Representation id="a" bandwidth="1" codecs="mp4a.40.2"><SegmentList><SegmentURL media="s.m4s" mediaRange="100-50"/></SegmentList></Representation></AdaptationSet>') } }, { transport: 'dash', url: 'https://cdn.example/m.mpd' });
+  check('DASH: a backwards byte range is refused, never fetched', [back.a.none, back.a.refused, back.s.log.length], ['a backwards byte range (100-50)', true, 1]);
+  const empty = await run({ 'https://cdn.example/m.mpd': { body: mpd('<AdaptationSet mimeType="audio/mp4"><Representation id="a" bandwidth="1" codecs="mp4a.40.2"><SegmentTemplate timescale="1" duration="4" initialization="i.mp4" media="s$Number$.m4s"/></Representation></AdaptationSet>', 'type="static" mediaPresentationDuration="PT0S"') }, 'https://cdn.example/d/i.mp4': { body: INIT } }, { transport: 'dash', url: 'https://cdn.example/m.mpd' });
+  check('DASH: a SegmentTemplate that makes no segments is refused (not the init alone)', [empty.a.none, empty.a.refused], ['a SegmentTemplate without segments', true]);
+  const ent = await run({ 'https://cdn.example/m.mpd': { body: mpd('<AdaptationSet mimeType="audio/mp4"><Representation id="a&#x110000;" bandwidth="1" codecs="mp4a.40.2"/></AdaptationSet>') } }, { transport: 'dash', url: 'https://cdn.example/m.mpd' });
+  check('DASH: a character past Unicode is refused', [ent.a.none, ent.a.refused], ['a character past Unicode in the manifest', true]);
+  // a PES packet too short for its own header: none of its bytes reach the audio
+  const d = SA.demuxTs([u8(...tsFile([adtsFrame(1)]), ...tsPacket(0x101, true, u8(0, 0, 1, 0xc0, 0, 0), 9))]);
+  check('TS: a PES packet shorter than its header adds nothing', bytesOf(d.bytes), [...adtsFrame(1)]);
+  // one segment fails: the one still in flight is stopped at once, not at its own 30 s limit
+  const t0 = Date.now();
+  const stop = await run({ 'https://cdn.example/s.m3u8': { body: '#EXTM3U\n#EXTINF:4,\nhttps://seg.example/hang.ts\n#EXTINF:4,\nhttps://seg.example/gone.ts\n#EXT-X-ENDLIST\n' }, 'https://seg.example/hang.ts': { hang: true } }, { transport: 'hls', url: 'https://cdn.example/s.m3u8' });
+  check('a failed segment stops the others in flight', [stop.a.none, Date.now() - t0 < 2000], ['a segment answered 404', true]);
+}
+
+// ---- the phone's B2-02 and B2-05 (cross-check 2026-11-27) ----
+{
+  const id3 = (n) => u8(0x49, 0x44, 0x33, 4, 0, 0, 0, 0, 0, 5, n, n, n, n, n);
+  const media = '#EXTM3U\n#EXTINF:4,\nhttps://seg.example/p.aac\n#EXT-X-ENDLIST\n';
+  const two = await run({ 'https://cdn.example/p.m3u8': { body: media }, 'https://seg.example/p.aac': { body: u8(...id3(1), ...id3(2), ...adtsFrame(1)) } }, { transport: 'hls', url: 'https://cdn.example/p.m3u8' });
+  check('packed audio: every ID3 tag at the start is dropped, not only the first', [two.a.mime, JSON.stringify(bytesOf(two.a.bytes)) === JSON.stringify([...adtsFrame(1)])], ['audio/aac', true]);
+  const wide = await run({ 'https://cdn.example/m.mpd': { body: mpd('<AdaptationSet mimeType="audio/mp4"><Representation id="a" bandwidth="1" codecs="mp4a.40.2"><SegmentTemplate timescale="1" duration="4" initialization="i.mp4" media="s$Number%0999999999d$.m4s"/></Representation></AdaptationSet>') } }, { transport: 'dash', url: 'https://cdn.example/m.mpd' });
+  check('DASH: a template width past 32 is refused, no string that long made', [wide.a.none, wide.a.refused], ['a template width of 999999999', true]);
+}
+
 console.log(failed ? `\n${failed} failed` : '\nall passed');
 process.exit(failed ? 1 : 0);

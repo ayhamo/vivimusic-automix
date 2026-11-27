@@ -903,7 +903,7 @@
       // the tempo the beats count on (mix-file.md rule 8): as saved, else this app's for A
       const ov = A().migratePick(picks[k]);
       const bpm = ov?.gridBpm || A().editorGrid?.(A().get(from), 'out')?.bpm;
-      entries.push({ from: await song(from), to: await song(to), override: bpm ? { ...ov, gridBpm: bpm } : ov });
+      entries.push({ from: await song(from), to: await song(to), override: A().exportOverride(ov, bpm) });
     }
     const file = A().writeMixFile(entries);
     if (!file.mixes.length) { fileSay('Nothing to export: no valid edit.'); return; }

@@ -10,4 +10,5 @@ Components that this fork bundles on top of upstream's. Upstream's own list is i
 | Beat This! (`final0`, int8 ONNX, as shipped by BitChord) | `src/vendor/automix/beat_this_final0_q8.onnx` | MIT | © CP JKU — https://github.com/CPJKU/beat_this |
 | ONNX Runtime Web (WASM) | `src/vendor/automix/ort-wasm-simd-threaded.wasm` | MIT | © Microsoft — https://github.com/microsoft/onnxruntime |
 | Essentia.js (in BitChord's analysis worker) | `src/vendor/automix/analysis.worker.js` (modified: five embind functions replaced by non-eval equivalents) | AGPL-3.0 | © Music Technology Group, UPF — https://github.com/MTG/essentia.js |
-| AutoMix (heydavidf), via BitChord web's automix | `src/automix/*`, `src/crossfade.js` (ported and changed) | AGPL-3.0 | https://github.com/heydavidf/automix, https://github.com/ayhamo/BitChord |
+| AutoMix (heydavidf), via BitChord web's automix | `src/automix/*` (ported and changed) | AGPL-3.0 | https://github.com/heydavidf/automix, https://github.com/ayhamo/BitChord |
+| BitChord's TrackMatcher (`web/app/src/data/match/trackMatcher.ts` at a2d886e6) | `src/addons/track-matcher.js` (types stripped; a mashup rule added, marked in the file) | GPL-3.0 | © the BitChord authors — https://github.com/ayhamo/BitChord |
