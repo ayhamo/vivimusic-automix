@@ -536,3 +536,5 @@ ytmusic-player-bar .thumbnail-image-wrapper:has(> .vivi-addon-art-badge) { posit
   .vivi-addon-badge[data-kind], .vivi-addon-badge[data-kind] .vivi-addon-badge-label, .vivi-addon-art-badge { animation: none; }
   .vivi-addon-badge[data-kind="lossless"] .vivi-addon-badge-label { background-size: 0 0, 100% 100%; }
 }
+/* lyrics-ui.js: YT Music's own tab content hidden under our lyrics panel (an attribute, never its inline display) */
+ytmusic-player-page #tab-renderer > [data-vivi-native-hidden] { display: none !important; }

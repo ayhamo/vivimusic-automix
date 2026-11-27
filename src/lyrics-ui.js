@@ -480,9 +480,16 @@
     return panel;
   }
 
+  // vivi+: YT Music's own templates hide the tab's spinner and an unused section list with an
+  // inline display:none; hiding ours with the same inline style and clearing it again showed them
+  // (an endless spinner and the song's plain lyrics under Up next). An attribute of our own
+  // (plus.css) hides them instead, so YT Music's inline display is never touched.
+  const NATIVE_HIDDEN = 'data-vivi-native-hidden';
+  const hideNative = (el, hide) => { if (hide) el.setAttribute(NATIVE_HIDDEN, ''); else el.removeAttribute(NATIVE_HIDDEN); };
+
   function hideNativeLyricsContent(host) {
     Array.from(host.children).forEach((child) => {
-      if (child.id !== PANEL_ID) child.style.display = 'none';
+      if (child.id !== PANEL_ID) hideNative(child, true);
     });
   }
 
@@ -501,7 +508,7 @@
     const host = findTabContentHost();
     for (const [el, text] of Array.from(staleNative)) {
       if (!el.isConnected || !host || el.parentElement !== host) { staleNative.delete(el); continue; }
-      if (el.textContent !== text) { staleNative.delete(el); el.style.display = ''; }
+      if (el.textContent !== text) { staleNative.delete(el); hideNative(el, false); }
     }
     if (!staleNative.size && staleTimer) { clearInterval(staleTimer); staleTimer = null; }
   }
@@ -511,7 +518,7 @@
     Array.from(host.children).forEach((c) => {
       if (c.id === PANEL_ID) return;
       staleNative.set(c, c.textContent);
-      c.style.display = 'none';
+      hideNative(c, true);
     });
     if (staleNative.size && !staleTimer) staleTimer = setInterval(reconcileStale, 150);
   }
@@ -526,7 +533,7 @@
     reconcileStale();
     Array.from(host.children).forEach((child) => {
       if (child.id === PANEL_ID) return;
-      child.style.display = staleNative.has(child) ? 'none' : '';
+      hideNative(child, staleNative.has(child));
     });
     nudgeRelayout();
   }
@@ -666,7 +673,7 @@
     } else if (isLyricsTabActive() && staleNative.size) {
       // Back on Lyrics with our panel off: native lyrics must be visible.
       clearStaleNative(host);
-      Array.from(host.children).forEach((c) => { c.style.display = ''; });
+      Array.from(host.children).forEach((c) => { hideNative(c, false); });
     }
 
     ensureInfoButton();
@@ -1687,7 +1694,7 @@
       reconcileStale();
       Array.from(host.children).forEach((child) => {
         if (child.id === PANEL_ID) return;
-        child.style.display = staleNative.has(child) ? 'none' : '';
+        hideNative(child, staleNative.has(child));
       });
     }
     scheduleSync();
