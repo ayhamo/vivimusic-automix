@@ -120,6 +120,14 @@
     if (g) watchVideo(g.video);
   }
   for (const t of ['pointerdown', 'keydown']) window.addEventListener(t, wake, true);
+  // vivi+: a song that starts before any press in this page (a media key, a click that sent no
+  // pointerdown) played straight to the speakers until the next press built the graph, and Firefox
+  // then swapped that output for the graph's under the song: a gap (measured 2026-11-27, 1.7 s in).
+  // Once the page may play sound (sticky activation), the graph goes in at the song's 'play', before
+  // any sound. ('play' doesn't bubble: caught on the way down.)
+  window.addEventListener('play', (e) => {
+    if (e.target instanceof HTMLMediaElement && !graph() && navigator.userActivation?.hasBeenActive) wake();
+  }, true);
 
   let watched = null;
   function watchVideo(v) {
